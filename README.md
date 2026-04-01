@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# When.
 
-## Getting Started
+Group scheduling without the back-and-forth. Create an event, invite participants, sync Google Calendars, and get the best meeting time automatically.
 
-First, run the development server:
+## Stack
+
+- **Backend:** FastAPI + Supabase (PostgreSQL) + Google OAuth/Calendar API
+- **Frontend:** Next.js 14 (App Router) + shadcn/ui + TanStack Query + Zustand
+
+---
+
+## Dev setup
+
+Run backend and frontend in separate terminals. No Docker.
+
+### Backend
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd backend
+python3.12 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # fill in your values
+uvicorn app.main:app --reload --reload-dir app --port 8000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Frontend
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cd frontend
+npm install
+cp .env.local.example .env.local  # fill in your values
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000).
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## Running tests
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Backend
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+cd backend
+source venv/bin/activate
+pytest tests/ -v
+```
 
-## Deploy on Vercel
+### Frontend
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+cd frontend
+npm run test
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## Env vars
+
+See `backend/.env.example` and `frontend/.env.local.example` for required variables (Supabase keys, Google OAuth credentials, JWT secret).
+
+---
+
+## Docs
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Data model](docs/DATA_MODEL.md)
+- [Tech stack](docs/TECH_STACK.md)
+- [Sprint plan](docs/SPRINT%20PLAN.md)
+- [Lessons learned](docs/LESSONS_LEARNED.md)
+- [Project rules](docs/CLAUDE.md)
+- [Stitch Design](docs/STITCH_DESIGN.md)
