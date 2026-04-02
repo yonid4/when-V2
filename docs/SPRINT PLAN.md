@@ -51,22 +51,22 @@ Each sprint should be fully working before the next begins — no partial featur
 **Goal:** Users can create, view, edit, and delete events. Dashboard lists their events.
 
 ### Backend
-- [ ] Pydantic models: EventCreate, EventUpdate, EventResponse
-- [ ] `POST /api/events` — create, generate 12-char UID, add creator as participant with status=accepted
-- [ ] `GET /api/events` — list events where user is coordinator or participant
-- [ ] `GET /api/events/{uid}` — full event detail
-- [ ] `PUT /api/events/{uid}` — update (coordinator only), set proposals_needs_regeneration=true if window changes
-- [ ] `DELETE /api/events/{uid}` — delete (coordinator only), send event_deleted notifications
+- [x] Pydantic models: EventCreate, EventUpdate, EventResponse
+- [x] `POST /api/events` — create, generate 12-char UID, add creator as participant with status=accepted
+- [x] `GET /api/events` — list events where user is coordinator or participant
+- [x] `GET /api/events/{uid}` — full event detail
+- [x] `PUT /api/events/{uid}` — update (coordinator only), set proposals_needs_regeneration=true if window changes
+- [x] `DELETE /api/events/{uid}` — delete (coordinator only), send event_deleted notifications
 
 ### Frontend
-- [ ] `types/index.ts` — Event, Participant, Notification TypeScript interfaces
-- [ ] `hooks/useEvent.ts` — useEvents(), useEvent(uid), useCreateEvent(), useUpdateEvent(), useDeleteEvent()
-- [ ] Dashboard page (server component) — fetch event list server-side, render EventCard components
-- [ ] EventCard component — match `design/dashboard.html`
-- [ ] Create event form (multi-step) — match `design/create-step1.html`, `create-step2.html`, `create-step3.html`
-- [ ] Event detail page shell (server component) — fetch event SSR, match `design/event-detail.html` layout
-- [ ] Edit event modal (coordinator only)
-- [ ] Delete event with confirmation dialog
+- [x] `types/index.ts` — Event, Participant, Notification TypeScript interfaces
+- [x] `hooks/useEvent.ts` — useEvents(), useEvent(uid), useCreateEvent(), useUpdateEvent(), useDeleteEvent()
+- [x] Dashboard page (server component) — fetch event list server-side, render EventCard components
+- [x] EventCard component — match `docs/STITCH_DESIGN.md` Dashboard spec (screenshot-based, no HTML file)
+- [x] Create event form (multi-step) — match `design/create-step1.html`, `create-step2.html`, `create-step3.html`
+- [x] Event detail page shell (server component) — fetch event SSR, match `design/event-detail.html` layout
+- [x] Edit event modal (coordinator only)
+- [x] Delete event with confirmation dialog
 
 ### Done when
 Full event lifecycle works. Dashboard shows events. Event detail page renders with SSR data.
