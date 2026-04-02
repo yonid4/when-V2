@@ -7,6 +7,8 @@ Group scheduling without the back-and-forth. Create an event, invite participant
 - **Backend:** FastAPI + Supabase (PostgreSQL) + Google OAuth/Calendar API
 - **Frontend:** Next.js 14 (App Router) + shadcn/ui + TanStack Query + Zustand
 
+---
+
 ## Dev setup
 
 Run backend and frontend in separate terminals. No Docker.
@@ -32,9 +34,32 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+---
+
+## Running tests
+
+### Backend
+
+```bash
+cd backend
+source venv/bin/activate
+pytest tests/ -v
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm run test
+```
+
+---
+
 ## Env vars
 
 See `backend/.env.example` and `frontend/.env.local.example` for required variables (Supabase keys, Google OAuth credentials, JWT secret).
+
+---
 
 ## Docs
 
@@ -42,5 +67,6 @@ See `backend/.env.example` and `frontend/.env.local.example` for required variab
 - [Data model](docs/DATA_MODEL.md)
 - [Tech stack](docs/TECH_STACK.md)
 - [Sprint plan](docs/SPRINT%20PLAN.md)
+- [Lessons learned](docs/LESSONS_LEARNED.md)
 - [Project rules](docs/CLAUDE.md)
 - [Stitch Design](docs/STITCH_DESIGN.md)
