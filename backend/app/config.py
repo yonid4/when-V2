@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     google_client_id: str
     google_client_secret: str
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+    google_calendar_redirect_uri: str = "http://localhost:8000/api/calendar-accounts/callback"
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 10080  # 7 days
