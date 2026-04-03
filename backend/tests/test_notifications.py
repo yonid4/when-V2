@@ -106,7 +106,7 @@ def test_mark_read_success(mock_dep_svc, mock_get_authed, mock_notif_svc):
     mock_get_authed.return_value = db
 
     notif = _make_notification_row()
-    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=notif)
+    db.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[notif])
 
     updated_notif = {**notif, "is_read": True}
     mock_notif_svc.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[updated_notif])
@@ -130,7 +130,7 @@ def test_mark_read_other_user(mock_dep_svc, mock_get_authed):
 
     # Notification belongs to someone else
     notif = _make_notification_row(user_id="some-other-user")
-    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=notif)
+    db.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[notif])
 
     response = client.post("/api/notifications/notif-uuid-1/read", headers=_auth_headers())
 
@@ -167,7 +167,7 @@ def test_take_action_accept(mock_dep_svc, mock_notif_authed, mock_notif_svc, moc
     def make_db_table(table_name):
         tbl = MagicMock()
         if table_name == "notifications":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=notif)
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[notif])
         elif table_name == "events":
             tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data={"coordinator_id": "other-user", "name": "Team Lunch"})
         elif table_name == "event_participants":

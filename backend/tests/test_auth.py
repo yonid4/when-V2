@@ -306,7 +306,7 @@ def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
         "inviter_id": "inviter-uuid-1",
         "invitee_email": "invited@example.com",
         "status": "pending",
-        "events": {"title": "Team Sync"},
+        "events": {"name": "Team Sync"},
     }
 
     mock_flow = MagicMock()
