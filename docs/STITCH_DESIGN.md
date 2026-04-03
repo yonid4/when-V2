@@ -28,14 +28,22 @@ Read this before touching any frontend file. It defines:
 **Route:** `app/page.tsx`
 **Design file:** `design/landing.html`
 
-Key elements to replicate:
-- Large "When." wordmark centered, terracotta color
-- Tagline: "Find a time that works for everyone."
-- Single "Sign in with Google" button with real Google SVG logo
-- Stacked invitation card decoration below the button (purely visual)
-- Ambient gradient blobs in background (subtle, pointer-events-none)
-- Footer micro-copy: "Making moments happen, one calendar at a time."
-- No nav bar on this page
+This is a full marketing landing page. All "Get Started" / "Create your first event" CTAs trigger the Google OAuth flow (`GET /auth/google`). There is no standalone login card — auth is initiated from any CTA.
+
+Key elements:
+- **Top nav** (sticky, `bg-surface/80 backdrop-blur-md`): "When." wordmark left, "Features" + "How it works" anchor links center (hidden on mobile), "Get Started" pill button right wired to OAuth
+- **Hero section** (two-column, `lg:grid-cols-2`):
+  - Left: `text-5xl md:text-7xl` headline "Group scheduling, *finally* painless" (italic `text-primary` on "finally"), subtitle paragraph, "Get Started" gradient button + "See how it works" text link with `ArrowRight` icon
+  - Right: Availability heatmap mockup card — "Sunday Dinner" event header with participant avatars (JD/AS/MK), 7-column × 3-row color grid (terracotta intensity scale), "Sunday at 7:00 PM is best" `secondary-container` chip
+- **"How it works" section** (`id="how-it-works"`, `bg-surface-container-low rounded-[4rem] mx-4 md:mx-12`): 3-step grid with numbered squares (01/02/03) in `bg-surface-container-lowest rounded-2xl`, tilt-on-hover animation, steps: "Create an event" / "Invite the group" / "Pick the winner"
+- **Features bento grid** (`id="features"`, `md:grid-cols-12`):
+  - 8-col: "Real availability, not guesses" with `RefreshCw` icon + tags ("Zero Overlaps", "Deep Integration")
+  - 4-col: "Mark your preferences" on `bg-tertiary-fixed` with heart icon
+  - 4-col: "Smart time proposals" on `bg-secondary-container` with `Sparkles` icon
+  - 8-col: Photo of friends at dinner table with gradient overlay caption "Focus on the gathering, not the grid."
+- **Bottom CTA banner** (`bg-gradient-to-br from-primary to-[#c4563a] rounded-[3rem]`): "Ready to stop playing calendar tag?" headline, "Create your first event" white button wired to OAuth, "Join 10,000+ groups" social proof
+- **Footer** (`bg-surface-container-low rounded-t-[3rem]`): "When." wordmark + copyright left, Privacy / Terms / Support / Twitter / Instagram links right
+- No ambient floating blobs on this page (removed from old design)
 
 ---
 

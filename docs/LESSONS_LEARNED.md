@@ -74,3 +74,41 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **`@/components/ui/popover` is not auto-installed — it must be created manually.**
   shadcn/ui components like `Popover` are not included in the base install; they need to be generated via `npx shadcn-ui@latest add popover` or written manually. If missing, Vite throws `Failed to resolve import` at transform time, preventing any test in any file that imports the component from running. A minimal hand-rolled implementation (using native React state) is sufficient when no Radix UI dependency is available.
+
+---
+
+## Sprint 4 — Calendar Integration & Busy Slot Sync
+
+### Backend
+
+- **The Write tool requires reading a file before overwriting it — even 1-line stubs.**
+  All three router stubs (`calendar_accounts.py`, `calendar_sources.py`, `busy_slots.py`) existed as placeholder files. The Write tool refuses to overwrite a file that hasn't been read in the current session with "File has not been read yet." Always read first even when you know the file is a stub.
+
+- **`busy_slots.user_id` references `auth.users(id)`, not `profiles(id)` — `service_client` is required for all writes.**
+  `busy_slots` rows are keyed to `auth.users` directly. RLS policies on that table prevent the `anon_client` (user-scoped) from inserting rows. All upserts to `busy_slots` must use `service_client`. Similarly, `calendar_accounts.credentials` stores raw OAuth tokens — never expose these via the `anon_client` path.
+
+- **Google Calendar OAuth uses a `state` parameter to carry `user_id` through the callback.**
+  The `/calendar-accounts/connect` endpoint stores `user_id` in the `state` query parameter sent to Google. The `/calendar-accounts/callback` endpoint reads it back from `state` (not from a session or cookie) to associate the returned credentials with the correct user. This is necessary because the callback runs without an authenticated request context.
+
+- **APScheduler must be started inside FastAPI's `lifespan` asynccontextmanager, not `@app.on_event`.**
+  `@app.on_event("startup")` is deprecated in FastAPI. The correct pattern is an `@asynccontextmanager` passed to `FastAPI(lifespan=...)`. The scheduler is created and started in the `lifespan` function before the `yield`, and shut down after. The `BackgroundScheduler` from `apscheduler.schedulers.background` works fine in a sync context inside the async lifespan.
+
+- **`is_write_calendar=True` must be exclusive per user — use a Supabase RPC to clear others atomically.**
+  When a user sets a calendar source as their write calendar, all other sources belonging to that user must be cleared atomically. This requires a Postgres function (`clear_write_calendar_for_user(p_user_id, p_exclude_source_id)`) invoked via `service_client.rpc(...)`. A Python-level loop of UPDATE queries is not atomic and risks partial state.
+
+- **`sync_event_participants` should include `status='invited'` participants, not only `'accepted'`.**
+  Invited participants who haven't responded yet may still need their busy slots synced so the coordinator can see provisional availability. The status filter uses `.in_("status", ["accepted", "invited"])`.
+
+- **Mocking `app.routers.busy_slots.service_client` for router-level tests.**
+  The `busy_slots` router calls `service_client` directly (to check coordinator authorization without going through a service). Router tests must patch both `app.routers.busy_slots.service_client` (for the coordinator check) and `app.services.sync_service.service_client` (for the actual sync). Patching only the service module leaves the router-level call unmocked and causes real DB hits.
+
+### Frontend
+
+- **`screen.getByText('Settings')` fails when both a nav link and an `<h1>` contain the same text.**
+  Two elements matched `getByText('Settings')`: the nav link and the page heading. The fix is `screen.getByRole('heading', { level: 1, name: 'Settings' })` which uniquely identifies the `<h1>`.
+
+- **Running `npx vitest run` from the repo root finds no test files.**
+  Vitest is configured relative to `frontend/`. Running it from the project root (without `cd frontend`) produces "No test files found". Always `cd frontend` first or use `cd frontend && npx vitest run`.
+
+- **The `venv/bin/pytest` path is the correct invocation for backend tests in this project.**
+  `python -m pytest` and `python3 -m pytest` both failed with import errors because the system Python isn't the venv Python. The correct command is `backend/venv/bin/pytest tests/ -v` (or `source venv/bin/activate` first).

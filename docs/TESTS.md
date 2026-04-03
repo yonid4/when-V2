@@ -448,4 +448,134 @@ beforeEach(() => {
 
 ---
 
+## Sprint 4 — Calendar Integration & Busy Slot Sync
+
+**Completed:** 2026-04-02
+**Result:** 13/13 new backend tests passing, 74/74 frontend tests passing (3 pre-existing failures in test_auth.py and test_notifications.py confirmed to predate Sprint 4)
+
+### Files Written
+
+| File | Domain | Tests |
+|------|--------|-------|
+| `backend/tests/test_calendar.py` | Calendar accounts router + service, calendar sources | 8 |
+| `backend/tests/test_sync.py` | Busy slots router (GET, sync endpoints, auth) | 5 |
+| `frontend/__tests__/sprint4/useCalendarAccounts.test.ts` | useCalendarAccounts, useDisconnectCalendarAccount, useUpdateCalendarSource hooks | 7 |
+| `frontend/__tests__/sprint4/useBusySlots.test.ts` | useEventBusySlots, useSyncCalendar, useSyncMyCalendar hooks | 6 |
+| `frontend/__tests__/sprint4/SettingsPage.test.tsx` | Settings page component | 8 |
+
+### Coverage
+
+#### Backend
+
+**test_calendar.py** (8 tests)
+- `GET /api/calendar-accounts` — returns connected accounts with nested sources for current user
+- `GET /api/calendar-accounts` — returns empty list when no accounts connected
+- `GET /api/calendar-accounts` — returns 403 when no auth token
+- `PATCH /api/calendar-sources/{id}` — toggles `is_enabled` on a source the user owns
+- `PATCH /api/calendar-sources/{id}` → 403 when source belongs to a different user
+- `PATCH /api/calendar-sources/{id}` → 404 when source does not exist
+- `DELETE /api/calendar-accounts/{id}` — disconnects account the user owns, returns 204
+- `DELETE /api/calendar-accounts/{id}` → 403 when account belongs to a different user
+
+**test_sync.py** (5 tests)
+- `GET /api/busy-slots` — returns current user's own busy slots
+- `GET /api/busy-slots/event/{uid}` — returns all participant busy slots for an event
+- `POST /api/busy-slots/sync` — triggers sync for current user, returns slot count
+- `POST /api/busy-slots/sync/event/{uid}` — coordinator triggers participant sync; returns 403 when non-coordinator calls it
+- `GET /api/busy-slots` — returns 403 when no auth token
+
+#### Frontend
+
+**useCalendarAccounts.test.ts** (7 tests)
+- `useCalendarAccounts` — fetches `GET /calendar-accounts`, returns array of accounts
+- `useCalendarAccounts` — returns empty array when no accounts connected
+- `useCalendarAccounts` — query is enabled by default (no `enabled` guard needed)
+- `useDisconnectCalendarAccount` — sends `DELETE /calendar-accounts/{id}` on mutate
+- `useDisconnectCalendarAccount` — invalidates `['calendar-accounts']` query on success
+- `useUpdateCalendarSource` — sends `PATCH /calendar-sources/{sourceId}` with payload
+- `useUpdateCalendarSource` — invalidates `['calendar-accounts']` query on success
+
+**useBusySlots.test.ts** (6 tests)
+- `useEventBusySlots` — fetches `GET /busy-slots/event/{uid}`, returns slots array
+- `useEventBusySlots` — query is disabled when `uid` is empty string
+- `useEventBusySlots` — query is enabled when `uid` is provided
+- `useSyncCalendar` — sends `POST /busy-slots/sync/event/{uid}` on mutate
+- `useSyncCalendar` — invalidates `['busy-slots', 'event', uid]` on success
+- `useSyncMyCalendar` — sends `POST /busy-slots/sync` on mutate
+
+**SettingsPage.test.tsx** (8 tests)
+- Renders `<h1>` heading with text "Settings" (checked via `getByRole('heading', { level: 1 })`)
+- Shows loading state while accounts are fetching
+- Shows empty state ("No calendars connected") when account list is empty
+- Renders connected account email address
+- Renders calendar source names with enabled/disabled toggle checkboxes
+- Clicking a source checkbox calls `updateSource` with toggled `is_enabled` value
+- Clicking Disconnect button calls `disconnectAccount` with the account id
+- Clicking "Sync Now" button calls `syncMyCalendar` mutation
+
+### Mock Patterns
+
+#### Backend — patching both router-level and service-level `service_client`
+```python
+# busy_slots router uses service_client for coordinator check
+# sync_service uses service_client for actual DB writes
+# Both must be patched independently
+@patch("app.services.sync_service.service_client")
+@patch("app.routers.busy_slots.service_client")
+def test_sync_event_coordinator(mock_router_svc, mock_sync_svc, ...):
+    # mock_router_svc controls the event lookup (coordinator check)
+    # mock_sync_svc controls the participant lookup + busy_slot upserts
+    ...
+```
+
+#### Backend — patching `app.services.calendar_service.service_client`
+```python
+# calendar_service uses service_client throughout (no anon_client)
+# Ownership checks work by joining through calendar_accounts
+@patch("app.services.calendar_service.service_client")
+@patch("app.dependencies.service_client")
+def test_update_source_forbidden(mock_dep_svc, mock_cal_svc):
+    source_row = {"id": SOURCE_ID, "calendar_accounts": {"user_id": "other-user"}}
+    mock_cal_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[source_row])
+    ...
+```
+
+#### Frontend — mocking hooks in SettingsPage tests
+```typescript
+vi.mock('@/hooks/useCalendarAccounts', () => ({
+  useCalendarAccounts: vi.fn(),
+  useDisconnectCalendarAccount: vi.fn(),
+  useUpdateCalendarSource: vi.fn(),
+}))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(useCalendarAccounts).mockReturnValue({
+    data: [mockAccount],
+    isLoading: false,
+  } as any)
+  vi.mocked(useDisconnectCalendarAccount).mockReturnValue({ mutate: mockDisconnect } as any)
+  vi.mocked(useUpdateCalendarSource).mockReturnValue({ mutate: mockUpdateSource } as any)
+})
+```
+
+#### Frontend — `getByRole` for heading disambiguation
+```typescript
+// WRONG — matches both nav link "Settings" and <h1>Settings</h1>
+screen.getByText('Settings')
+
+// CORRECT — uniquely matches the page heading
+screen.getByRole('heading', { level: 1, name: 'Settings' })
+```
+
+### Gotchas
+
+- **`screen.getByText('Settings')` fails when nav and heading share the same text.** Use `getByRole('heading', { level: 1, name: 'Settings' })` to target the `<h1>` specifically.
+- **`npx vitest run` must be run from `frontend/`, not the repo root.** Vitest config is scoped to the frontend directory — running from root finds no test files.
+- **`venv/bin/pytest` is the correct invocation.** `python -m pytest` and `python3 -m pytest` fail in this project because the active Python is not the venv Python. Use `cd backend && venv/bin/pytest tests/ -v`.
+- **3 pre-existing test failures in `test_auth.py` and `test_notifications.py` were confirmed to predate Sprint 4.** Verified by reverting Sprint 4 changes with `git stash` and re-running tests — same 3 failures occurred. Do not attribute these to Sprint 4 work.
+- **Router-level `service_client` in `busy_slots.py` must be patched separately from `sync_service.service_client`.** The router imports `service_client` directly for the coordinator ownership check. Missing this patch causes real DB calls during tests.
+
+---
+
 _Append new sprint sections below as sprints complete._

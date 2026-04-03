@@ -106,30 +106,35 @@ Full event lifecycle works. Dashboard shows events. Event detail page renders wi
 
 ---
 
-## Sprint 4 — Calendar integration & busy slot sync
+## Sprint 4 — Calendar integration & busy slot sync ✅ DONE
 
 **Design references:** `docs/STITCH_DESIGN.md` → Settings page
 
 **Goal:** Users can connect Google Calendar, select which calendars to sync, and busy slots appear on the event page.
 
 ### Backend
-- [ ] Google OAuth for calendar (separate scope — needs calendar.readonly + calendar.events)
-- [ ] `GET /api/calendar-accounts` — list connected accounts with their sources
-- [ ] `POST /api/calendar-accounts` — connect a new Google account (OAuth flow)
-- [ ] `DELETE /api/calendar-accounts/{id}` — disconnect, cascade delete sources + busy slots
-- [ ] `PUT /api/calendar-sources/{id}` — toggle is_enabled, toggle is_write_calendar
-- [ ] Sync service — fetch freebusy from Google Calendar API, upsert busy_slots
-- [ ] `POST /api/events/{uid}/sync` — manual sync for event's date range, all participants
-- [ ] `GET /api/events/{uid}/busy-slots` — return merged busy slots for all participants
-- [ ] APScheduler job — auto-sync all users with connected calendars every hour
+- [x] Google OAuth for calendar (separate scope — needs calendar.readonly + calendar.events)
+- [x] `GET /api/calendar-accounts` — list connected accounts with their sources
+- [x] `GET /api/calendar-accounts/connect` + `GET /api/calendar-accounts/callback` — Google OAuth flow (state carries user_id)
+- [x] `DELETE /api/calendar-accounts/{id}` — disconnect, cascade delete sources + busy slots
+- [x] `PATCH /api/calendar-sources/{id}` — toggle is_enabled, toggle is_write_calendar (exclusive per user via RPC)
+- [x] Sync service — fetch events from Google Calendar API, upsert busy_slots (dedup on provider_event_id + calendar_source_id)
+- [x] `POST /api/busy-slots/sync` — manual sync for current user
+- [x] `POST /api/busy-slots/sync/event/{uid}` — coordinator-only participant sync
+- [x] `GET /api/busy-slots` — current user's busy slots
+- [x] `GET /api/busy-slots/event/{uid}` — all participant busy slots for an event
+- [x] APScheduler job — auto-sync all users with connected calendars every hour (lifespan-based BackgroundScheduler)
 
 ### Frontend
-- [ ] `hooks/useCalendarAccounts.ts`
-- [ ] Settings page — match `design/settings.html` via `docs/STITCH_DESIGN.md` Settings section
-- [ ] Sync button on event page — triggers manual sync, shows last_synced_at, loading state
+- [x] `hooks/useCalendarAccounts.ts` — useCalendarAccounts, useDisconnectCalendarAccount, useUpdateCalendarSource
+- [x] `hooks/useBusySlots.ts` — useEventBusySlots, useSyncCalendar, useSyncMyCalendar
+- [x] Settings page — match `design/settings.html`, account list with source toggles, disconnect, sync
+- [x] Sync button on event page (EventDetailClient) — triggers `useSyncCalendar`, loading spinner state
+- [x] AvailabilityGrid wired with `busySlots` prop from `useEventBusySlots`
 
-### Done when
-User connects Google Calendar, selects calendars, syncs, and sees red busy blocks on event page.
+### Key discoveries → see `docs/LESSONS_LEARNED.md` Sprint 4 section
+
+> Tests written and passing — see `backend/tests/test_calendar.py`, `test_sync.py` and `frontend/__tests__/sprint4/`
 
 ---
 
