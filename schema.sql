@@ -161,6 +161,7 @@ create table calendar_sources (
 );
 
 create index calendar_sources_account_id_idx on calendar_sources(account_id);
+alter table calendar_sources add constraint calendar_sources_account_id_calendar_id_key unique (account_id, calendar_id);
 
 create trigger calendar_sources_updated_at
   before update on calendar_sources
@@ -366,6 +367,28 @@ create policy "proposed_times_select" on proposed_times for select using (
 -- notifications: own rows only (read); service role writes
 create policy "notifications_select_own" on notifications for select using (user_id = auth.uid());
 create policy "notifications_update_own" on notifications for update using (user_id = auth.uid());
+
+
+-- ============================================================
+-- FUNCTION: clear_write_calendar_for_user
+-- Called by update_calendar_source() to enforce is_write_calendar exclusivity.
+-- Clears is_write_calendar on all sources owned by p_user_id except p_exclude_source_id.
+-- ============================================================
+create or replace function public.clear_write_calendar_for_user(
+    p_user_id uuid,
+    p_exclude_source_id uuid
+)
+returns void
+language sql
+security definer
+as $$
+    update calendar_sources cs
+    set is_write_calendar = false
+    from calendar_accounts ca
+    where cs.account_id = ca.id
+      and ca.user_id = p_user_id
+      and cs.id != p_exclude_source_id;
+$$;
 
 
 -- ============================================================
