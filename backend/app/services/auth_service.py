@@ -145,10 +145,10 @@ def _upsert_calendar_account(user_id: str, user_info: dict, credentials: Credent
 
 
 def _process_pending_invitations(user_id: str, email: str) -> None:
-    """Find pending event_invitations by email, create participant rows + notify coordinator."""
+    """Find pending event_invitations by email, link the new user and notify them."""
     pending = (
         service_client.table("event_invitations")
-        .select("*")
+        .select("*, events(name)")
         .eq("invitee_email", email)
         .eq("status", "pending")
         .execute()
@@ -157,20 +157,16 @@ def _process_pending_invitations(user_id: str, email: str) -> None:
         return
 
     for invite in pending.data:
-        service_client.table("event_participants").upsert(
-            {"event_id": invite["event_id"], "user_id": user_id, "rsvp_status": "pending"}
-        ).execute()
-
-        service_client.table("event_invitations").update({"status": "accepted"}).eq("id", invite["id"]).execute()
+        service_client.table("event_invitations").update({"invitee_id": user_id}).eq("id", invite["id"]).execute()
 
         service_client.table("notifications").insert(
             {
-                "user_id": invite["inviter_id"],
+                "user_id": user_id,
                 "event_id": invite["event_id"],
-                "notification_type": "invite_accepted",
-                "title": "Invite accepted",
-                "message": "Someone accepted your event invitation.",
-                "metadata": {"event_id": invite["event_id"], "accepted_by_user_id": user_id},
+                "notification_type": "event_invitation",
+                "title": "You have been invited",
+                "message": f"You have been invited to {invite['events']['name']}.",
+                "metadata": {"event_id": invite["event_id"], "inviter_id": invite["inviter_id"]},
             }
         ).execute()
 

@@ -154,10 +154,10 @@ def get_event_by_uid(uid: str, current_user: User) -> EventResponse:
         db.table('events')
         .select('*')
         .eq('uid', uid)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if not result.data:
+    if result is None or not result.data:
         raise HTTPException(status_code=404, detail='Event not found')
 
     event_row = result.data
