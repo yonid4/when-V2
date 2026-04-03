@@ -8,18 +8,18 @@ import { z } from 'zod'
 import Link from 'next/link'
 import {
   RefreshCw,
-  UserPlus,
-  CalendarDays,
   MapPin,
   Trash2,
   Pencil,
   X,
   Check,
-  Star,
-  Bell,
   CircleUser,
 } from 'lucide-react'
 import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
+import { ParticipantList } from '@/components/event/ParticipantList'
+import { InviteInput } from '@/components/event/InviteInput'
+import { RsvpSelector } from '@/components/event/RsvpSelector'
+import { NotificationBell } from '@/components/notifications/NotificationBell'
 import type { EventWithParticipants, EventType } from '@/types'
 
 // ─── Edit modal ──────────────────────────────────────────────────────────────
@@ -273,9 +273,11 @@ function formatDateWindow(earliest: string, latest: string) {
 export default function EventDetailClient({
   event,
   isCoordinator,
+  currentUserId,
 }: {
   event: EventWithParticipants
   isCoordinator: boolean
+  currentUserId: string
 }) {
   const [showEdit, setShowEdit] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
@@ -292,9 +294,7 @@ export default function EventDetailClient({
             <Link href="/groups" className="text-on-surface-variant hover:text-primary transition-colors text-sm">Groups</Link>
           </nav>
           <div className="flex items-center gap-3">
-            <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-container transition-colors">
-              <Bell className="w-5 h-5 text-on-surface-variant" />
-            </button>
+            <NotificationBell />
             <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-container transition-colors">
               <CircleUser className="w-5 h-5 text-on-surface-variant" />
             </button>
@@ -371,56 +371,14 @@ export default function EventDetailClient({
               <RefreshCw className="w-5 h-5 text-primary mb-1" />
               Sync calendar
             </button>
-            <button className="flex flex-col items-center gap-1 bg-surface-container-lowest text-on-surface-variant p-3 rounded-xl hover:bg-surface-container-high transition-colors text-xs font-bold">
-              <UserPlus className="w-5 h-5 text-primary mb-1" />
-              Invite people
-            </button>
+            <InviteInput uid={event.uid} coordinatorId={event.coordinator_id} currentUserId={currentUserId} />
           </div>
 
+          {/* RSVP selector for non-coordinators */}
+          <RsvpSelector uid={event.uid} coordinatorId={event.coordinator_id} currentUserId={currentUserId} />
+
           {/* Participants */}
-          <div className="flex flex-col gap-4">
-            <h3 className="text-lg font-bold text-on-surface-variant px-1">
-              Participants ({event.participants.length})
-            </h3>
-            <div className="space-y-3 px-1">
-              {event.participants.map((p) => {
-                const isCoord = p.user_id === event.coordinator_id
-                return (
-                  <div key={p.user_id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="relative">
-                        <div className="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center overflow-hidden ring-2 ring-surface-container-lowest">
-                          {p.avatar_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={p.avatar_url} alt={p.full_name ?? ''} className="w-full h-full object-cover" />
-                          ) : (
-                            <span className="text-sm font-bold text-on-surface-variant">
-                              {(p.full_name ?? p.email_address ?? '?')[0].toUpperCase()}
-                            </span>
-                          )}
-                        </div>
-                        {isCoord && (
-                          <span className="absolute -top-1 -right-1 w-4 h-4 bg-tertiary-container text-on-tertiary-container rounded-full flex items-center justify-center">
-                            <Star className="w-2.5 h-2.5" />
-                          </span>
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-bold text-sm text-on-surface">{p.full_name ?? p.email_address}</p>
-                        {isCoord && (
-                          <p className="text-[10px] uppercase tracking-widest text-primary font-bold">Coordinator</p>
-                        )}
-                      </div>
-                    </div>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide
-                      ${p.rsvp_status === 'going' ? 'bg-secondary-container text-on-secondary-container' : 'bg-surface-container-high text-on-surface-variant'}`}>
-                      {p.rsvp_status ?? p.status}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+          <ParticipantList uid={event.uid} coordinatorId={event.coordinator_id} currentUserId={currentUserId} />
         </aside>
       </main>
 

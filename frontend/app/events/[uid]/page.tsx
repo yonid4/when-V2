@@ -47,5 +47,5 @@ export default async function EventDetailPage({
 
   const isCoordinator = !!currentUserId && event.coordinator_id === currentUserId
 
-  return <EventDetailClient event={event} isCoordinator={isCoordinator} />
+  return <EventDetailClient event={event} isCoordinator={isCoordinator} currentUserId={currentUserId ?? ''} />
 }
