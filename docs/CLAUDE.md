@@ -71,6 +71,7 @@ npx vitest run
 - Mock `lib/api` in component tests; test `lib/api` itself directly in `api.test.ts`
 - Use `useAuthStore.setState(...)` to reset Zustand between tests — re-importing does not reset store state
 - Always read `docs/LESSONS_LEARNED.md` before writing new tests — implementation details frequently differ from the design docs
+- After completing tests at the end of each sprint, append a new sprint section to `docs/TESTS.md` documenting: which test files were written, what each test covers, key mock patterns used, and any gotchas or failures encountered
 
 ---
 
@@ -226,12 +227,38 @@ Active subscriptions:
 
 ---
 
+## Git commit workflow
+
+When committing changes:
+
+1. **Check out the right branch first** — never commit to `main`. Use an existing feature branch if it matches the work (e.g. `feature/full-stack-implementation`), or create a new one (`git checkout -b feature/<short-description>`).
+
+2. **Group changes into logical commits** — split the staged files by concern before committing. Typical groups:
+   - Backend models + routers + services (one commit per feature domain if large, or one combined `feat:` commit)
+   - Backend tests
+   - Frontend hooks + components + stores
+   - Frontend pages / route files
+   - Docs / config
+
+3. **Propose the groups to the user** — before running any `git add` or `git commit`, list the proposed groups with their commit messages and wait for approval.
+
+4. **Commit message format** — follow conventional commits:
+   ```
+   <type>: <short description>
+   ```
+   Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`
+
+5. **After approval** — stage each group individually and commit in order. Never use `git add .` or `git add -A`.
+
+---
+
 ## Reference docs
 
 - Full architecture and folder structure: `docs/ARCHITECTURE.md`
 - Database schema with column details: `docs/DATA_MODEL.md`
 - All technology choices with reasoning: `docs/TECH_STACK.md`
 - Sprint breakdown with task checklists: `docs/SPRINT_PLAN.md`
+- Test documentation by sprint: `docs/TESTS.md`
 
 
 ## Design reference

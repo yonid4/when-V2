@@ -75,33 +75,34 @@ Full event lifecycle works. Dashboard shows events. Event detail page renders wi
 
 ---
 
-## Sprint 3 — Participants, invitations & notifications
+## Sprint 3 — Participants, invitations & notifications ✅ DONE
 
 **Design references:** `docs/STITCH_DESIGN.md` → Event Detail (right panel: participants section), Notification Bell
 
 **Goal:** Inviting users works (existing and new). Notification inbox works with real-time updates.
 
 ### Backend
-- [ ] `POST /api/events/{uid}/invite` — if user exists: create event_invitation + notification; if not: store with invitee_id=null
-- [ ] `PUT /api/invitations/{id}/respond` — accept: add to event_participants; decline: update status
-- [ ] `PUT /api/events/{uid}/participants/{user_id}/rsvp` — update rsvp_status (self only)
-- [ ] `PUT /api/events/{uid}/participants/{user_id}/permissions` — toggle can_invite (coordinator only)
-- [ ] `DELETE /api/events/{uid}/participants/{user_id}` — remove (coordinator, or self-removal)
-- [ ] `GET /api/notifications` — paginated, sorted by created_at DESC
-- [ ] `POST /api/notifications/{id}/read` — mark as read
-- [ ] `POST /api/notifications/{id}/action` — accept/decline from notification
+- [x] `POST /api/events/{uid}/invite` — if user exists: create event_invitation + notification; if not: store with invitee_id=null
+- [x] `PUT /api/invitations/{id}/respond` — accept: add to event_participants; decline: update status
+- [x] `PUT /api/events/{uid}/participants/{user_id}/rsvp` — update rsvp_status (self only)
+- [x] `PUT /api/events/{uid}/participants/{user_id}/permissions` — toggle can_invite (coordinator only)
+- [x] `DELETE /api/events/{uid}/participants/{user_id}` — remove (coordinator, or self-removal)
+- [x] `GET /api/notifications` — paginated, sorted by created_at DESC
+- [x] `POST /api/notifications/{id}/read` — mark as read
+- [x] `POST /api/notifications/{id}/action` — accept/decline from notification
 
 ### Frontend
-- [ ] `hooks/useParticipants.ts`, `hooks/useInvitations.ts`, `hooks/useNotifications.ts`
-- [ ] ParticipantList component — match `design/event-detail.html` participants section
-- [ ] InviteInput component — email field + submit, match `design/event-detail.html` actions section
-- [ ] NotificationBell component — match `docs/STITCH_DESIGN.md` Notification Bell spec
-- [ ] NotificationList dropdown — accept/decline inline actions
-- [ ] Supabase real-time subscription for notifications INSERT → increment notificationStore.unreadCount
-- [ ] RSVP selector on event page
+- [x] `hooks/useParticipants.ts`, `hooks/useInvitations.ts`, `hooks/useNotifications.ts`
+- [x] ParticipantList component — match `design/event-detail.html` participants section
+- [x] InviteInput component — email field + submit, match `design/event-detail.html` actions section
+- [x] NotificationBell component — match `docs/STITCH_DESIGN.md` Notification Bell spec
+- [x] NotificationList dropdown — accept/decline inline actions
+- [x] Supabase real-time subscription for notifications INSERT → increment notificationStore.unreadCount
+- [x] RSVP selector on event page
 
-### Done when
-Inviting an existing user sends them a notification. Accepting adds them to the event. Notification bell updates in real-time.
+### Key discoveries → see `docs/LESSONS_LEARNED.md` Sprint 3 section
+
+> Tests written and passing — see `backend/tests/test_participants.py`, `test_invitations.py`, `test_notifications.py` and `frontend/__tests__/sprint3/`
 
 ---
 
