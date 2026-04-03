@@ -71,7 +71,7 @@ def _make_participant_row(**overrides) -> dict:
 def _make_chain():
     """Create a fresh chainable mock (every builder method returns itself)."""
     chain = MagicMock()
-    for m in ("eq", "neq", "in_", "single"):
+    for m in ("eq", "neq", "in_", "single", "maybe_single"):
         getattr(chain, m).return_value = chain
     return chain
 
@@ -223,7 +223,7 @@ def test_get_event_by_uid_happy_path(mock_get_client):
     event_row = _make_event_row()
 
     events_table = db.table("events")
-    events_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=event_row)
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
 
     ep_table = db.table("event_participants")
     ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(
@@ -246,7 +246,7 @@ def test_get_event_by_uid_not_found(mock_get_client):
     mock_get_client.return_value = db
 
     events_table = db.table("events")
-    events_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=None)
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=None)
 
     with pytest.raises(HTTPException) as exc_info:
         event_service.get_event_by_uid("nonexistent", user)
@@ -265,7 +265,7 @@ def test_get_event_by_uid_access_denied(mock_get_client):
     event_row = _make_event_row(coordinator_id="user-1")
 
     events_table = db.table("events")
-    events_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=event_row)
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
 
     ep_table = db.table("event_participants")
     ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(
@@ -290,7 +290,7 @@ def test_update_event_happy_path(mock_get_client):
     updated_row = _make_event_row(name="Updated Name")
 
     events_table = db.table("events")
-    events_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=event_row)
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
     events_table.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[updated_row])
 
     ep_table = db.table("event_participants")
@@ -314,7 +314,7 @@ def test_update_event_marks_proposals_regen_on_window_change(mock_get_client):
     updated_row = _make_event_row(proposals_needs_regeneration=True)
 
     events_table = db.table("events")
-    events_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=event_row)
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
     events_table.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[updated_row])
 
     ep_table = db.table("event_participants")
@@ -340,7 +340,7 @@ def test_update_event_non_coordinator_forbidden(mock_get_client):
     event_row = _make_event_row(coordinator_id="user-1")
 
     events_table = db.table("events")
-    events_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=event_row)
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
 
     data = EventUpdate(name="Hacked")
 
@@ -362,7 +362,7 @@ def test_delete_event_notifies_participants(mock_get_client, mock_svc):
     event_row = {"id": "evt-uuid-1", "coordinator_id": "user-1", "name": "Team Standup"}
 
     events_table = db.table("events")
-    events_table.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=event_row)
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
     events_table.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
 
     ep_table = db.table("event_participants")

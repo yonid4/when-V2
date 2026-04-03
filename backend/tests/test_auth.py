@@ -289,8 +289,10 @@ def test_calendar_account_created_on_first_login(mock_build_flow, mock_svc):
 @patch("app.services.auth_service.build_oauth_flow")
 def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
     """New user signup with a pending invitation:
-    - invitation row gets invitee_id set
-    - a notification of type event_invitation is created for the new user
+    - invitee_id is set on the invitation row
+    - an event_invitation notification is created for the new user (invitee)
+    - invitation status remains 'pending'
+    - no event_participants row is inserted
     """
     user_info = {
         "id": "google-account-id",
@@ -304,6 +306,7 @@ def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
         "inviter_id": "inviter-uuid-1",
         "invitee_email": "invited@example.com",
         "status": "pending",
+        "events": {"title": "Team Sync"},
     }
 
     mock_flow = MagicMock()
@@ -385,22 +388,23 @@ def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
 
         auth_service.exchange_code_and_upsert_user("fake-code")
 
-    # A notification should have been created
+    # invitee_id is set on the invitation row
+    assert len(invitations_updated) == 1
+    assert invitations_updated[0].get("invitee_id") == "new-invited-user-uuid"
+    assert "status" not in invitations_updated[0]
+
+    # An event_invitation notification is created for the new user (invitee)
     assert len(notifications_inserted) == 1
     notif = notifications_inserted[0]
-    # The notification goes to the inviter (invite_accepted type is used in impl)
-    # The service creates an invite_accepted notification for the inviter
-    assert notif["notification_type"] in ("event_invitation", "invite_accepted")
+    assert notif["notification_type"] == "event_invitation"
+    assert notif["user_id"] == "new-invited-user-uuid"
     assert notif["event_id"] == "event-uuid-1"
 
-    # The invitation status was updated
-    assert len(invitations_updated) == 1
-    assert invitations_updated[0].get("status") == "accepted"
+    # Invitation status is NOT changed — remains pending
+    assert pending_invite["status"] == "pending"
 
-    # A participant row was upserted for the new user
-    assert len(participants_upserted) == 1
-    assert participants_upserted[0]["user_id"] == "new-invited-user-uuid"
-    assert participants_upserted[0]["event_id"] == "event-uuid-1"
+    # No participant row is created automatically
+    assert len(participants_upserted) == 0
 
 
 # ─── 11. test_jwt_contains_expected_claims ────────────────────────────────────
