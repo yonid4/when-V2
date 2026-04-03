@@ -16,11 +16,12 @@ import {
   CircleUser,
 } from 'lucide-react'
 import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
+import { useEventBusySlots, useSyncCalendar } from '@/hooks/useBusySlots'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
-import type { EventWithParticipants, EventType } from '@/types'
+import type { BusySlot, EventWithParticipants, EventType } from '@/types'
 
 // ─── Edit modal ──────────────────────────────────────────────────────────────
 
@@ -195,7 +196,7 @@ function DeleteModal({
 
 // ─── Availability grid (static shell) ────────────────────────────────────────
 
-function AvailabilityGrid() {
+function AvailabilityGrid({ busySlots }: { busySlots: BusySlot[] }) {
   const hours = ['09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM']
   const days = ['MON', 'TUE', 'WED', 'THU', 'FRI']
 
@@ -281,6 +282,8 @@ export default function EventDetailClient({
 }) {
   const [showEdit, setShowEdit] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
+  const { data: busySlots = [] } = useEventBusySlots(event.uid)
+  const { mutate: syncCalendar, isPending: isSyncing } = useSyncCalendar(event.uid)
 
   return (
     <>
@@ -313,7 +316,7 @@ export default function EventDetailClient({
               <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-primary-container/40 inline-block" /> Proposed</span>
             </div>
           </div>
-          <AvailabilityGrid />
+          <AvailabilityGrid busySlots={busySlots} />
         </section>
 
         {/* Right — info panel */}
@@ -367,9 +370,13 @@ export default function EventDetailClient({
             <button className="col-span-2 flex items-center justify-center gap-2 py-3.5 rounded-xl bg-gradient-to-br from-primary to-primary-container text-on-primary font-bold transition-all duration-300 hover:-translate-y-0.5 hover:shadow-warm-md">
               View proposed times
             </button>
-            <button className="flex flex-col items-center gap-1 bg-surface-container-lowest text-on-surface-variant p-3 rounded-xl hover:bg-surface-container-high transition-colors text-xs font-bold">
-              <RefreshCw className="w-5 h-5 text-primary mb-1" />
-              Sync calendar
+            <button
+              onClick={() => syncCalendar()}
+              disabled={isSyncing}
+              className="flex flex-col items-center gap-1 bg-surface-container-lowest text-on-surface-variant p-3 rounded-xl hover:bg-surface-container-high transition-colors text-xs font-bold disabled:opacity-60"
+            >
+              <RefreshCw className={`w-5 h-5 text-primary mb-1 ${isSyncing ? 'animate-spin' : ''}`} />
+              {isSyncing ? 'Syncing…' : 'Sync calendar'}
             </button>
             <InviteInput uid={event.uid} coordinatorId={event.coordinator_id} currentUserId={currentUserId} />
           </div>

@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const PUBLIC_PATHS = ['/', '/auth/callback']
+const PUBLIC_ONLY_PATHS = ['/', '/auth/callback']
 
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl
+  const token = req.cookies.get('token')?.value
 
-  // Allow public paths and Next.js internals
+  // Redirect authenticated users away from public-only pages
+  if (PUBLIC_ONLY_PATHS.includes(pathname) && token) {
+    return NextResponse.redirect(new URL('/dashboard', req.url))
+  }
+
+  // Allow public paths and Next.js internals through without auth check
   if (
-    PUBLIC_PATHS.includes(pathname) ||
+    PUBLIC_ONLY_PATHS.includes(pathname) ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
     pathname.startsWith('/favicon')
@@ -15,7 +21,6 @@ export function middleware(req: NextRequest): NextResponse {
     return NextResponse.next()
   }
 
-  const token = req.cookies.get('token')?.value
   if (!token) {
     return NextResponse.redirect(new URL('/', req.url))
   }
