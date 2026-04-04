@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Be_Vietnam_Pro:wght@300;400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "inverse-on-surface": "#f4f0ed",
+              "secondary-fixed-dim": "#afcdc0",
+              "on-surface": "#1c1b1a",
+              "outline-variant": "#dcc1b9",
+              "on-primary": "#ffffff",
+              "surface-variant": "#e6e2df",
+              "on-error": "#ffffff",
+              "error-container": "#ffdad6",
+              "on-primary-fixed-variant": "#7c2d13",
+              "primary": "#9b4428",
+              "tertiary-fixed": "#ffdcc4",
+              "on-background": "#1c1b1a",
+              "on-surface-variant": "#55423d",
+              "on-secondary": "#ffffff",
+              "on-tertiary-fixed-variant": "#6f3800",
+              "on-primary-fixed": "#3a0b00",
+              "tertiary-container": "#d6894a",
+              "surface-container-lowest": "#ffffff",
+              "secondary": "#486459",
+              "inverse-primary": "#ffb59e",
+              "on-tertiary-fixed": "#2f1400",
+              "primary-container": "#e67e5d",
+              "on-secondary-container": "#4c685d",
+              "surface-bright": "#fdf8f5",
+              "tertiary": "#8e4e14",
+              "surface": "#fdf8f5",
+              "primary-fixed": "#ffdbd0",
+              "secondary-container": "#c8e7d9",
+              "surface-dim": "#ddd9d6",
+              "surface-container-highest": "#e6e2df",
+              "on-primary-container": "#601a02",
+              "surface-tint": "#9b4428",
+              "surface-container-high": "#ece7e4",
+              "on-tertiary-container": "#522800",
+              "on-secondary-fixed": "#042018",
+              "surface-container": "#f1edea",
+              "background": "#fdf8f5",
+              "error": "#ba1a1a",
+              "tertiary-fixed-dim": "#ffb780",
+              "inverse-surface": "#31302e",
+              "primary-fixed-dim": "#ffb59e",
+              "outline": "#89726c",
+              "on-error-container": "#93000a",
+              "surface-container-low": "#f7f3f0",
+              "on-tertiary": "#ffffff",
+              "secondary-fixed": "#cae9db",
+              "on-secondary-fixed-variant": "#314c42"
+            },
+            fontFamily: {
+              "headline": ["Plus Jakarta Sans"],
+              "body": ["Be Vietnam Pro"],
+              "label": ["Be Vietnam Pro"]
+            },
+            borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body { font-family: 'Be Vietnam Pro', sans-serif; }
+        h1, h2, h3 { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface selection:bg-primary-fixed selection:text-on-primary-fixed">
+<!-- TopAppBar -->
+<header class="bg-[#fdf8f5]/80 backdrop-blur-md sticky top-0 z-50">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<div class="flex items-center gap-8">
+<span class="text-2xl font-bold text-[#9b4428] font-['Plus_Jakarta_Sans'] tracking-tight">When.</span>
+<nav class="hidden md:flex items-center gap-6">
+<a class="text-[#55423d] hover:text-[#9b4428] transition-colors duration-300 font-medium" href="#">Events</a>
+<a class="text-[#55423d] hover:text-[#9b4428] transition-colors duration-300 font-medium" href="#">Calendar</a>
+<a class="text-[#55423d] hover:text-[#9b4428] transition-colors duration-300 font-medium" href="#">Groups</a>
+<a class="text-[#9b4428] font-bold" href="#">Settings</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 rounded-full hover:bg-[#f7f3f0] transition-colors duration-300 text-[#9b4428] active:scale-90 transition-transform">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<div class="w-10 h-10 rounded-full overflow-hidden bg-surface-container-high border-2 border-primary-container/20">
+<img alt="User profile settings" class="w-full h-full object-cover" data-alt="close up portrait of a smiling woman with warm lighting and soft background bokeh" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCGq6cnFdVKZ08Xx_SJG7kvavVds5OmYIUGMzYk73-PZ2pWUS_WnPUqWNL5RzKwJ1iqb4KTgWxhowpP5sHqjzaHvnvN9ze6I_QGTxvpMOLSvPdZYfzk_tZ2rHF93WNyCmIxzRa_Jwq0g_xaDxkqN08hM5XETMoSS2Wrje8GFFgddbZ3FEkHORknaueNXKJKtjXQvE3uLK35sxbK-meyDMXrAetsEAQMvDZOHUF69Sw2hp_avNxaJGhKrCj4W6t6j3a4xNPlE2xn-K3r"/>
+</div>
+</div>
+</div>
+</header>
+<main class="max-w-4xl mx-auto px-6 py-12">
+<!-- Page Heading -->
+<header class="mb-12">
+<h1 class="text-4xl font-extrabold text-on-surface tracking-tight mb-2">Settings</h1>
+<p class="text-on-surface-variant tracking-wide">Manage your integrations and calendar preferences.</p>
+</header>
+<div class="flex flex-col gap-10">
+<!-- Calendar Accounts Section -->
+<section class="space-y-6">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="calendar_today">calendar_today</span>
+<h2 class="text-xl font-bold text-on-surface">Calendar Accounts</h2>
+</div>
+<div class="bg-surface-container-low rounded-xl p-8 space-y-8">
+<!-- Connected Account Header -->
+<div class="flex items-center justify-between flex-wrap gap-4">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-surface-container-lowest flex items-center justify-center">
+<span class="material-symbols-outlined text-primary" data-icon="google" style="font-variation-settings: 'FILL' 1;">google</span>
+</div>
+<div>
+<h3 class="font-bold text-lg">Google Calendar</h3>
+<p class="text-sm text-on-surface-variant">alex.rivera@gmail.com</p>
+</div>
+</div>
+<button class="px-5 py-2 text-sm font-semibold text-error bg-error-container/30 hover:bg-error-container/50 rounded-full transition-colors duration-300">
+                            Disconnect
+                        </button>
+</div>
+<!-- Calendar Sources List -->
+<div class="space-y-3">
+<p class="text-xs font-bold uppercase tracking-widest text-on-surface-variant px-2">Calendar Sources</p>
+<div class="space-y-1">
+<!-- Toggle Item 1 -->
+<div class="flex items-center justify-between p-4 bg-surface-container-lowest rounded-xl transition-all duration-300 hover:translate-y-[-2px]">
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 rounded-full bg-primary shadow-sm"></div>
+<span class="font-medium">Work &amp; Projects</span>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-high rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<!-- Toggle Item 2 -->
+<div class="flex items-center justify-between p-4 bg-surface-container-lowest rounded-xl transition-all duration-300 hover:translate-y-[-2px]">
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 rounded-full bg-secondary shadow-sm"></div>
+<span class="font-medium">Personal Schedule</span>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-high rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<!-- Toggle Item 3 -->
+<div class="flex items-center justify-between p-4 bg-surface-container-lowest rounded-xl transition-all duration-300 hover:translate-y-[-2px]">
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 rounded-full bg-tertiary-container shadow-sm"></div>
+<span class="font-medium">Family Shared</span>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-container-high rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+</div>
+<button class="w-full py-4 border-2 border-dashed border-outline-variant/40 rounded-xl text-primary font-bold hover:bg-white hover:border-primary/40 transition-all duration-300 active:scale-95 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+                        Connect another account
+                    </button>
+</div>
+</section>
+<!-- Preferences Section -->
+<section class="space-y-6">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary" data-icon="tune">tune</span>
+<h2 class="text-xl font-bold text-on-surface">Preferences</h2>
+</div>
+<div class="bg-surface-container-low rounded-xl p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+<!-- Timezone Selector -->
+<div class="space-y-2">
+<label class="block text-sm font-bold text-on-surface-variant px-1">Timezone</label>
+<div class="relative group">
+<select class="w-full appearance-none bg-surface-container-lowest border-none rounded-xl py-4 px-5 text-on-surface focus:ring-2 focus:ring-primary/20 cursor-pointer shadow-sm">
+<option>Pacific Standard Time (PST)</option>
+<option>Eastern Standard Time (EST)</option>
+<option>Central European Time (CET)</option>
+<option>Greenwich Mean Time (GMT)</option>
+</select>
+<div class="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant">
+<span class="material-symbols-outlined" data-icon="expand_more">expand_more</span>
+</div>
+</div>
+</div>
+<!-- Primary Calendar Provider -->
+<div class="space-y-2">
+<label class="block text-sm font-bold text-on-surface-variant px-1">Primary Provider</label>
+<div class="relative group">
+<select class="w-full appearance-none bg-surface-container-lowest border-none rounded-xl py-4 px-5 text-on-surface focus:ring-2 focus:ring-primary/20 cursor-pointer shadow-sm">
+<option>Google Calendar</option>
+<option>Outlook</option>
+<option>Apple iCloud</option>
+</select>
+<div class="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant">
+<span class="material-symbols-outlined" data-icon="expand_more">expand_more</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Danger Zone / Footer Action -->
+<footer class="mt-4 pt-8 border-t border-outline-variant/10 flex justify-between items-center">
+<p class="text-sm text-on-surface-variant">Last synced 4 minutes ago</p>
+<button class="bg-gradient-to-br from-primary to-primary-container text-white px-8 py-3 rounded-full font-bold shadow-[0_20px_40px_-15px_rgba(155,68,40,0.2)] hover:translate-y-[-2px] transition-all duration-500 active:scale-90">
+                    Save Changes
+                </button>
+</footer>
+</div>
+</main>
+<!-- BottomNavBar (Visible on mobile only) -->
+<nav class="md:hidden fixed bottom-0 left-0 right-0 bg-[#fdf8f5]/90 backdrop-blur-lg px-6 py-4 flex justify-around items-center z-50">
+<a class="flex flex-col items-center gap-1 text-[#55423d]" href="#">
+<span class="material-symbols-outlined" data-icon="event">event</span>
+<span class="text-[10px] font-bold">Events</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-[#55423d]" href="#">
+<span class="material-symbols-outlined" data-icon="calendar_month">calendar_month</span>
+<span class="text-[10px] font-bold">Calendar</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-[#55423d]" href="#">
+<span class="material-symbols-outlined" data-icon="groups">groups</span>
+<span class="text-[10px] font-bold">Groups</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-[#9b4428]" href="#">
+<span class="material-symbols-outlined" data-icon="settings" style="font-variation-settings: 'FILL' 1;">settings</span>
+<span class="text-[10px] font-bold">Settings</span>
+</a>
+</nav>
+</body></html>

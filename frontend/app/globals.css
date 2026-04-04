@@ -1,94 +1,168 @@
+@import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
+@custom-variant dark (&:is(.dark *));
+
+/*
+  @theme inline maps CSS custom properties → Tailwind utility classes.
+  Tailwind v4 generates utilities from --color-* variables defined here.
+  shadcn components use semantic names like `bg-background`, `text-foreground`,
+  `border-border` etc., so we define those here and point them at our design tokens.
+*/
+@theme inline {
+  /* ─── Fonts ─── */
+  --font-headline: var(--font-plus-jakarta-sans), "Plus Jakarta Sans", sans-serif;
+  --font-body:     var(--font-be-vietnam-pro), "Be Vietnam Pro", sans-serif;
+  --font-label:    var(--font-be-vietnam-pro), "Be Vietnam Pro", sans-serif;
+  --font-sans:     var(--font-body);
+
+  /* ─── Design Token Colors ─── */
+
+  /* Primary – Terracotta */
+  --color-primary:                    #9b4428;
+  --color-on-primary:                 #ffffff;
+  --color-primary-container:          #e67e5d;
+  --color-on-primary-container:       #601a02;
+  --color-primary-fixed:              #ffdbd0;
+  --color-primary-fixed-dim:          #ffb59e;
+  --color-on-primary-fixed:           #3a0b00;
+  --color-on-primary-fixed-variant:   #7c2d13;
+  --color-inverse-primary:            #ffb59e;
+  --color-surface-tint:               #9b4428;
+
+  /* Secondary – Forest Green */
+  --color-secondary:                  #486459;
+  --color-on-secondary:               #ffffff;
+  --color-secondary-container:        #c8e7d9;
+  --color-on-secondary-container:     #4c685d;
+  --color-secondary-fixed:            #cae9db;
+  --color-secondary-fixed-dim:        #afcdc0;
+  --color-on-secondary-fixed:         #042018;
+  --color-on-secondary-fixed-variant: #314c42;
+
+  /* Tertiary – Warm Amber */
+  --color-tertiary:                   #8e4e14;
+  --color-on-tertiary:                #ffffff;
+  --color-tertiary-container:         #d6894a;
+  --color-on-tertiary-container:      #522800;
+  --color-tertiary-fixed:             #ffdcc4;
+  --color-tertiary-fixed-dim:         #ffb780;
+  --color-on-tertiary-fixed:          #2f1400;
+  --color-on-tertiary-fixed-variant:  #6f3800;
+
+  /* Error */
+  --color-error:                      #ba1a1a;
+  --color-on-error:                   #ffffff;
+  --color-error-container:            #ffdad6;
+  --color-on-error-container:         #93000a;
+
+  /* Surfaces */
+  --color-background:                 #fdf8f5;
+  --color-on-background:              #1c1b1a;
+  --color-surface:                    #fdf8f5;
+  --color-on-surface:                 #1c1b1a;
+  --color-surface-variant:            #e6e2df;
+  --color-on-surface-variant:         #55423d;
+  --color-surface-dim:                #ddd9d6;
+  --color-surface-bright:             #fdf8f5;
+  --color-surface-container-lowest:   #ffffff;
+  --color-surface-container-low:      #f7f3f0;
+  --color-surface-container:          #f1edea;
+  --color-surface-container-high:     #ece7e4;
+  --color-surface-container-highest:  #e6e2df;
+  --color-inverse-surface:            #31302e;
+  --color-inverse-on-surface:         #f4f0ed;
+
+  /* Outline */
+  --color-outline:                    #89726c;
+  --color-outline-variant:            #dcc1b9;
+
+  /*
+    shadcn semantic aliases — these are the names shadcn components use
+    with @apply and utility classes like `bg-background`, `text-foreground`,
+    `border-border`, `bg-card`, etc.
+  */
+  --color-foreground:           #1c1b1a;
+  --color-card:                 #ffffff;
+  --color-card-foreground:      #1c1b1a;
+  --color-popover:              #ffffff;
+  --color-popover-foreground:   #1c1b1a;
+  --color-primary-foreground:   #ffffff;
+  --color-secondary-foreground: #ffffff;
+  --color-muted:                #f7f3f0;
+  --color-muted-foreground:     #55423d;
+  --color-accent:               #ece7e4;
+  --color-accent-foreground:    #1c1b1a;
+  --color-destructive:          #ba1a1a;
+  --color-border:               #dcc1b9;
+  --color-input:                #ffffff;
+  --color-ring:                 #9b4428;
+
+  /* ─── Border Radius ─── */
+  --radius:    1rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 1rem;
+  --radius-lg: 2rem;
+  --radius-xl: 3rem;
+}
+
+/* ─── Base Styles ─── */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-body);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-headline);
+  }
+
+  ::selection {
+    background-color: var(--color-primary-fixed);
+    color: var(--color-on-primary-fixed);
+  }
+
+  /* Warm-tinted scrollbar */
+  ::-webkit-scrollbar        { width: 6px; }
+  ::-webkit-scrollbar-track  { background: transparent; }
+  ::-webkit-scrollbar-thumb  { background: var(--color-outline-variant); border-radius: 10px; }
+}
+
+/* ─── Utilities ─── */
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
-}
 
-@layer base {
-  .theme {
-    --font-heading: var(--font-sans);
-    --font-sans: var(--font-sans);
+  /* Primary CTA gradient (135°, terracotta → salmon) */
+  .organic-gradient {
+    background: linear-gradient(135deg, #9b4428 0%, #e67e5d 100%);
   }
-  :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+
+  /* Warm ambient glow on headline text */
+  .text-glow {
+    text-shadow: 0 0 40px rgba(155, 68, 40, 0.1);
   }
-  .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+
+  /* Floating element ambient shadow (primary-tinted) */
+  .shadow-warm {
+    box-shadow: 0 20px 40px -15px rgba(155, 68, 40, 0.08);
   }
-  * {
-    @apply border-border outline-ring/50;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
-  html {
-    @apply font-sans;
+
+  .shadow-warm-md {
+    box-shadow: 0 20px 40px -15px rgba(155, 68, 40, 0.2);
   }
 }

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>When. | Set Availability</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Be+Vietnam+Pro:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-tertiary-fixed": "#2f1400",
+              "on-surface": "#1c1b1a",
+              "primary-fixed": "#ffdbd0",
+              "background": "#fdf8f5",
+              "surface-container": "#f1edea",
+              "on-surface-variant": "#55423d",
+              "surface-container-highest": "#e6e2df",
+              "primary-container": "#e67e5d",
+              "outline-variant": "#dcc1b9",
+              "on-secondary-fixed-variant": "#314c42",
+              "surface-container-low": "#f7f3f0",
+              "error-container": "#ffdad6",
+              "secondary-fixed-dim": "#afcdc0",
+              "on-primary-fixed-variant": "#7c2d13",
+              "inverse-surface": "#31302e",
+              "primary-fixed-dim": "#ffb59e",
+              "on-tertiary-container": "#522800",
+              "on-secondary": "#ffffff",
+              "surface-container-lowest": "#ffffff",
+              "tertiary-fixed-dim": "#ffb780",
+              "surface-dim": "#ddd9d6",
+              "on-primary-container": "#601a02",
+              "secondary": "#486459",
+              "error": "#ba1a1a",
+              "on-background": "#1c1b1a",
+              "surface-tint": "#9b4428",
+              "inverse-on-surface": "#f4f0ed",
+              "surface-bright": "#fdf8f5",
+              "on-secondary-container": "#4c685d",
+              "tertiary-fixed": "#ffdcc4",
+              "on-tertiary-fixed-variant": "#6f3800",
+              "on-primary": "#ffffff",
+              "outline": "#89726c",
+              "secondary-fixed": "#cae9db",
+              "surface-variant": "#e6e2df",
+              "surface": "#fdf8f5",
+              "on-tertiary": "#ffffff",
+              "on-error": "#ffffff",
+              "on-primary-fixed": "#3a0b00",
+              "on-error-container": "#93000a",
+              "tertiary-container": "#d6894a",
+              "secondary-container": "#c8e7d9",
+              "on-secondary-fixed": "#042018",
+              "tertiary": "#8e4e14",
+              "primary": "#9b4428",
+              "surface-container-high": "#ece7e4",
+              "inverse-primary": "#ffb59e"
+            },
+            fontFamily: {
+              "headline": ["Plus Jakarta Sans"],
+              "body": ["Be Vietnam Pro"],
+              "label": ["Be Vietnam Pro"]
+            },
+            borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body { font-family: 'Be Vietnam Pro', sans-serif; }
+        h1, h2, h3 { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-background text-on-surface selection:bg-primary-fixed min-h-screen flex flex-col">
+<!-- TopAppBar -->
+<nav class="fixed top-0 w-full z-50 flex justify-between items-center px-6 py-4 max-w-7xl mx-auto left-0 right-0 bg-[#fdf8f5]/80 backdrop-blur-md">
+<div class="text-2xl font-black text-[#9b4428] tracking-tighter font-['Plus_Jakarta_Sans']">When.</div>
+<div class="hidden md:flex items-center gap-8">
+<a class="text-[#55423d] font-medium hover:text-[#9b4428] transition-colors duration-300" href="#">Events</a>
+<a class="text-[#9b4428] border-b-2 border-[#9b4428] pb-1 font-medium" href="#">Groups</a>
+<a class="text-[#55423d] font-medium hover:text-[#9b4428] transition-colors duration-300" href="#">Calendar</a>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-[#55423d] hover:bg-surface-container rounded-full transition-all active:scale-95">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-[#55423d] hover:bg-surface-container rounded-full transition-all active:scale-95">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</nav>
+<!-- Main Content -->
+<main class="flex-grow pt-24 pb-32 px-6 max-w-3xl mx-auto w-full">
+<!-- Step Indicator -->
+<div class="flex items-center justify-between mb-12 px-4">
+<div class="flex flex-col items-center gap-2 group">
+<div class="w-10 h-10 rounded-full flex items-center justify-center bg-secondary-container text-on-secondary-container font-bold shadow-sm">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">check</span>
+</div>
+<span class="text-xs font-semibold text-on-secondary-container tracking-wider uppercase">Details</span>
+</div>
+<div class="flex-grow h-[2px] mx-4 bg-primary-container/30 mb-6"></div>
+<div class="flex flex-col items-center gap-2">
+<div class="w-12 h-12 rounded-full flex items-center justify-center bg-gradient-to-br from-primary to-primary-container text-white font-bold shadow-lg scale-110">
+                    2
+                </div>
+<span class="text-xs font-bold text-primary tracking-wider uppercase">Availability</span>
+</div>
+<div class="flex-grow h-[2px] mx-4 bg-surface-container-highest mb-6"></div>
+<div class="flex flex-col items-center gap-2 opacity-40">
+<div class="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container-highest text-on-surface-variant font-bold">
+                    3
+                </div>
+<span class="text-xs font-semibold text-on-surface-variant tracking-wider uppercase">Confirm</span>
+</div>
+</div>
+<!-- Section 1: Scheduling Window -->
+<section class="mb-10 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+<header>
+<h1 class="text-3xl font-extrabold text-on-surface tracking-tight mb-2">Find the perfect window</h1>
+<p class="text-on-surface-variant leading-relaxed">Define the timeframe and duration for your gathering. We'll find the gaps for everyone.</p>
+</header>
+<div class="space-y-6 bg-surface-container-low p-8 rounded-xl">
+<!-- Date Range Picker -->
+<div class="space-y-3">
+<label class="block text-sm font-bold text-on-surface-variant uppercase tracking-widest ml-1">Scheduling window</label>
+<div class="flex items-center gap-2">
+<div class="flex-grow flex items-center bg-surface-container-lowest px-6 py-4 rounded-full border border-outline-variant/20 focus-within:ring-2 ring-primary-container/30 transition-all">
+<span class="material-symbols-outlined text-primary mr-3">calendar_today</span>
+<input class="bg-transparent border-none focus:ring-0 w-full text-on-surface font-medium" readonly="" type="text" value="Oct 24, 2023"/>
+</div>
+<span class="text-outline font-bold">→</span>
+<div class="flex-grow flex items-center bg-surface-container-lowest px-6 py-4 rounded-full border border-outline-variant/20 focus-within:ring-2 ring-primary-container/30 transition-all">
+<input class="bg-transparent border-none focus:ring-0 w-full text-on-surface font-medium" readonly="" type="text" value="Oct 31, 2023"/>
+</div>
+</div>
+</div>
+<!-- Time Range & Duration -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="space-y-3">
+<label class="block text-sm font-bold text-on-surface-variant uppercase tracking-widest ml-1">Time range</label>
+<div class="flex items-center bg-surface-container-lowest px-6 py-4 rounded-full border border-outline-variant/20">
+<input class="bg-transparent border-none focus:ring-0 w-full text-center font-medium" type="text" value="9:00 AM"/>
+<span class="mx-2 text-outline-variant">→</span>
+<input class="bg-transparent border-none focus:ring-0 w-full text-center font-medium" type="text" value="6:00 PM"/>
+</div>
+</div>
+<div class="space-y-3">
+<label class="block text-sm font-bold text-on-surface-variant uppercase tracking-widest ml-1">Duration</label>
+<div class="flex bg-surface-container-lowest p-1 rounded-full border border-outline-variant/20 overflow-x-auto no-scrollbar">
+<button class="px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap bg-primary-container text-on-primary-container transition-all">30 min</button>
+<button class="px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap text-on-surface-variant hover:bg-surface-container-high transition-all">1 hr</button>
+<button class="px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap text-on-surface-variant hover:bg-surface-container-high transition-all">1.5 hr</button>
+<button class="px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap text-on-surface-variant hover:bg-surface-container-high transition-all">2 hr</button>
+<button class="px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap text-on-surface-variant hover:bg-surface-container-high transition-all">Custom</button>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Section 2: Participant Availability -->
+<section class="space-y-6">
+<div class="flex items-end justify-between">
+<div>
+<h2 class="text-xl font-bold text-on-surface">Participants</h2>
+<p class="text-sm text-on-surface-variant">Who's joining the discussion?</p>
+</div>
+</div>
+<div class="bg-surface-container-low p-6 rounded-xl space-y-6">
+<!-- Add Participant -->
+<div class="flex gap-3">
+<div class="relative flex-grow">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline">mail</span>
+<input class="w-full pl-12 pr-4 py-4 rounded-full bg-surface-container-lowest border-none focus:ring-2 ring-primary-container/30 text-on-surface placeholder:text-outline-variant" placeholder="Add by email..." type="email"/>
+</div>
+<button class="px-8 rounded-full bg-secondary text-on-secondary font-bold hover:opacity-90 transition-all active:scale-95 shadow-sm">
+                        Add
+                    </button>
+</div>
+<!-- Participant List -->
+<div class="space-y-3">
+<!-- Row 1 -->
+<div class="flex items-center justify-between p-4 bg-surface-container-lowest rounded-2xl group hover:shadow-md transition-all duration-300">
+<div class="flex items-center gap-4">
+<img alt="Sarah J." class="w-12 h-12 rounded-full object-cover ring-2 ring-primary-container/20" data-alt="close-up portrait of a smiling woman with glasses in a warm sunlit office setting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAunsKJP8qil0RmkpFIubw6nu_mf71mktQZuMwIvwOSyPdEMVFyUGVlHKKB19sYtmEgK_RP-ZZE8kFu_WS5IfQsFkTf3W9hkWGQi5-2CcEB5NsAfj8jD5fOi_AjIi2f_3ce3og_mRgTblR2lXK3Bz2eISQxbLONOw1C_UbmLRGvD9VGhw5o3hJqUDqCeDXbwr-WiRJPxge_WnTvWEIgWDN036COT2jNIMQMM9GgKTJ06dwJpjBNYQjrdcL4RCyjw1eJ3Nje3EG22ogf"/>
+<div>
+<h4 class="font-bold text-on-surface">Sarah Jenkins</h4>
+<p class="text-xs text-on-surface-variant">sarah.j@design.co</p>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1.5 px-3 py-1.5 bg-secondary-container/50 text-on-secondary-container rounded-full text-[11px] font-bold tracking-wide">
+<span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">calendar_today</span>
+                                INVITED
+                            </div>
+<button class="p-2 text-outline-variant hover:text-error transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+</div>
+<!-- Row 2 -->
+<div class="flex items-center justify-between p-4 bg-surface-container-lowest rounded-2xl group hover:shadow-md transition-all duration-300">
+<div class="flex items-center gap-4">
+<img alt="Marcus L." class="w-12 h-12 rounded-full object-cover ring-2 ring-primary-container/20" data-alt="professional headshot of a middle-aged man with a beard and kind eyes, neutral beige background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDMDd7VHPgcotS4GLLQIWyRO1vhSWuYNuiyW8nZmhlWtsFKPPTTmOQSnyhoysTprXd64Q_mG1BmIWboVh9S3R84Q-DhlgeBM2lSHYm9gW_oSURvi6ZQOI1xMw_9ZWhhk3wkoMJgcGA4vdzxs90vc0CaA6cQOWGyxfZvKq-havd-csjKhBKRRwzdi0lNDghLmxNOrC4X0UehVkgfjZ9JScVCQ2V9x546o_-7rN78NKgVTHdgq8PI2DrS6JgtZPLLR1OD6ZpAB5sVLpi8"/>
+<div>
+<h4 class="font-bold text-on-surface">Marcus Low</h4>
+<p class="text-xs text-on-surface-variant">m.low@studio.net</p>
+</div>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-highest text-on-surface-variant rounded-full text-[11px] font-bold tracking-wide">
+<span class="material-symbols-outlined text-[14px]">history</span>
+                                PENDING
+                            </div>
+<button class="p-2 text-outline-variant hover:text-error transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Bottom Navigation Buttons -->
+<div class="mt-16 flex items-center justify-between">
+<button class="px-8 py-4 rounded-full font-bold text-primary hover:bg-primary-fixed/30 transition-all flex items-center gap-2">
+<span class="material-symbols-outlined">arrow_back</span>
+                Back
+            </button>
+<button class="px-10 py-4 rounded-full bg-gradient-to-br from-primary to-primary-container text-white font-bold shadow-lg hover:shadow-primary/20 hover:translate-y-[-2px] transition-all active:scale-95 flex items-center gap-2">
+                Next: Confirmation
+                <span class="material-symbols-outlined">arrow_forward</span>
+</button>
+</div>
+</main>
+<!-- BottomNavBar (Mobile Only) -->
+<nav class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-3 bg-[#ffffff]/90 backdrop-blur-lg rounded-t-[3rem] shadow-[0_-10px_40px_-15px_rgba(155,68,40,0.12)]">
+<a class="flex flex-col items-center justify-center text-[#55423d] p-2" href="#">
+<span class="material-symbols-outlined">home_app_logo</span>
+<span class="font-['Be_Vietnam_Pro'] text-[11px] tracking-wide font-semibold mt-1">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center bg-gradient-to-br from-[#9b4428] to-[#e67e5d] text-white rounded-full p-3 mb-2 scale-110 shadow-lg translate-y-[-4px]" href="#">
+<span class="material-symbols-outlined">calendar_today</span>
+<span class="font-['Be_Vietnam_Pro'] text-[11px] tracking-wide font-semibold mt-1">Schedule</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#55423d] p-2" href="#">
+<span class="material-symbols-outlined">group_add</span>
+<span class="font-['Be_Vietnam_Pro'] text-[11px] tracking-wide font-semibold mt-1">Invite</span>
+</a>
+<a class="flex flex-col items-center justify-center text-[#55423d] p-2" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-['Be_Vietnam_Pro'] text-[11px] tracking-wide font-semibold mt-1">Settings</span>
+</a>
+</nav>
+</body></html>

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Be+Vietnam+Pro:wght@300;400;500;600&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Be+Vietnam+Pro', sans-serif;
+        }
+        h1, h2, h3, .brand-font {
+            font-family: 'Plus+Jakarta+Sans', sans-serif;
+        }
+        .step-active {
+            box-shadow: 0 0 0 2px #9b4428;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "inverse-on-surface": "#f4f0ed",
+                        "secondary-fixed-dim": "#afcdc0",
+                        "on-surface": "#1c1b1a",
+                        "outline-variant": "#dcc1b9",
+                        "on-primary": "#ffffff",
+                        "surface-variant": "#e6e2df",
+                        "on-error": "#ffffff",
+                        "error-container": "#ffdad6",
+                        "on-primary-fixed-variant": "#7c2d13",
+                        "primary": "#9b4428",
+                        "tertiary-fixed": "#ffdcc4",
+                        "on-background": "#1c1b1a",
+                        "on-surface-variant": "#55423d",
+                        "on-secondary": "#ffffff",
+                        "on-tertiary-fixed-variant": "#6f3800",
+                        "on-primary-fixed": "#3a0b00",
+                        "tertiary-container": "#d6894a",
+                        "surface-container-lowest": "#ffffff",
+                        "secondary": "#486459",
+                        "inverse-primary": "#ffb59e",
+                        "on-tertiary-fixed": "#2f1400",
+                        "primary-container": "#e67e5d",
+                        "on-secondary-container": "#4c685d",
+                        "surface-bright": "#fdf8f5",
+                        "tertiary": "#8e4e14",
+                        "surface": "#fdf8f5",
+                        "primary-fixed": "#ffdbd0",
+                        "secondary-container": "#c8e7d9",
+                        "surface-dim": "#ddd9d6",
+                        "surface-container-highest": "#e6e2df",
+                        "on-primary-container": "#601a02",
+                        "surface-tint": "#9b4428",
+                        "surface-container-high": "#ece7e4",
+                        "on-tertiary-container": "#522800",
+                        "on-secondary-fixed": "#042018",
+                        "surface-container": "#f1edea",
+                        "background": "#fdf8f5",
+                        "error": "#ba1a1a",
+                        "tertiary-fixed-dim": "#ffb780",
+                        "inverse-surface": "#31302e",
+                        "primary-fixed-dim": "#ffb59e",
+                        "outline": "#89726c",
+                        "on-error-container": "#93000a",
+                        "surface-container-low": "#f7f3f0",
+                        "on-tertiary": "#ffffff",
+                        "secondary-fixed": "#cae9db",
+                        "on-secondary-fixed-variant": "#314c42"
+                    },
+                    fontFamily: {
+                        "headline": ["Plus Jakarta Sans"],
+                        "body": ["Be Vietnam Pro"],
+                        "label": ["Be Vietnam Pro"]
+                    },
+                    borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-surface text-on-surface min-h-screen selection:bg-primary-fixed selection:text-on-primary-fixed">
+<!-- TopAppBar Shell -->
+<header class="bg-[#fdf8f5]/80 dark:bg-stone-950/80 backdrop-blur-md sticky top-0 z-50">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<div class="flex items-center gap-8">
+<span class="text-2xl font-bold text-[#9b4428] dark:text-[#e67e5d] font-['Plus_Jakarta_Sans'] tracking-tight">When.</span>
+<nav class="hidden md:flex gap-6 items-center">
+<a class="text-[#55423d] dark:text-stone-400 hover:bg-[#f7f3f0] dark:hover:bg-stone-800 transition-colors duration-300 px-3 py-1.5 rounded-lg font-medium text-sm" href="#">Events</a>
+<a class="text-[#55423d] dark:text-stone-400 hover:bg-[#f7f3f0] dark:hover:bg-stone-800 transition-colors duration-300 px-3 py-1.5 rounded-lg font-medium text-sm" href="#">Calendar</a>
+<a class="text-[#55423d] dark:text-stone-400 hover:bg-[#f7f3f0] dark:hover:bg-stone-800 transition-colors duration-300 px-3 py-1.5 rounded-lg font-medium text-sm" href="#">Groups</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined p-2 text-on-surface-variant hover:bg-[#f7f3f0] rounded-full transition-colors duration-300">notifications</button>
+<div class="w-10 h-10 rounded-full overflow-hidden border-2 border-primary-container">
+<img alt="User profile settings" class="w-full h-full object-cover" data-alt="Professional headshot of a friendly smiling man in a soft-lit studio with warm natural background tones" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDjyvBPRHEW6KMlG_4U6TZ6idZAgzgKYSbS0Q3FAeEmgjsXC59TdC2qZIXtu11mYkSgz741j7F_NFX42zKSgFty-GQvpHzAmjAz35utS0S1IbxH7msBIRBKksxMn7XQt9mFBPUNuY__b3pyNglmz2HeoFRbynRZcWKca564DaHG_L33PC_baHuUBsqpx8z9aNBpvc0WToC_DhosnwLXwZ0w69vwEnu7bKWsU6AX0D5IHDYIw9HvAX3FfkKzMwKJT0j6TY_a7VgVHh2H"/>
+</div>
+</div>
+</div>
+</header>
+<main class="max-w-4xl mx-auto px-6 py-12 md:py-20">
+<!-- Step Indicators -->
+<div class="flex items-center justify-between mb-16 relative">
+<div class="absolute top-1/2 left-0 w-full h-0.5 bg-surface-container-high -z-10 -translate-y-1/2 rounded-full"></div>
+<!-- Step 1: Active -->
+<div class="flex flex-col items-center gap-3 bg-surface px-4">
+<div class="w-10 h-10 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold shadow-[0_10px_20px_-5px_rgba(155,68,40,0.3)]">1</div>
+<span class="text-sm font-bold text-primary font-headline tracking-tight">Details</span>
+</div>
+<!-- Step 2 -->
+<div class="flex flex-col items-center gap-3 bg-surface px-4">
+<div class="w-10 h-10 rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center font-bold">2</div>
+<span class="text-sm font-medium text-on-surface-variant font-headline tracking-tight">Availability</span>
+</div>
+<!-- Step 3 -->
+<div class="flex flex-col items-center gap-3 bg-surface px-4">
+<div class="w-10 h-10 rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center font-bold">3</div>
+<span class="text-sm font-medium text-on-surface-variant font-headline tracking-tight">Confirm</span>
+</div>
+</div>
+<div class="bg-surface-container-lowest rounded-xl p-8 md:p-12 shadow-[0_20px_40px_-15px_rgba(155,68,40,0.04)] transition-all duration-500">
+<!-- Section Title -->
+<div class="mb-10">
+<h2 class="text-3xl font-extrabold text-on-surface tracking-tight mb-2">Create a New Event</h2>
+<p class="text-on-surface-variant font-medium">Let's start with the basics. What are we celebrating?</p>
+</div>
+<form class="space-y-10">
+<!-- Step 1 Content: Details -->
+<div class="space-y-8">
+<!-- Event Name -->
+<div class="space-y-3">
+<label class="text-sm font-bold text-on-surface-variant uppercase tracking-widest ml-1" for="event-name">Event Name</label>
+<input class="w-full bg-surface-container-low border-none rounded-xl px-6 py-4 text-lg focus:ring-2 focus:ring-primary-fixed focus:bg-white transition-all duration-300 placeholder:text-outline/50" id="event-name" placeholder="E.g., Sunday Brunch at the Park" type="text"/>
+</div>
+<!-- Type Selector (Asymmetric Bento Grid) -->
+<div class="space-y-3">
+<label class="text-sm font-bold text-on-surface-variant uppercase tracking-widest ml-1">Event Type</label>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+<!-- Meeting -->
+<label class="group cursor-pointer">
+<input class="hidden peer" name="event-type" type="radio"/>
+<div class="h-full p-6 rounded-xl bg-surface-container-low border-2 border-transparent peer-checked:border-primary peer-checked:bg-white group-hover:bg-surface-container-high transition-all duration-300 flex flex-col items-center justify-center gap-3 text-center">
+<span class="material-symbols-outlined text-3xl text-primary">groups</span>
+<span class="font-bold text-on-surface text-sm">Meeting</span>
+</div>
+</label>
+<!-- Social -->
+<label class="group cursor-pointer">
+<input checked="" class="hidden peer" name="event-type" type="radio"/>
+<div class="h-full p-6 rounded-xl bg-surface-container-low border-2 border-transparent peer-checked:border-primary peer-checked:bg-white group-hover:bg-surface-container-high transition-all duration-300 flex flex-col items-center justify-center gap-3 text-center">
+<span class="material-symbols-outlined text-3xl text-primary">celebration</span>
+<span class="font-bold text-on-surface text-sm">Social</span>
+</div>
+</label>
+<!-- Birthday -->
+<label class="group cursor-pointer">
+<input class="hidden peer" name="event-type" type="radio"/>
+<div class="h-full p-6 rounded-xl bg-surface-container-low border-2 border-transparent peer-checked:border-primary peer-checked:bg-white group-hover:bg-surface-container-high transition-all duration-300 flex flex-col items-center justify-center gap-3 text-center">
+<span class="material-symbols-outlined text-3xl text-primary">cake</span>
+<span class="font-bold text-on-surface text-sm">Birthday</span>
+</div>
+</label>
+<!-- Other -->
+<label class="group cursor-pointer">
+<input class="hidden peer" name="event-type" type="radio"/>
+<div class="h-full p-6 rounded-xl bg-surface-container-low border-2 border-transparent peer-checked:border-primary peer-checked:bg-white group-hover:bg-surface-container-high transition-all duration-300 flex flex-col items-center justify-center gap-3 text-center">
+<span class="material-symbols-outlined text-3xl text-primary">more_horiz</span>
+<span class="font-bold text-on-surface text-sm">Other</span>
+</div>
+</label>
+</div>
+</div>
+<!-- Description -->
+<div class="space-y-3">
+<label class="text-sm font-bold text-on-surface-variant uppercase tracking-widest ml-1" for="description">Description (Optional)</label>
+<textarea class="w-full bg-surface-container-low border-none rounded-xl px-6 py-4 text-base focus:ring-2 focus:ring-primary-fixed focus:bg-white transition-all duration-300 placeholder:text-outline/50" id="description" placeholder="Tell your guests a bit more about the plans..." rows="3"></textarea>
+</div>
+<!-- Location & Links -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="space-y-3">
+<label class="text-sm font-bold text-on-surface-variant uppercase tracking-widest ml-1" for="location">Location</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-primary">location_on</span>
+<input class="w-full bg-surface-container-low border-none rounded-xl pl-12 pr-6 py-4 text-base focus:ring-2 focus:ring-primary-fixed focus:bg-white transition-all duration-300 placeholder:text-outline/50" id="location" placeholder="Add a physical address" type="text"/>
+</div>
+</div>
+<div class="space-y-3">
+<label class="text-sm font-bold text-on-surface-variant uppercase tracking-widest ml-1" for="video-link">Video Call Link</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-primary">video_call</span>
+<input class="w-full bg-surface-container-low border-none rounded-xl pl-12 pr-6 py-4 text-base focus:ring-2 focus:ring-primary-fixed focus:bg-white transition-all duration-300 placeholder:text-outline/50" id="video-link" placeholder="Zoom, Meet, or Teams link" type="url"/>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer Navigation -->
+<div class="pt-10 flex flex-col-reverse md:flex-row items-center justify-between gap-6">
+<button class="text-on-surface-variant font-bold hover:text-primary transition-colors flex items-center gap-2 group px-6 py-3" type="button">
+<span class="material-symbols-outlined group-hover:-translate-x-1 transition-transform">arrow_back</span>
+                        Back to Dashboard
+                    </button>
+<button class="w-full md:w-auto px-10 py-4 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-xl font-bold shadow-[0_20px_40px_-15px_rgba(155,68,40,0.3)] hover:translate-y-[-2px] hover:shadow-[0_25px_50px_-12px_rgba(155,68,40,0.4)] transition-all duration-300 flex items-center justify-center gap-3 group" type="button">
+                        Next: Availability
+                        <span class="material-symbols-outlined group-hover:translate-x-1 transition-transform">arrow_forward</span>
+</button>
+</div>
+</form>
+</div>
+<!-- Secondary Info (Editorial Touch) -->
+<div class="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8">
+<div class="flex flex-col gap-4 p-6 rounded-xl bg-surface-container-low border-2 border-transparent">
+<span class="material-symbols-outlined text-primary text-3xl">auto_awesome</span>
+<h3 class="font-bold text-on-surface">Smart Suggestions</h3>
+<p class="text-sm text-on-surface-variant leading-relaxed">We'll help find the best gaps in everyone's calendar automatically.</p>
+</div>
+<div class="flex flex-col gap-4 p-6 rounded-xl bg-surface-container-low border-2 border-transparent">
+<span class="material-symbols-outlined text-primary text-3xl">group_add</span>
+<h3 class="font-bold text-on-surface">Seamless Sharing</h3>
+<p class="text-sm text-on-surface-variant leading-relaxed">One link to rule them all. No logins required for your guests to vote.</p>
+</div>
+<div class="flex flex-col gap-4 p-6 rounded-xl bg-surface-container-low border-2 border-transparent">
+<span class="material-symbols-outlined text-primary text-3xl">lock</span>
+<h3 class="font-bold text-on-surface">Private &amp; Secure</h3>
+<p class="text-sm text-on-surface-variant leading-relaxed">Only people with the secret link can see event details and suggest times.</p>
+</div>
+</div>
+</main>
+<!-- Bottom Mobile Nav -->
+<nav class="md:hidden fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-surface-container-high px-6 py-3 flex justify-around items-center z-50">
+<a class="flex flex-col items-center gap-1 text-primary" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">calendar_today</span>
+<span class="text-[10px] font-bold">Events</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-on-surface-variant" href="#">
+<span class="material-symbols-outlined">event_note</span>
+<span class="text-[10px] font-medium">Calendar</span>
+</a>
+<div class="relative -top-6">
+<button class="w-14 h-14 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-full shadow-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-3xl">add</span>
+</button>
+</div>
+<a class="flex flex-col items-center gap-1 text-on-surface-variant" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="text-[10px] font-medium">Groups</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-on-surface-variant" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="text-[10px] font-medium">Settings</span>
+</a>
+</nav>
+</body></html>

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Be_Vietnam_Pro:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "on-tertiary-fixed": "#2f1400",
+            "on-surface": "#1c1b1a",
+            "primary-fixed": "#ffdbd0",
+            "background": "#fdf8f5",
+            "surface-container": "#f1edea",
+            "on-surface-variant": "#55423d",
+            "surface-container-highest": "#e6e2df",
+            "primary-container": "#e67e5d",
+            "outline-variant": "#dcc1b9",
+            "on-secondary-fixed-variant": "#314c42",
+            "surface-container-low": "#f7f3f0",
+            "error-container": "#ffdad6",
+            "secondary-fixed-dim": "#afcdc0",
+            "on-primary-fixed-variant": "#7c2d13",
+            "inverse-surface": "#31302e",
+            "primary-fixed-dim": "#ffb59e",
+            "on-tertiary-container": "#522800",
+            "on-secondary": "#ffffff",
+            "surface-container-lowest": "#ffffff",
+            "tertiary-fixed-dim": "#ffb780",
+            "surface-dim": "#ddd9d6",
+            "on-primary-container": "#601a02",
+            "secondary": "#486459",
+            "error": "#ba1a1a",
+            "on-background": "#1c1b1a",
+            "surface-tint": "#9b4428",
+            "inverse-on-surface": "#f4f0ed",
+            "surface-bright": "#fdf8f5",
+            "on-secondary-container": "#4c685d",
+            "tertiary-fixed": "#ffdcc4",
+            "on-tertiary-fixed-variant": "#6f3800",
+            "on-primary": "#ffffff",
+            "outline": "#89726c",
+            "secondary-fixed": "#cae9db",
+            "surface-variant": "#e6e2df",
+            "surface": "#fdf8f5",
+            "on-tertiary": "#ffffff",
+            "on-error": "#ffffff",
+            "on-primary-fixed": "#3a0b00",
+            "on-error-container": "#93000a",
+            "tertiary-container": "#d6894a",
+            "secondary-container": "#c8e7d9",
+            "on-secondary-fixed": "#042018",
+            "tertiary": "#8e4e14",
+            "primary": "#9b4428",
+            "surface-container-high": "#ece7e4",
+            "inverse-primary": "#ffb59e"
+          },
+          fontFamily: {
+            "headline": ["Plus Jakarta Sans"],
+            "body": ["Be Vietnam Pro"],
+            "label": ["Be Vietnam Pro"]
+          },
+          borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      vertical-align: middle;
+    }
+    body { font-family: 'Be Vietnam Pro', sans-serif; }
+    h1, h2, h3 { font-family: 'Plus Jakarta Sans', sans-serif; }
+  </style>
+</head>
+<body class="bg-background text-on-surface min-h-screen selection:bg-primary-fixed-dim selection:text-on-primary-fixed">
+<!-- TopAppBar -->
+<header class="fixed top-0 w-full z-50 flex justify-between items-center px-6 py-4 max-w-7xl mx-auto left-0 right-0 bg-[#fdf8f5]/80 dark:bg-stone-900/80 backdrop-blur-md">
+<div class="text-2xl font-black text-[#9b4428] dark:text-[#e67e5d] tracking-tighter">When.</div>
+<nav class="hidden md:flex items-center gap-8">
+<a class="text-[#55423d] dark:text-stone-400 font-medium hover:text-[#9b4428] transition-colors duration-300" href="#">Events</a>
+<a class="text-[#55423d] dark:text-stone-400 font-medium hover:text-[#9b4428] transition-colors duration-300" href="#">Groups</a>
+<a class="text-[#55423d] dark:text-stone-400 font-medium hover:text-[#9b4428] transition-colors duration-300" href="#">Calendar</a>
+</nav>
+<div class="flex items-center gap-4 text-[#9b4428] dark:text-[#e67e5d]">
+<button class="material-symbols-outlined p-2 hover:bg-surface-container-high rounded-full transition-all">notifications</button>
+<button class="material-symbols-outlined p-2 hover:bg-surface-container-high rounded-full transition-all">account_circle</button>
+</div>
+</header>
+<main class="pt-24 pb-32 px-6 max-w-2xl mx-auto">
+<!-- Step Indicator -->
+<div class="flex items-center justify-between mb-12 px-4 relative">
+<div class="absolute top-1/2 left-0 w-full h-[2px] bg-surface-container-highest -translate-y-1/2 -z-10 mx-auto max-w-[85%] left-1/2 -translate-x-1/2"></div>
+<!-- Step 1 Done -->
+<div class="flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-xl" style="font-variation-settings: 'FILL' 1;">check</span>
+</div>
+<span class="text-xs font-semibold text-on-surface-variant tracking-wider uppercase">Details</span>
+</div>
+<!-- Step 2 Done -->
+<div class="flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-xl" style="font-variation-settings: 'FILL' 1;">check</span>
+</div>
+<span class="text-xs font-semibold text-on-surface-variant tracking-wider uppercase">Timing</span>
+</div>
+<!-- Step 3 Active -->
+<div class="flex flex-col items-center gap-2">
+<div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary-container text-on-primary flex items-center justify-center shadow-md scale-110">
+<span class="text-sm font-bold">3</span>
+</div>
+<span class="text-xs font-bold text-primary tracking-wider uppercase">Confirm</span>
+</div>
+</div>
+<!-- Summary Content -->
+<div class="space-y-8">
+<header class="text-center">
+<h1 class="text-4xl font-extrabold text-on-surface tracking-tight mb-2">Almost there.</h1>
+<p class="text-on-surface-variant font-medium">Review your invitation details before sending.</p>
+</header>
+<!-- Main Receipt Card -->
+<div class="bg-surface-container-lowest rounded-xl p-8 shadow-[0_20px_40px_-15px_rgba(155,68,40,0.06)] relative overflow-hidden">
+<!-- Aesthetic Accent -->
+<div class="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-primary to-primary-container opacity-80"></div>
+<!-- Badge -->
+<div class="flex justify-between items-start mb-6">
+<span class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-secondary-container text-on-secondary-container text-sm font-semibold">
+<span class="material-symbols-outlined text-lg" style="font-variation-settings: 'FILL' 1;">celebration</span>
+            Social
+          </span>
+</div>
+<!-- Event Name -->
+<h2 class="text-3xl font-black text-on-surface mb-8 tracking-tighter">Autumn Harvest Dinner</h2>
+<!-- Details Grid -->
+<div class="space-y-6">
+<!-- Description Row -->
+<div class="flex gap-4">
+<div class="mt-0.5">
+<span class="material-symbols-outlined text-primary">notes</span>
+</div>
+<div>
+<p class="text-on-surface-variant text-sm leading-relaxed">
+                Join us for an evening of seasonal flavors and warm company. We'll be serving a rustic three-course meal featuring locally sourced autumn produce.
+              </p>
+</div>
+</div>
+<!-- Location Row -->
+<div class="flex gap-4 items-center">
+<span class="material-symbols-outlined text-primary">location_on</span>
+<span class="text-on-surface font-medium">The Hearthstone Tavern</span>
+</div>
+<!-- Video Link Row -->
+<div class="flex gap-4 items-center">
+<span class="material-symbols-outlined text-primary">videocam</span>
+<span class="text-on-surface-variant italic text-sm">No virtual link attached</span>
+</div>
+<!-- Time Section -->
+<div class="bg-surface-container-low rounded-2xl p-5 space-y-4">
+<div class="flex justify-between items-center border-b border-outline-variant/20 pb-3">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">calendar_month</span>
+<span class="text-sm font-bold text-on-surface">Window</span>
+</div>
+<span class="text-sm text-on-surface-variant font-medium">Mar 31 – Apr 7</span>
+</div>
+<div class="flex justify-between items-center border-b border-outline-variant/20 pb-3">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">schedule</span>
+<span class="text-sm font-bold text-on-surface">Hours</span>
+</div>
+<span class="text-sm text-on-surface-variant font-medium">9:00 AM – 6:00 PM</span>
+</div>
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">timer</span>
+<span class="text-sm font-bold text-on-surface">Duration</span>
+</div>
+<span class="text-sm text-on-surface-variant font-medium">1 hour</span>
+</div>
+</div>
+<!-- Participants -->
+<div class="pt-4">
+<h3 class="text-sm font-bold text-on-surface mb-4">Participants (4)</h3>
+<div class="flex items-center gap-3 mb-2">
+<div class="flex -space-x-3 overflow-hidden">
+<img alt="Sarah" class="inline-block h-10 w-10 rounded-full ring-2 ring-surface-container-lowest" data-alt="portrait of a smiling woman with long brown hair in a bright office setting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDhIWrqe8GAOxaZOXZokiX9lvGFbmurDPh0dBAt5vO8Da6bMeO8spGeAZzsue7w3TMVwtQ7P6pUjk80hN1fdn7leTSHktIZuRMI5-Smjv7U4uc7ry2FAkMo61YQgfDIz18pQmoZv5aI2sWga1VnjIw0Ykb9yEadH2R7d3V3rZN_rMamSW9VH6ZIoqBdevr6skNC473sPIvatz8u3htn7v5hcEg1JEgsDCIMA2D2KjEtNHzqgDOMHwKE-3V8MCTopC15ZcYqNsslSU4i"/>
+<img alt="Marcus" class="inline-block h-10 w-10 rounded-full ring-2 ring-surface-container-lowest" data-alt="professional man with short dark hair and a friendly expression in outdoor lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDYoM_Wnu4E1s3LuE0GeMXQckhT8c38zL7fBi7rwKU_VPwsCWltV684m9aa9Cgof7w_A0Ff_dcltqGTPexfq2ifbIukYE6UHbEEl_b7x4eB-SGtooWgQQZqYg_DKHA-x1MAIRjEq0yk1ZhF4DiUnyNZ0X5QqpzXH6so_D8hF6H61u6KR50haXDsWpU1We-_DwXqNjM9jNfIbrRk2ai1-4VCk4eVy7qlfHpBQP_nuTeu5yAH4E3mXsHdN9IFxuoF9xolgpMkKEh_f6_y"/>
+<img alt="Elena" class="inline-block h-10 w-10 rounded-full ring-2 ring-surface-container-lowest" data-alt="close-up of a young woman with curly hair looking thoughtfully towards the side" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD4BDeR0TCvT76lEasyxMQITvWmyxqKHxXHsSTQa9qZYwsec6afjFXCo6F-oCOARy3Z2httdb-HT8Z7kkNwVH9tYiFmoMVBZFAoC_oSX8PFAwhQvLjH4ofA8BHNjED3lMOjOmyuw9BgJQnO4P4oar5jg_XoBYCLU0pqXpR6dj0T--1mA6uBGwppgd5mfghqpRQo4p7konwF949n7Z8JHVt1npB8TXQ7GNc7MESwOZ1BOQQrTGAXKPlzBOaYj4iRR8MdxlwasRfw3bli"/>
+<div class="flex h-10 w-10 items-center justify-center rounded-full bg-surface-container-highest text-xs font-bold ring-2 ring-surface-container-lowest text-on-surface-variant">
+                  +1
+                </div>
+</div>
+</div>
+<p class="text-xs text-on-surface-variant font-medium tracking-wide">Sarah Chen, Marcus Thorne, Elena Rossi, and Jamie Lee</p>
+</div>
+</div>
+</div>
+<!-- Action Footer -->
+<div class="flex flex-col items-center gap-6 pt-4">
+<button class="w-full py-5 rounded-xl bg-gradient-to-br from-[#9b4428] to-[#e67e5d] text-white font-bold text-lg shadow-[0_20px_40px_-15px_rgba(155,68,40,0.3)] hover:translate-y-[-4px] transition-all duration-500 active:scale-95">
+          Create Event
+        </button>
+<button class="text-primary font-bold flex items-center gap-2 hover:opacity-80 transition-opacity">
+<span class="material-symbols-outlined">arrow_back</span>
+          Back to edit
+        </button>
+</div>
+</div>
+</main>
+<!-- BottomNavBar (Suppressed for transactional wizard, but included for system consistency if needed elsewhere. Hidden on this screen as per "focused journey" rule.) -->
+<footer class="md:hidden fixed bottom-0 left-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-3 bg-[#ffffff]/90 dark:bg-stone-950/90 backdrop-blur-lg rounded-t-[3rem] shadow-[0_-10px_40px_-15px_rgba(155,68,40,0.12)] hidden">
+<div class="flex flex-col items-center justify-center text-[#55423d] dark:text-stone-400 p-2">
+<span class="material-symbols-outlined">home_app_logo</span>
+<span class="font-['Be_Vietnam_Pro'] text-[11px] tracking-wide font-semibold">Home</span>
+</div>
+<div class="flex flex-col items-center justify-center text-[#55423d] dark:text-stone-400 p-2">
+<span class="material-symbols-outlined">calendar_today</span>
+<span class="font-['Be_Vietnam_Pro'] text-[11px] tracking-wide font-semibold">Schedule</span>
+</div>
+<div class="flex flex-col items-center justify-center bg-gradient-to-br from-[#9b4428] to-[#e67e5d] text-white rounded-full p-3 mb-2 scale-110 shadow-lg">
+<span class="material-symbols-outlined">group_add</span>
+<span class="font-['Be_Vietnam_Pro'] text-[11px] tracking-wide font-semibold">Invite</span>
+</div>
+<div class="flex flex-col items-center justify-center text-[#55423d] dark:text-stone-400 p-2">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-['Be_Vietnam_Pro'] text-[11px] tracking-wide font-semibold">Settings</span>
+</div>
+</footer>
+</body></html>
