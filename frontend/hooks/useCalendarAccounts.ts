@@ -24,6 +24,13 @@ export function useDisconnectCalendarAccount() {
   })
 }
 
+export function useConnectCalendarAccount() {
+  return async () => {
+    const data = await api.get<{ url: string }>('/calendar-accounts/connect-url')
+    window.location.href = data.url
+  }
+}
+
 export function useUpdateCalendarSource() {
   const queryClient = useQueryClient()
   return useMutation({

@@ -24,6 +24,16 @@ export function useMarkRead() {
   })
 }
 
+export function useMarkAllRead() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<void>('/notifications/read-all'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY })
+    },
+  })
+}
+
 export function useTakeAction() {
   const queryClient = useQueryClient()
   return useMutation({

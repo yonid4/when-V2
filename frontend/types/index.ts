@@ -89,6 +89,7 @@ export interface Notification {
   id: string
   user_id: string
   event_id: string | null
+  event_uid: string | null
   notification_type: NotificationType
   title: string
   message: string
