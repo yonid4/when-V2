@@ -1,10 +1,12 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
 import { useNotifications, useMarkRead, useTakeAction } from '@/hooks/useNotifications'
 import type { Notification } from '@/types'
 
 export function NotificationList() {
+  const router = useRouter()
   const { data: notifications, isLoading } = useNotifications()
   const { mutate: markRead } = useMarkRead()
   const { mutate: takeAction, isPending: isActing } = useTakeAction()
@@ -44,7 +46,20 @@ export function NotificationList() {
           {n.notification_type === 'event_invitation' && !n.action_taken && (
             <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
               <button
-                onClick={() => takeAction({ notificationId: n.id, action: 'accept' })}
+                onClick={() => takeAction(
+                  { notificationId: n.id, action: 'accept' },
+                  {
+                    onSuccess: () => {
+                      const dest = n.event_uid ? `/events/${n.event_uid}` : '/dashboard'
+                      router.push(dest)
+                    },
+                    onError: (err) => {
+                      if (err.message === 'calendar_required') {
+                        router.push('/settings?connect_calendar=true')
+                      }
+                    },
+                  }
+                )}
                 disabled={isActing}
                 className="flex-1 py-1.5 rounded-lg bg-gradient-to-br from-primary to-primary-container text-on-primary text-xs font-bold disabled:opacity-60 transition-opacity"
               >

@@ -6,14 +6,23 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { NotificationList } from './NotificationList'
 import { useNotificationStore } from '@/stores/notificationStore'
+import { useNotifications, useMarkAllRead } from '@/hooks/useNotifications'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/authStore'
 
 export function NotificationBell() {
-  const { unreadCount, increment, reset } = useNotificationStore()
+  const { unreadCount, increment, reset, setCount } = useNotificationStore()
   const user = useAuthStore((s) => s.user)
   const queryClient = useQueryClient()
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  const { data: notifications } = useNotifications()
+  const { mutate: markAllRead } = useMarkAllRead()
+
+  useEffect(() => {
+    if (!notifications) return
+    const count = notifications.filter((n) => !n.is_read).length
+    setCount(count)
+  }, [notifications, setCount])
 
   useEffect(() => {
     if (!user?.id) return
@@ -43,7 +52,7 @@ export function NotificationBell() {
   }, [user?.id, increment, queryClient])
 
   return (
-    <Popover onOpenChange={(open) => { if (open) reset() }}>
+    <Popover onOpenChange={(open) => { if (open) { reset(); markAllRead() } }}>
       <PopoverTrigger asChild>
         <button className="relative w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-container transition-colors">
           <Bell className="w-5 h-5 text-primary" />
