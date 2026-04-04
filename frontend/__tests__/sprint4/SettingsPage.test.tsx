@@ -9,6 +9,7 @@ vi.mock('@/hooks/useCalendarAccounts', () => ({
   useCalendarAccounts: vi.fn(),
   useDisconnectCalendarAccount: () => ({ mutate: mockDisconnect, isPending: false }),
   useUpdateCalendarSource: () => ({ mutate: mockUpdateSource, isPending: false }),
+  useConnectCalendarAccount: () => vi.fn(),
 }))
 
 vi.mock('@/hooks/useBusySlots', () => ({
@@ -22,6 +23,7 @@ vi.mock('@/components/notifications/NotificationBell', () => ({
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
   usePathname: () => '/settings',
+  useSearchParams: () => ({ get: vi.fn().mockReturnValue(null) }),
 }))
 
 import { useCalendarAccounts } from '@/hooks/useCalendarAccounts'

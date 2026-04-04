@@ -43,11 +43,9 @@ describe('middleware', () => {
   })
 
   it('redirects to /dashboard when accessing / with a valid token', () => {
-    // Per the architecture: / is in PUBLIC_PATHS so middleware always allows it
-    // The middleware does NOT redirect / to /dashboard — that's the page's job
-    // Verifying middleware just passes through
     const req = makeRequest('/', 'some-jwt-token')
     const res = middleware(req)
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(307)
+    expect(res.headers.get('location')).toContain('/dashboard')
   })
 })

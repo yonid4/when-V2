@@ -4,6 +4,7 @@ import { NotificationBell } from '@/components/notifications/NotificationBell'
 
 const mockIncrement = vi.fn()
 const mockReset = vi.fn()
+const mockSetCount = vi.fn()
 
 vi.mock('@/stores/notificationStore', () => ({
   useNotificationStore: vi.fn(),
@@ -25,6 +26,8 @@ vi.mock('@/lib/supabase', () => ({
 
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQuery: vi.fn(() => ({ data: [], isLoading: false })),
+  useMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }))
 
 vi.mock('@/components/notifications/NotificationList', () => ({
@@ -48,6 +51,7 @@ describe('NotificationBell', () => {
       unreadCount: 0,
       increment: mockIncrement,
       reset: mockReset,
+      setCount: mockSetCount,
     } as any)
     vi.mocked(useAuthStore).mockReturnValue({ id: 'user-1', email_address: 'alice@example.com' } as any)
   })
@@ -69,6 +73,7 @@ describe('NotificationBell', () => {
       unreadCount: 3,
       increment: mockIncrement,
       reset: mockReset,
+      setCount: mockSetCount,
     } as any)
     render(<NotificationBell />)
     expect(screen.getByText('3')).toBeInTheDocument()
@@ -79,6 +84,7 @@ describe('NotificationBell', () => {
       unreadCount: 150,
       increment: mockIncrement,
       reset: mockReset,
+      setCount: mockSetCount,
     } as any)
     render(<NotificationBell />)
     expect(screen.getByText('99+')).toBeInTheDocument()

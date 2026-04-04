@@ -12,6 +12,10 @@ vi.mock('@/hooks/useNotifications', () => ({
   useTakeAction: () => ({ mutate: mockTakeAction, isPending: false }),
 }))
 
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}))
+
 import { useNotifications } from '@/hooks/useNotifications'
 
 function makeNotification(overrides: Partial<Notification> = {}): Notification {
@@ -77,7 +81,10 @@ describe('NotificationList', () => {
     } as any)
     render(<NotificationList />)
     fireEvent.click(screen.getByText('Accept'))
-    expect(mockTakeAction).toHaveBeenCalledWith({ notificationId: 'notif-1', action: 'accept' })
+    expect(mockTakeAction).toHaveBeenCalledWith(
+      { notificationId: 'notif-1', action: 'accept' },
+      expect.objectContaining({ onError: expect.any(Function) }),
+    )
   })
 
   it('calls markRead when non-invitation unread notification is clicked', () => {
