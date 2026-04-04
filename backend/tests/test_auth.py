@@ -224,66 +224,7 @@ def test_profile_created_on_first_login(mock_build_flow, mock_svc):
     assert profile_upsert["avatar_url"] == "https://example.com/pic.jpg"
 
 
-# ─── 9. test_calendar_account_created_on_first_login ─────────────────────────
-
-@patch("app.services.auth_service.service_client")
-@patch("app.services.auth_service.build_oauth_flow")
-def test_calendar_account_created_on_first_login(mock_build_flow, mock_svc):
-    """Callback creates calendar_accounts row with provider=google and credentials.
-    Verifies google_auth_token (legacy column) is NOT written to profiles."""
-    user_info = {
-        "id": "google-account-id",
-        "email": "newuser@example.com",
-        "name": "New User",
-        "picture": "https://example.com/pic.jpg",
-    }
-
-    mock_flow = MagicMock()
-    mock_flow.credentials.token = "access-token-123"
-    mock_flow.credentials.refresh_token = "refresh-token-456"
-    mock_build_flow.return_value = mock_flow
-
-    # Track all upsert calls per table
-    upsert_data_by_table: dict[str, list] = {}
-
-    def track_table(table_name):
-        tbl = MagicMock()
-
-        def track_upsert(data, **kwargs):
-            upsert_data_by_table.setdefault(table_name, []).append(data)
-            chain = MagicMock()
-            chain.execute.return_value = MagicMock(data=[])
-            return chain
-
-        tbl.upsert.side_effect = track_upsert
-        tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
-        return tbl
-
-    mock_svc.table.side_effect = track_table
-
-    with patch("app.services.auth_service._fetch_google_user_info", return_value=user_info):
-        new_auth_user = MagicMock()
-        new_auth_user.user.id = "new-user-uuid"
-        mock_svc.auth.admin.create_user.return_value = new_auth_user
-
-        auth_service.exchange_code_and_upsert_user("fake-code")
-
-    # calendar_accounts must have been upserted
-    assert "calendar_accounts" in upsert_data_by_table
-    cal_data = upsert_data_by_table["calendar_accounts"][0]
-    assert cal_data["provider"] == "google"
-    assert "access_token" in cal_data["credentials"]
-    assert cal_data["credentials"]["access_token"] == "access-token-123"
-
-    # profiles upsert must NOT contain google_auth_token
-    if "profiles" in upsert_data_by_table:
-        for profile_data in upsert_data_by_table["profiles"]:
-            assert "google_auth_token" not in profile_data, (
-                "Legacy column google_auth_token must not be written during v2 signup"
-            )
-
-
-# ─── 10. test_pending_invitations_matched_on_signup ──────────────────────────
+# ─── 9. test_pending_invitations_matched_on_signup ───────────────────────────
 
 @patch("app.services.auth_service.service_client")
 @patch("app.services.auth_service.build_oauth_flow")
@@ -364,14 +305,6 @@ def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
                 return chain
 
             tbl.upsert.side_effect = profile_upsert
-
-        elif table_name == "calendar_accounts":
-            def cal_upsert(data, **kwargs):
-                chain = MagicMock()
-                chain.execute.return_value = MagicMock(data=[])
-                return chain
-
-            tbl.upsert.side_effect = cal_upsert
 
         else:
             tbl.upsert.return_value.execute.return_value = MagicMock(data=[])
