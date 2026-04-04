@@ -578,4 +578,62 @@ screen.getByRole('heading', { level: 1, name: 'Settings' })
 
 ---
 
+## Sprint 4 (Post) — Auth, Calendar & UI Rework
+
+**Completed:** 2026-04-04
+**Result:** All tests passing after rework and bug fixes
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `backend/tests/test_auth.py` | Deleted `test_calendar_account_created_on_first_login`; removed dead `calendar_accounts` mock from `test_pending_invitations_matched_on_signup` |
+| `frontend/__tests__/auth/middleware.test.ts` | Updated "passes through `/` with token" → "redirects to `/dashboard` with token" (expects 307 + location `/dashboard`) |
+| `frontend/__tests__/sprint3/NotificationList.test.tsx` | Added `vi.mock('next/navigation', ...)` with `useRouter` stub — required after `NotificationList` gained `useRouter()` call |
+| `frontend/__tests__/sprint4/SettingsPage.test.tsx` | Added `useConnectCalendarAccount` to hook mock; added `useSearchParams` to `next/navigation` mock |
+
+### Tests needed (not yet written)
+The following behaviors were added during this rework but do not yet have test coverage. Write these at the start of Sprint 5 before beginning new sprint work:
+
+| Behavior | Suggested file |
+|----------|---------------|
+| `notificationStore.setCount` sets unreadCount to explicit value | `frontend/__tests__/sprint4post/notificationStore.test.ts` |
+| `NotificationBell` initializes unread count from fetched notifications on mount | `frontend/__tests__/sprint4post/NotificationBell.test.tsx` |
+| Accept invitation redirects to `/events/{uid}`, decline does not redirect | `frontend/__tests__/sprint4post/NotificationList.test.tsx` |
+| Create event form initializes step 2 date/time defaults on first open | `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` |
+| Create event form blocks submission when end date is before start date | `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` |
+| Create event form blocks submission when same-day end time <= start time | `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` |
+| Create event calls `api.post` for each participant email after creation | `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` |
+| Settings page write calendar radio group calls `updateSource` with `{ is_write_calendar: true }` | `frontend/__tests__/sprint4post/SettingsPage.test.tsx` |
+| `respond_to_invitation` with `accept` raises 422 when user has no `calendar_sources` | `backend/tests/test_invitations.py` |
+
+### Mock Patterns
+
+#### Frontend — useRouter stub for NotificationList tests
+```typescript
+// NotificationList now calls useRouter() for the calendar_required redirect.
+// Any test file rendering NotificationList must include this mock.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}))
+```
+
+#### Frontend — useConnectCalendarAccount mock shape
+```typescript
+// The hook returns { connect: asyncFn, isPending: boolean } — not { mutate, isPending }.
+// Mock it accordingly:
+useConnectCalendarAccount: () => ({ connect: vi.fn(), isPending: false }),
+```
+
+### Gotchas
+
+- **`NotificationList` now uses `useRouter()` — unmocked tests crash with "invariant expected app router to be mounted".** Any test file rendering `NotificationList` must mock `next/navigation` with at least `useRouter: () => ({ push: vi.fn(), replace: vi.fn() })`.
+- **Middleware test for public path behavior must be updated when middleware logic changes.** The `/` path is no longer always a pass-through — authenticated users are now redirected to `/dashboard` (307).
+- **`useConnectCalendarAccount` return shape is `{ connect, isPending }`, not `{ mutate, isPending }`.** Match the actual hook return shape exactly in mocks or tests will throw on `.connect is not a function`.
+- **`useSearchParams` must be in the `next/navigation` mock for any page that reads search params.** SettingsPage reads `connect_calendar` from search params on mount. Without the mock, the hook throws in jsdom.
+- **`test_calendar_account_created_on_first_login` was deleted intentionally.** The login flow no longer creates a `calendar_accounts` row. This test no longer reflects correct behavior and was removed, not skipped.
+- **Invitation loop in create event form must use `api.post` directly, not a hook.** Using `useState` to set the event uid and passing it to `useInvite` does not work because React state updates are async — the hook retains the empty string uid when the loop fires. Always use `api.post` directly when the URL segment is only known at call time inside an async callback.
+
+---
+
 _Append new sprint sections below as sprints complete._

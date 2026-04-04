@@ -112,3 +112,52 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **The `venv/bin/pytest` path is the correct invocation for backend tests in this project.**
   `python -m pytest` and `python3 -m pytest` both failed with import errors because the system Python isn't the venv Python. The correct command is `backend/venv/bin/pytest tests/ -v` (or `source venv/bin/activate` first).
+
+---
+
+## Sprint 4 (Post) — Auth, Calendar & UI Rework
+
+- **`NotificationList` calls `useRouter()` — all tests that render it must mock `next/navigation`.**
+  After adding `useRouter()` to `NotificationList` for the calendar-required redirect, every test that renders the component crashed with "invariant expected app router to be mounted". Fix: add `vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }))` to any test file that renders `NotificationList`.
+
+- **Middleware that redirects `/` to `/dashboard` for authenticated users must be reflected in tests.**
+  The middleware test for "passes through `/` with a valid token" became "redirects to `/dashboard` with a valid token" (status 307, location `/dashboard`). Any time middleware behavior changes for public paths, audit `middleware.test.ts` immediately.
+
+- **Calendar connect via `<a href>` strips the Authorization header — use a fetch-then-redirect pattern.**
+  Browser anchor navigation does not send the `Authorization: Bearer` header. The fix: add a `GET /api/calendar-accounts/connect-url` endpoint that returns `{ url }` as JSON, then redirect from the frontend using `window.location.href = url` after fetching with `api.get(...)`. The original `/connect` endpoint is kept but unused by the frontend.
+
+- **Login flow must request identity scopes only — calendar scopes belong to the explicit connect flow.**
+  Including `calendar.readonly` and `calendar.events` in the login OAuth flow causes users to see calendar permission requests at sign-in. Auth scopes must be `openid`, `email`, `profile` only. Calendar credentials are obtained separately during the explicit calendar connect flow and stored in `calendar_accounts`.
+
+- **`_upsert_calendar_account` must not be called from the login callback.**
+  The login callback only upserts the profile row, processes pending invitations, and issues the JWT. The `calendar_accounts` row is created only when the user explicitly connects a calendar via the connect flow. Calling it at login created orphaned `calendar_accounts` rows with no `calendar_sources`, causing silent sync failures.
+
+- **`<NotificationBell />` must be mounted via a shared `Navbar` component, not per-page.**
+  Mounting the bell only on the settings page left the dashboard and event pages with a dead static icon or no bell at all. Fix: create `components/layout/Navbar.tsx` and import it in each authenticated page (dashboard, settings, event detail). Do not add it to the root layout — landing and auth pages must not show the navbar.
+
+- **Users must have at least one `calendar_sources` row before accepting an event invitation.**
+  `invitation_service.respond_to_invitation` now checks for a connected calendar before accepting. If none exists it raises `HTTPException(422, detail="calendar_required")`. The frontend catches this specific detail string and redirects to `/settings?connect_calendar=true`.
+
+- **`GOOGLE_CALENDAR_REDIRECT_URI` must be explicitly set in `.env` — do not rely on the hardcoded default.**
+  The `Settings` class has a default of `http://localhost:8000/api/calendar-accounts/callback` but this must be present in `.env` explicitly. Missing it caused silent token exchange failures when the Google Cloud Console registered URI differed from the default in any way.
+
+- **Wrap all DB calls in the calendar callback with try/except and `exc_info=True`.**
+  The `/calendar-accounts/callback` endpoint had no try/except around `connect_google_account`. Any DB error (FK violation, RLS, schema mismatch) bubbled up as an unhandled 500 with no user-facing redirect and no traceback in logs. All service calls in OAuth callbacks must be wrapped with `logger.error(..., exc_info=True)` and redirect to an error page on failure.
+
+- **`flow.oauth2session.scope = None` suppresses scope validation and should be removed.**
+  This hack was added to suppress google-auth's scope mismatch check during the calendar OAuth callback. Removing it and passing scopes explicitly to `Flow.from_client_config` is the correct fix. The hack can cause subtle failures depending on the `requests-oauthlib` version.
+
+- **The `AvailabilityGrid` component is a static shell — busy slot rendering is not yet implemented.**
+  The `busySlots` prop is accepted and passed correctly from `useEventBusySlots`, but the component never reads it. All cell coloring, overlap detection, and timezone conversion logic is deferred to Sprint 5. The data pipeline (hook → prop) is confirmed working.
+
+- **Profile avatar in `Navbar` must use field names that actually exist on the stored user object.**
+  Read `authStore.ts` to confirm exact field names before implementing avatar rendering. If `avatar_url` or `full_name` is null, fall back to the first letter of `email_address`. Mismatched field names cause the avatar to silently render nothing.
+
+- **Unread notification count must be initialized from the fetched notification list, not only from real-time inserts.**
+  The `notificationStore.unreadCount` starts at 0 and only increments via Supabase real-time subscription on new inserts. On page load, existing unread notifications are never counted. Fix: in `NotificationBell.tsx`, add a `useEffect` that runs when the notifications query resolves and calls `setCount(notifications.filter(n => !n.is_read).length)`. Add a `setCount` action to `notificationStore` if it does not exist.
+
+- **Do not use `useState` + hook re-initialization to pass a dynamic URL segment to a mutation hook mid-flight.**
+  In the create event form, the pattern of `useState<string | null>(null)` + `useInvite(createdEventUid ?? '')` + `setCreatedEventUid(event.uid)` inside `onSuccess` does not work — React state updates are asynchronous and the hook does not re-render before the mutation loop runs. Every invite fires against the empty string uid and fails silently. Fix: call `api.post(`/events/${event.uid}/invite`, { email })` directly inside `onSuccess` using the uid returned from the create mutation, bypassing the hook entirely.
+
+- **Accept invitation should redirect to the event page, not stay on the current page.**
+  After `takeAction` with `action='accept'` succeeds, the frontend should navigate to `/events/{event_uid}`. The notification object includes enough data (either `event_uid` directly or via metadata) to construct the URL. Declining should not redirect.

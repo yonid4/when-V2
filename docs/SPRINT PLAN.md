@@ -131,10 +131,43 @@ Full event lifecycle works. Dashboard shows events. Event detail page renders wi
 - [x] Settings page — match `design/settings.html`, account list with source toggles, disconnect, sync
 - [x] Sync button on event page (EventDetailClient) — triggers `useSyncCalendar`, loading spinner state
 - [x] AvailabilityGrid wired with `busySlots` prop from `useEventBusySlots`
+- [x] Shared `Navbar` component (`components/layout/Navbar.tsx`) with "When." wordmark, `<NotificationBell />`, and user profile avatar with dropdown (Settings, Log out)
+- [x] Profile avatar dropdown — Settings link + logout (calls `authStore.clearAuth()`, redirects to `/`)
 
 ### Key discoveries → see `docs/LESSONS_LEARNED.md` Sprint 4 section
 
 > Tests written and passing — see `backend/tests/test_calendar.py`, `test_sync.py` and `frontend/__tests__/sprint4/`
+
+---
+
+## Sprint 4 (Post) — Auth, Calendar & UI Rework ✅ DONE
+
+**Goal:** Fix calendar OAuth flow, separate login from calendar scopes, enforce calendar requirement before joining events, consolidate navbar across all authenticated pages, and fix several UX bugs discovered during manual testing.
+
+### Backend
+- [x] `GET /api/calendar-accounts/connect-url` — returns `{ url }` as JSON instead of redirecting (fixes 403 caused by missing Authorization header on browser navigation)
+- [x] Separated login OAuth scopes (identity only) from calendar OAuth scopes (`calendar.readonly`, `calendar.events`)
+- [x] Removed `_upsert_calendar_account` call from login callback — calendar accounts created only via explicit connect flow
+- [x] Added try/except with `exc_info=True` logging around `connect_google_account` in calendar callback
+- [x] Removed `flow.oauth2session.scope = None` hack — scopes passed explicitly to `Flow.from_client_config`
+- [x] Added `GOOGLE_CALENDAR_REDIRECT_URI` to `.env` and `.env.example`
+- [x] `respond_to_invitation` now checks for connected `calendar_sources` before accepting — raises `422 calendar_required` if none found
+
+### Frontend
+- [x] Created `components/layout/Navbar.tsx` — shared navbar with wordmark, bell, and avatar dropdown
+- [x] Replaced inline headers on dashboard, settings, and event detail pages with `<Navbar />`
+- [x] Connect calendar button changed from `<a href>` to `<button>` calling `useConnectCalendarAccount` hook
+- [x] `NotificationList` redirects to `/settings?connect_calendar=true` when API returns `422 calendar_required`
+- [x] Settings page shows dismissible banner when `connect_calendar=true` search param is present
+- [x] Unread notification count initialized from fetched notification list on mount via `setCount` in `notificationStore`
+- [x] Write calendar radio group added to settings page — one write calendar allowed across all accounts and sources
+- [x] Create event form: participant emails collected in step 2 are sent as invitations after event creation using direct `api.post` calls (not hook-based)
+- [x] Create event form: step 2 date/time fields initialize with defaults on first open (start = today, end = 7 days from today, start time = 09:00, end time = 17:00)
+- [x] Create event form: date range validation — start date cannot be in the past, end date cannot be before start date, end time must be after start time when same day
+- [x] Accept invitation redirects to `/events/{event_uid}` after success — decline stays on current page
+
+### Done when
+Calendar connect flow works end-to-end. Login shows identity-only consent. Navbar with bell and avatar appears on all authenticated pages. Users without a connected calendar are gated from joining events. All UX bugs from manual testing resolved.
 
 ---
 
