@@ -1,9 +1,10 @@
 'use client'
 
-import Link from 'next/link'
-import { Calendar, Plus, Trash2, RefreshCw } from 'lucide-react'
-import { NotificationBell } from '@/components/notifications/NotificationBell'
-import { useCalendarAccounts, useDisconnectCalendarAccount, useUpdateCalendarSource } from '@/hooks/useCalendarAccounts'
+import { useSearchParams } from 'next/navigation'
+import { Calendar, Plus, Trash2, RefreshCw, X } from 'lucide-react'
+import { useState } from 'react'
+import { useCalendarAccounts, useDisconnectCalendarAccount, useUpdateCalendarSource, useConnectCalendarAccount } from '@/hooks/useCalendarAccounts'
+import { Navbar } from '@/components/layout/Navbar'
 import { useSyncMyCalendar } from '@/hooks/useBusySlots'
 import type { CalendarSource } from '@/types'
 
@@ -12,24 +13,29 @@ export default function SettingsPage() {
   const disconnect = useDisconnectCalendarAccount()
   const updateSource = useUpdateCalendarSource()
   const sync = useSyncMyCalendar()
+  const connectCalendar = useConnectCalendarAccount()
+  const searchParams = useSearchParams()
+  const [bannerDismissed, setBannerDismissed] = useState(false)
+  const showCalendarBanner = searchParams.get('connect_calendar') === 'true' && !bannerDismissed
+
+  async function handleConnectCalendar() {
+    await connectCalendar()
+  }
 
   return (
     <>
-      {/* Top Nav */}
-      <header className="sticky top-0 z-50 bg-surface/80 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/dashboard" className="text-2xl font-black text-primary tracking-tighter">When.</Link>
-          <nav className="hidden md:flex items-center gap-8">
-            <Link href="/dashboard" className="text-on-surface-variant hover:text-primary transition-colors text-sm">Events</Link>
-            <Link href="/settings" className="text-primary font-bold text-sm">Settings</Link>
-          </nav>
-          <div className="flex items-center gap-3">
-            <NotificationBell />
-          </div>
-        </div>
-      </header>
+      <Navbar />
 
       <main className="max-w-4xl mx-auto px-6 py-12">
+        {showCalendarBanner && (
+          <div className="mb-8 flex items-center justify-between gap-4 px-5 py-4 rounded-xl bg-primary-fixed text-on-surface">
+            <p className="text-sm font-semibold">You need to connect a calendar before joining events.</p>
+            <button onClick={() => setBannerDismissed(true)} className="shrink-0 p-1 rounded-full hover:bg-surface-container/40 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         <header className="mb-12">
           <h1 className="text-4xl font-extrabold text-on-surface tracking-tight mb-2">Settings</h1>
           <p className="text-on-surface-variant tracking-wide">Manage your integrations and calendar preferences.</p>
@@ -82,12 +88,15 @@ export default function SettingsPage() {
                         Calendar Sources
                       </p>
                       <div className="space-y-1">
-                        {account.sources.map((source: CalendarSource) => (
+                        {[...account.sources].sort((a, b) => a.calendar_name.localeCompare(b.calendar_name)).map((source: CalendarSource) => (
                           <SourceRow
                             key={source.id}
                             source={source}
                             onToggle={(enabled) =>
                               updateSource.mutate({ sourceId: source.id, data: { is_enabled: enabled } })
+                            }
+                            onSetWrite={() =>
+                              updateSource.mutate({ sourceId: source.id, data: { is_write_calendar: true } })
                             }
                           />
                         ))}
@@ -98,13 +107,13 @@ export default function SettingsPage() {
               ))}
 
               {/* Connect another account */}
-              <a
-                href="/api/calendar-accounts/connect"
+              <button
+                onClick={handleConnectCalendar}
                 className="w-full py-4 border-2 border-dashed border-outline-variant/40 rounded-xl text-primary font-bold hover:bg-white hover:border-primary/40 transition-all duration-300 active:scale-95 flex items-center justify-center gap-2"
               >
                 <Plus className="w-5 h-5" />
                 Connect another account
-              </a>
+              </button>
             </div>
           </section>
 
@@ -133,9 +142,11 @@ export default function SettingsPage() {
 function SourceRow({
   source,
   onToggle,
+  onSetWrite,
 }: {
   source: CalendarSource
   onToggle: (enabled: boolean) => void
+  onSetWrite: () => void
 }) {
   return (
     <div className="flex items-center justify-between p-4 bg-surface-container-lowest rounded-xl transition-all duration-300 hover:-translate-y-0.5">
@@ -145,21 +156,33 @@ function SourceRow({
           style={{ backgroundColor: source.color ?? 'var(--color-primary)' }}
         />
         <span className="font-medium">{source.calendar_name}</span>
-        {source.is_write_calendar && (
-          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-primary-container/30 text-on-primary-container rounded-full">
-            Write
-          </span>
-        )}
       </div>
-      <label className="relative inline-flex items-center cursor-pointer">
-        <input
-          type="checkbox"
-          className="sr-only peer"
-          checked={source.is_enabled}
-          onChange={(e) => onToggle(e.target.checked)}
-        />
-        <div className="w-11 h-6 bg-surface-container-high rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
-      </label>
+      <div className="flex items-center gap-4">
+        <label
+          className="flex items-center gap-2 cursor-pointer group"
+          title="Events will be added to this calendar when you finalize a meeting"
+        >
+          <input
+            type="radio"
+            name="write-calendar"
+            checked={source.is_write_calendar}
+            onChange={onSetWrite}
+            className="accent-primary w-4 h-4 cursor-pointer"
+          />
+          <span className="text-xs font-semibold text-on-surface-variant group-hover:text-primary transition-colors">
+            Write calendar
+          </span>
+        </label>
+        <label className="relative inline-flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            className="sr-only peer"
+            checked={source.is_enabled}
+            onChange={(e) => onToggle(e.target.checked)}
+          />
+          <div className="w-11 h-6 bg-surface-container-high rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
+        </label>
+      </div>
     </div>
   )
 }

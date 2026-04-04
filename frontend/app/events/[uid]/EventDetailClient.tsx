@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import Link from 'next/link'
 import {
   RefreshCw,
   MapPin,
@@ -13,14 +12,13 @@ import {
   Pencil,
   X,
   Check,
-  CircleUser,
 } from 'lucide-react'
 import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
 import { useEventBusySlots, useSyncCalendar } from '@/hooks/useBusySlots'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
-import { NotificationBell } from '@/components/notifications/NotificationBell'
+import { Navbar } from '@/components/layout/Navbar'
 import type { BusySlot, EventWithParticipants, EventType } from '@/types'
 
 // ─── Edit modal ──────────────────────────────────────────────────────────────
@@ -287,23 +285,7 @@ export default function EventDetailClient({
 
   return (
     <>
-      {/* Top Nav */}
-      <header className="sticky top-0 z-50 bg-surface/80 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/dashboard" className="text-2xl font-black text-primary tracking-tighter">When.</Link>
-          <nav className="hidden md:flex items-center gap-8">
-            <Link href="/dashboard" className="text-primary font-bold text-sm">Events</Link>
-            <Link href="/calendar" className="text-on-surface-variant hover:text-primary transition-colors text-sm">Calendar</Link>
-            <Link href="/groups" className="text-on-surface-variant hover:text-primary transition-colors text-sm">Groups</Link>
-          </nav>
-          <div className="flex items-center gap-3">
-            <NotificationBell />
-            <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-container transition-colors">
-              <CircleUser className="w-5 h-5 text-on-surface-variant" />
-            </button>
-          </div>
-        </div>
-      </header>
+      <Navbar />
 
       <main className="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row gap-8">
         {/* Left — availability grid */}

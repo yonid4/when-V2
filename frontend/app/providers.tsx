@@ -1,7 +1,28 @@
 'use client'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useAuthStore } from '@/stores/authStore'
+import { api } from '@/lib/api'
+import { User } from '@/types'
+
+function AuthRehydrator() {
+  const setUser = useAuthStore((s) => s.setUser)
+  const user = useAuthStore((s) => s.user)
+
+  useEffect(() => {
+    if (user) return
+    const token = localStorage.getItem('token')
+    if (!token) return
+    api.get<User>('/auth/me').then((fetchedUser) => {
+      setUser(fetchedUser, token)
+    }).catch(() => {
+      localStorage.removeItem('token')
+    })
+  }, [])
+
+  return null
+}
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -16,5 +37,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
       })
   )
 
-  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthRehydrator />
+      {children}
+    </QueryClientProvider>
+  )
 }

@@ -1,9 +1,11 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { Plus, Calendar, CalendarCheck, ExternalLink, Bell, CircleUser } from 'lucide-react'
+import { Plus, Calendar, CalendarCheck, ExternalLink } from 'lucide-react'
+
 import type { EventWithParticipants } from '@/types'
 import EventCard from '@/components/dashboard/EventCard'
+import { Navbar } from '@/components/layout/Navbar'
 
 async function getEvents(token: string): Promise<EventWithParticipants[]> {
   const res = await fetch(`${process.env.API_URL}/api/events`, {
@@ -26,27 +28,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-surface">
-      {/* Top Nav */}
-      <header className="sticky top-0 z-50 bg-surface/80 backdrop-blur-md border-b-0">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <span className="text-2xl font-black text-primary tracking-tighter">When.</span>
-
-          <nav className="hidden md:flex items-center gap-8">
-            <Link href="/dashboard" className="text-primary font-bold text-sm">Events</Link>
-            <Link href="/calendar" className="text-on-surface-variant hover:text-primary transition-colors text-sm">Calendar</Link>
-            <Link href="/groups" className="text-on-surface-variant hover:text-primary transition-colors text-sm">Groups</Link>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-container transition-colors">
-              <Bell className="w-5 h-5 text-on-surface-variant" />
-            </button>
-            <button className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-container transition-colors">
-              <CircleUser className="w-5 h-5 text-on-surface-variant" />
-            </button>
-          </div>
-        </div>
-      </header>
+      <Navbar />
 
       <main className="max-w-7xl mx-auto px-6 py-10">
         {/* Page heading */}

@@ -26,6 +26,7 @@ import {
   CircleUser,
 } from 'lucide-react'
 import { useCreateEvent } from '@/hooks/useEvent'
+import { api } from '@/lib/api'
 import type { EventType } from '@/types'
 
 // ─── Zod schemas ────────────────────────────────────────────────────────────
@@ -268,20 +269,33 @@ function Step2({
   onBack: () => void
   defaultValues: Partial<Step2Values>
 }) {
+  const today = new Date().toISOString().split('T')[0]
+  const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+
+  const initialDefaults: Partial<Step2Values> = {
+    earliest_date: today,
+    latest_date: sevenDaysFromNow,
+    duration_minutes: 60,
+    participant_emails: [],
+  }
+
   const {
     register,
     handleSubmit,
     watch,
     setValue,
+    setError,
+    clearErrors,
     formState: { errors },
   } = useForm<Step2Values>({
     resolver: zodResolver(step2Schema),
-    defaultValues: { duration_minutes: 60, participant_emails: [], ...defaultValues },
+    defaultValues: { ...initialDefaults, ...defaultValues },
   })
 
   const [emailInput, setEmailInput] = useState('')
   const participantEmails = watch('participant_emails') ?? []
   const duration = watch('duration_minutes')
+  const earliestDate = watch('earliest_date')
 
   function addEmail() {
     const email = emailInput.trim()
@@ -294,8 +308,26 @@ function Step2({
     setValue('participant_emails', participantEmails.filter((e) => e !== email))
   }
 
+  function handleEarliestDateChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const newStart = e.target.value
+    setValue('earliest_date', newStart)
+    const currentEnd = watch('latest_date')
+    if (currentEnd && currentEnd < newStart) {
+      setValue('latest_date', '')
+    }
+  }
+
+  function onSubmit(data: Step2Values) {
+    if (data.latest_date < data.earliest_date) {
+      setError('latest_date', { message: 'End date must be on or after start date' })
+      return
+    }
+    clearErrors()
+    onNext(data)
+  }
+
   return (
-    <form onSubmit={handleSubmit(onNext)} className="space-y-10">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-10">
       <div>
         <h2 className="text-3xl font-extrabold text-on-surface tracking-tight mb-2">Find the perfect window</h2>
         <p className="text-on-surface-variant">Define the timeframe and duration. We'll find the gaps for everyone.</p>
@@ -311,6 +343,8 @@ function Step2({
               <input
                 {...register('earliest_date')}
                 type="date"
+                min={today}
+                onChange={handleEarliestDateChange}
                 className="bg-transparent focus:outline-none w-full text-on-surface font-medium"
               />
             </div>
@@ -319,6 +353,7 @@ function Step2({
               <input
                 {...register('latest_date')}
                 type="date"
+                min={earliestDate || today}
                 className="bg-transparent focus:outline-none w-full text-on-surface font-medium"
               />
             </div>
@@ -569,7 +604,7 @@ export default function NewEventPage() {
     setStep(3)
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const { step1, step2 } = wizardData as WizardData
     const earliest = new Date(`${step2.earliest_date}T00:00:00.000Z`)
     const latest = new Date(`${step2.latest_date}T23:59:59.000Z`)
@@ -586,7 +621,14 @@ export default function NewEventPage() {
         duration_minutes: step2.duration_minutes,
       },
       {
-        onSuccess: (event) => {
+        onSuccess: async (event) => {
+          for (const email of step2.participant_emails) {
+            try {
+              await api.post(`/events/${event.uid}/invite`, { email })
+            } catch (err) {
+              console.error(`Failed to invite ${email}:`, err)
+            }
+          }
           router.push(`/events/${event.uid}`)
         },
       }
