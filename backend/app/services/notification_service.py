@@ -8,10 +8,16 @@ from app.utils.supabase import get_authed_client, service_client
 
 
 def _row_to_response(row: dict) -> NotificationResponse:
+    event_uid = None
+    if row.get('event_id'):
+        event_row = row.get('events')
+        if isinstance(event_row, dict):
+            event_uid = event_row.get('uid')
     return NotificationResponse(
         id=row['id'],
         user_id=row['user_id'],
         event_id=row.get('event_id'),
+        event_uid=event_uid,
         notification_type=row['notification_type'],
         title=row['title'],
         message=row['message'],
@@ -29,7 +35,7 @@ def get_notifications(current_user: User) -> list[NotificationResponse]:
     db = get_authed_client(current_user.token)
     result = (
         db.table('notifications')
-        .select('*')
+        .select('*, events(uid)')
         .eq('user_id', current_user.id)
         .order('created_at', desc=True)
         .execute()
@@ -54,6 +60,13 @@ def mark_read(notification_id: str, current_user: User) -> NotificationResponse:
         .execute()
     )
     return _row_to_response(updated.data[0])
+
+
+def mark_all_read(current_user: User) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    service_client.table('notifications').update(
+        {'is_read': True, 'read_at': now}
+    ).eq('user_id', current_user.id).eq('is_read', False).execute()
 
 
 def take_action(notification_id: str, current_user: User, action: str) -> NotificationResponse:

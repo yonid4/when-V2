@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/calendar-accounts", tags=["calendar-accounts"])
 
 SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
 ]
@@ -42,6 +45,19 @@ def list_accounts(current_user: User = Depends(get_current_user)):
     return calendar_service.get_calendar_accounts(current_user.id)
 
 
+@router.get("/connect-url")
+def connect_google_url(current_user: User = Depends(get_current_user)):
+    """Returns the Google OAuth URL as JSON so the frontend can redirect without losing the Authorization header."""
+    flow = _build_calendar_flow()
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+        state=current_user.id,
+        include_granted_scopes="false",
+    )
+    return {"url": auth_url}
+
+
 @router.get("/connect")
 def connect_google(current_user: User = Depends(get_current_user)):
     flow = _build_calendar_flow()
@@ -58,7 +74,6 @@ def google_calendar_callback(code: str, state: str):
     """Receives the OAuth callback. `state` carries the user_id."""
     flow = _build_calendar_flow()
     flow._state = state
-    flow.oauth2session.scope = None
     try:
         flow.fetch_token(code=code)
     except Exception as exc:
@@ -80,12 +95,18 @@ def google_calendar_callback(code: str, state: str):
             url=f"{settings.frontend_url}/settings?error=calendar_auth_failed"
         )
 
-    calendar_service.connect_google_account(
-        user_id=state,
-        credentials=credentials,
-        provider_email=provider_email,
-        provider_account_id=provider_account_id,
-    )
+    try:
+        calendar_service.connect_google_account(
+            user_id=state,
+            credentials=credentials,
+            provider_email=provider_email,
+            provider_account_id=provider_account_id,
+        )
+    except Exception as exc:
+        logger.error("Failed to save calendar account to DB: %s", exc, exc_info=True)
+        return RedirectResponse(
+            url=f"{settings.frontend_url}/settings?error=calendar_save_failed"
+        )
 
     return RedirectResponse(url=f"{settings.frontend_url}/settings?connected=true")
 

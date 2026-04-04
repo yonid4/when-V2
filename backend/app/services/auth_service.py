@@ -17,8 +17,6 @@ SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/calendar.events",
 ]
 
 
@@ -122,8 +120,6 @@ def _upsert_profile(user_info: dict, credentials: Credentials) -> dict:
     }
 
     service_client.table("profiles").upsert(profile_data, on_conflict="id").execute()
-
-    _upsert_calendar_account(profile_id, user_info, credentials)
 
     return profile_data
 

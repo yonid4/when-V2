@@ -35,6 +35,11 @@ def connect_google_account(
     provider_email: str,
     provider_account_id: str,
 ) -> CalendarAccountResponse:
+    logger.info(
+        "connect_google_account called for user_id=%s, provider_email=%s",
+        user_id,
+        provider_email,
+    )
     # Upsert calendar_accounts row
     upsert_result = (
         service_client.table("calendar_accounts")
@@ -55,6 +60,7 @@ def connect_google_account(
     )
     account_row = upsert_result.data[0]
     account_id = account_row["id"]
+    logger.info("calendar_accounts upsert complete for user_id=%s", user_id)
 
     # Fetch calendars from Google
     try:
@@ -85,6 +91,11 @@ def connect_google_account(
         )
         sources.append(CalendarSourceResponse(**source_result.data[0]))
 
+    logger.info(
+        "calendar_sources upsert complete: %d sources for account_id=%s",
+        len(sources),
+        account_id,
+    )
     return CalendarAccountResponse(**account_row, sources=sources)
 
 

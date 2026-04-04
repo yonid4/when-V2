@@ -152,6 +152,18 @@ def respond_to_invitation(invitation_id: str, current_user: User, action: str) -
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
 
+        # Require at least one connected calendar source before accepting
+        # calendar_sources links via account_id → calendar_accounts.user_id
+        calendar_check = (
+            service_client.table('calendar_sources')
+            .select('id, calendar_accounts!inner(user_id)')
+            .eq('calendar_accounts.user_id', current_user.id)
+            .limit(1)
+            .execute()
+        )
+        if not calendar_check.data:
+            raise HTTPException(status_code=422, detail='calendar_required')
+
         # Add to event_participants
         service_client.table('event_participants').insert({
             'event_id': invite['event_id'],

@@ -13,6 +13,11 @@ def get_notifications(current_user: User = Depends(get_current_user)):
     return notification_service.get_notifications(current_user)
 
 
+@router.post('/read-all', status_code=204)
+def mark_all_read(current_user: User = Depends(get_current_user)):
+    notification_service.mark_all_read(current_user)
+
+
 @router.post('/{id}/read', response_model=NotificationResponse)
 def mark_read(id: str, current_user: User = Depends(get_current_user)):
     return notification_service.mark_read(id, current_user)

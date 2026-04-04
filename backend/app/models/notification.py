@@ -7,6 +7,7 @@ class NotificationResponse(BaseModel):
     id: str
     user_id: str
     event_id: str | None
+    event_uid: str | None
     notification_type: str
     title: str
     message: str
