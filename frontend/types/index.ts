@@ -31,6 +31,7 @@ export interface Event {
   video_call_link: string | null
   finalized_start_time_utc: string | null
   finalized_end_time_utc: string | null
+  allow_guest_invites: boolean
   google_calendar_event_id: string | null
   proposals_needs_regeneration: boolean
   proposals_last_generated_at: string | null

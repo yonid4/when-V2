@@ -13,16 +13,6 @@ async function getEvent(uid: string, token: string): Promise<EventWithParticipan
   return res.json()
 }
 
-async function getCurrentUserId(token: string): Promise<string | null> {
-  const res = await fetch(`${process.env.API_URL}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  })
-  if (!res.ok) return null
-  const user = await res.json()
-  return user.id ?? null
-}
-
 export default async function EventDetailPage({
   params,
 }: {
@@ -36,16 +26,11 @@ export default async function EventDetailPage({
     redirect('/')
   }
 
-  const [event, currentUserId] = await Promise.all([
-    getEvent(uid, token),
-    getCurrentUserId(token),
-  ])
+  const event = await getEvent(uid, token)
 
   if (!event) {
     notFound()
   }
 
-  const isCoordinator = !!currentUserId && event.coordinator_id === currentUserId
-
-  return <EventDetailClient event={event} isCoordinator={isCoordinator} currentUserId={currentUserId ?? ''} />
+  return <EventDetailClient event={event} />
 }

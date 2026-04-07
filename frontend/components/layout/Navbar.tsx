@@ -37,8 +37,8 @@ export function Navbar() {
   ) : null
 
   return (
-    <header className="sticky top-0 z-50 bg-surface/80 backdrop-blur-md border-b-0">
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+    <header className="w-full sticky top-0 z-50 bg-surface/80 backdrop-blur-md border-b-0">
+      <div className="w-full flex items-center justify-between px-4 h-16">
         <Link href="/dashboard" className="text-2xl font-black text-primary tracking-tighter">
           When.
         </Link>
