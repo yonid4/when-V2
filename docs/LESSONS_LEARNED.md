@@ -189,3 +189,28 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **`useSyncMyCalendar` and `useSyncCalendar` serve different purposes — do not conflate them.**
   `useSyncMyCalendar` calls `POST /busy-slots/sync` and syncs only the current user's own calendar. `useSyncCalendar(uid)` calls `POST /busy-slots/sync/event/{uid}` and is coordinator-only (syncs all participants). The "Refresh" button in the actions panel should use `useSyncMyCalendar`; the coordinator "Sync All" button should use `useSyncCalendar`.
+
+---
+
+## Sprint 5 (Part A) — Busy Slot Rendering on the Grid
+
+- **`getSlotsForCell` uses strict inequality on both boundaries — a slot ending exactly at cell start is not an overlap.**
+  The overlap rule is `slot.start < cellEnd AND slot.end > cellStart`. A slot ending at exactly `10:00` when the cell starts at `10:00` is excluded. This matches the half-open interval `[cellStart, cellEnd)` convention used throughout the grid. Tests for both boundary conditions (`slotEnd === cellStart` and `slotStart === cellEnd`) must assert an empty result, not a match.
+
+- **`getSlotsForCell` takes `Date` objects, not ISO strings — always construct cell boundaries before calling.**
+  The helper signature is `(cellStartUtc: Date, cellEndUtc: Date, slots: SlotLike[])`. Inside the grid loop, construct `cellStartUtc` from the week start date + day offset + hour + half-row offset, then pass it and `cellEndUtc = cellStart + 30 minutes`. Do not pass raw ISO strings — `new Date(isoString) < new Date(isoString)` comparisons work, but the function contract expects `Date` objects.
+
+- **Intensity scaling for busy/preferred cells uses participant count, not a fixed threshold.**
+  The `busyClass` and `preferredClass` helpers scale opacity by how many participants' slots overlap the cell (`busyCount` / `preferredCount`). The thresholds implemented are: `< 3 → /20`, `>= 3 → /40`, `>= 5 → /65`, `>= 7 → /90`. These differ from the sprint plan spec (`1 → /30`, `2 → /55`, `3+ → /80`) — the plan assumed a small fixed participant count; the implementation uses the actual count and spreads the scale wider. Update the sprint plan spec if the visual result is accepted.
+
+- **Conflict cells render as a flex row with two half-width divs — do not use CSS `background: linear-gradient`.**
+  The conflict split (left half red, right half green) is implemented as `<div className="flex w-full h-full"><div className="w-1/2 h-full {busyClass}" /><div className="w-1/2 h-full {preferredClass}" /></div>`. A CSS gradient would not respond to the dynamic intensity classes. The "CONFLICT" label is absolutely positioned and centered over both halves.
+
+- **Busy and conflict cells must be `cursor-default` in all modes, including edit mode.**
+  When edit mode is added in Part C, the pointer style for empty cells will change to `crosshair`. Busy/conflict cells must explicitly stay `cursor-default` (not `cursor-not-allowed` as the spec says) to avoid implying the cell is interactive but blocked. The `not-allowed` cursor is reserved for the drag-over-busy-slot overlay if needed.
+
+- **Remove `console.log` statements from `AvailabilityGrid` before Part B — they fire on every render.**
+  The grid logs `busySlots received`, `first cell`, and individual slot comparisons on every render cycle. These were left in for debugging during Part A. Remove before wiring real preferred slots in Part B or the console will be flooded.
+
+- **`SlotLike` interface in `gridUtils.ts` must match the shape used by both `busySlots` and `preferredSlots`.**
+  Both slot types share `{ start_time_utc: string, end_time_utc: string, user_id: string }`. The `SlotLike` interface in `gridUtils.ts` is the canonical shape. `EventDetailClient` defines a local `SlotItem` type that is structurally identical — these can be unified by importing `SlotLike` directly from `gridUtils.ts` instead of duplicating the definition.

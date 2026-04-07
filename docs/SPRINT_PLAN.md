@@ -204,20 +204,20 @@ Event detail page renders in full-height two-column layout. Edit modal covers al
 
 ---
 
-### Part A — Busy slot rendering on the grid
+### Part A — Busy slot rendering on the grid ✅ DONE
 
 **Goal:** Synced calendar events appear as colored blocks on the AvailabilityGrid.
 
 #### Frontend
-- [ ] Create `frontend/lib/gridUtils.ts` with a pure `getSlotsForCell` helper function
-- [ ] Map each `busySlot` to the correct day column and 30-min half-rows it spans using UTC overlap detection
-- [ ] Cell rendering rules based on `busyCount` and `preferredCount` per cell:
+- [x] Create `frontend/lib/gridUtils.ts` with a pure `getSlotsForCell` helper function
+- [x] Map each `busySlot` to the correct day column and 30-min half-rows it spans using UTC overlap detection
+- [x] Cell rendering rules based on `busyCount` and `preferredCount` per cell:
   - **Busy only** (busyCount > 0, preferredCount === 0): solid red block, intensity scales with busyCount (1: `bg-error/30`, 2: `bg-error/55`, 3+: `bg-error/80`), time range label inside
   - **Preferred only** (preferredCount > 0, busyCount === 0): solid green block, intensity scales with preferredCount (1: `bg-secondary/30`, 2: `bg-secondary/55`, 3+: `bg-secondary/80`), time range label inside
   - **Conflict** (busyCount > 0 AND preferredCount > 0): split cell vertically — left half red at busy intensity, right half green at preferred intensity, "CONFLICT" label overlaid centered on top of both halves
   - **Empty**: render as before
-- [ ] Busy and conflict cells are never interactive — cursor `default`, no hover in edit mode
-- [ ] Pass `preferredSlots={[]}` to `AvailabilityGrid` for now — Part B will wire real data
+- [x] Busy and conflict cells are never interactive — cursor `default`, no hover in edit mode
+- [x] Pass `preferredSlots={[]}` to `AvailabilityGrid` for now — Part B will wire real data
 
 #### Done when
 After syncing calendar, busy slots appear as red blocks on the correct days and times. Intensity scales correctly. Conflict (busy + preferred overlap) shows split cell with CONFLICT label. Heatmap legend matches cell intensity.
