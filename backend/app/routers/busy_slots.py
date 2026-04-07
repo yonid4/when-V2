@@ -26,15 +26,17 @@ def get_event_busy_slots(event_uid: str, current_user: User = Depends(get_curren
     """Return busy slots for all participants of an event (for AvailabilityGrid)."""
     event = (
         service_client.table("events")
-        .select("id")
+        .select("id, earliest_datetime_utc, latest_datetime_utc")
         .eq("uid", event_uid)
         .single()
         .execute()
     )
     if not event.data:
-        return []
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
     event_id = event.data["id"]
+    earliest = event.data["earliest_datetime_utc"]
+    latest = event.data["latest_datetime_utc"]
 
     participants = (
         service_client.table("event_participants")
@@ -43,6 +45,10 @@ def get_event_busy_slots(event_uid: str, current_user: User = Depends(get_curren
         .execute()
     )
     user_ids = [p["user_id"] for p in (participants.data or [])]
+    print("User IDs:\n")
+    for id in user_ids:
+        print(id)
+    print()
     if not user_ids:
         return []
 
@@ -50,9 +56,17 @@ def get_event_busy_slots(event_uid: str, current_user: User = Depends(get_curren
         service_client.table("busy_slots")
         .select("id, user_id, start_time_utc, end_time_utc, calendar_source_id")
         .in_("user_id", user_ids)
+        .lt("start_time_utc", latest)
+        .gt("end_time_utc", earliest)
         .order("start_time_utc")
         .execute()
     )
+    print("Busy Slots:\n")
+    for res in result.data:
+        print(res)
+        print()
+    print()
+    print()
     return result.data or []
 
 

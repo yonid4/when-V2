@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+from app.config import settings
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,8 @@ def sync_busy_slots(user_id: str) -> int:
             token=creds_data.get("access_token"),
             refresh_token=creds_data.get("refresh_token"),
             token_uri="https://oauth2.googleapis.com/token",
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
         )
 
         try:
@@ -112,11 +115,9 @@ def _sync_source(
         if not start_time or not end_time:
             continue
 
-        # All-day events use date strings — convert to ISO with time
-        if "T" not in start_time:
-            start_time = f"{start_time}T00:00:00Z"
-        if "T" not in end_time:
-            end_time = f"{end_time}T00:00:00Z"
+        # Skip all-day events (they use date strings, not dateTime)
+        if "T" not in start_time or "T" not in end_time:
+            continue
 
         slots_to_upsert.append(
             {
@@ -129,13 +130,37 @@ def _sync_source(
             }
         )
 
-    if not slots_to_upsert:
-        return 0
+    if slots_to_upsert:
+        service_client.table("busy_slots").upsert(
+            slots_to_upsert,
+            on_conflict="provider_event_id,calendar_source_id",
+        ).execute()
 
-    service_client.table("busy_slots").upsert(
-        slots_to_upsert,
-        on_conflict="provider_event_id,calendar_source_id",
-    ).execute()
+    # Delete stale slots: any slot for this source whose provider_event_id is no
+    # longer returned by Google within the fetch window. Scope by end_time_utc so
+    # that past-starting events (start < now) are still caught.
+    fetched_event_ids = {s["provider_event_id"] for s in slots_to_upsert}
+    existing = (
+        service_client.table("busy_slots")
+        .select("provider_event_id")
+        .eq("calendar_source_id", source_id)
+        .lt("end_time_utc", time_max_iso)
+        .execute()
+    )
+    stale_event_ids = [
+        row["provider_event_id"]
+        for row in (existing.data or [])
+        if row["provider_event_id"] not in fetched_event_ids
+    ]
+    if stale_event_ids:
+        logger.info(
+            "Deleting %d stale busy slot(s) for calendar_source_id=%s",
+            len(stale_event_ids),
+            source_id,
+        )
+        service_client.table("busy_slots").delete().eq(
+            "calendar_source_id", source_id
+        ).in_("provider_event_id", stale_event_ids).execute()
 
     return len(slots_to_upsert)
 
