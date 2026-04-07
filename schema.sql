@@ -69,6 +69,7 @@ create table events (
   status                      event_status_enum not null default 'planning',
   location                    text,
   video_call_link             text,
+  allow_guest_invites         boolean not null default false,
   finalized_start_time_utc    timestamptz,
   finalized_end_time_utc      timestamptz,
   google_calendar_event_id    text,

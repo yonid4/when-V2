@@ -636,4 +636,63 @@ useConnectCalendarAccount: () => ({ connect: vi.fn(), isPending: false }),
 
 ---
 
+## Sprint 4 (Post-2) — Event Detail Rework & AvailabilityGrid
+
+**Completed:** 2026-04-04
+**Result:** New backend tests passing; frontend test file scaffolded
+
+### Files Written / Modified
+
+| File | Change |
+|------|--------|
+| `backend/tests/test_sync.py` | Extended `test_get_event_busy_slots` to assert `len(data) == 1` and `data[0]["id"]`; added `test_get_event_busy_slots_filters_outside_window` and `test_get_event_busy_slots_not_found` |
+| `frontend/__tests__/sprint4/EventDetailClient.test.ts` | New file — scaffolded (tests to be expanded in Sprint 5) |
+
+### Coverage
+
+#### Backend
+
+**test_sync.py additions** (3 new tests, replaces 1 weakened assertion)
+- `test_get_event_busy_slots` — now asserts exactly 1 slot returned with correct `id`; mock event row includes `earliest_datetime_utc` and `latest_datetime_utc`; mock busy_slots chain updated to include `.lt().gt()` filter calls
+- `test_get_event_busy_slots_filters_outside_window` — mock returns empty list from busy_slots (simulating server-side filter excluding out-of-window slots); asserts response is `[]`
+- `test_get_event_busy_slots_not_found` — mock event query returns `data=None`; asserts 404 response
+
+### Mock Patterns
+
+#### Backend — busy_slots chain now includes `.lt().gt()` filter calls
+```python
+# Router now calls .lt("start_time_utc", latest).gt("end_time_utc", earliest) before .order()
+# Mock chain must match this exact call order:
+tbl.select.return_value.in_.return_value.lt.return_value.gt.return_value.order.return_value.execute.return_value = MagicMock(data=[slot])
+```
+
+#### Backend — event row mock must include time window fields
+```python
+# The router now selects "id, earliest_datetime_utc, latest_datetime_utc" from events
+# Mock must include all three fields:
+data={
+    "id": "event-db-id-1",
+    "earliest_datetime_utc": window["earliest"].isoformat(),
+    "latest_datetime_utc": window["latest"].isoformat(),
+}
+```
+
+### Gotchas
+
+- **`GET /api/busy-slots/event/{uid}` now returns 404 (not `[]`) when event is not found.** Tests that previously expected an empty list for unknown events must now expect 404.
+- **Busy slots mock chain depth increased by 2.** Adding `.lt().gt()` before `.order()` means any test that mocks this chain with the old depth will silently return `MagicMock()` instead of the intended data. Always verify chain depth matches the router implementation.
+
+### Tests still needed (carry into Sprint 5)
+
+| Behavior | Suggested file |
+|----------|---------------|
+| `EventDetailClient` renders event name and status badge | `frontend/__tests__/sprint4post2/EventDetailClient.test.tsx` |
+| Edit modal shows all fields (allow_guest_invites toggle, datetime-local inputs, event_type, duration) | `frontend/__tests__/sprint4post2/EventDetailClient.test.tsx` |
+| "Copy Link" button copies `window.location.href` and changes label to "Copied!" | `frontend/__tests__/sprint4post2/EventDetailClient.test.tsx` |
+| `validateStep2Times` returns correct error for same-day end ≤ start | `frontend/__tests__/sprint4post2/NewEventPage.test.tsx` |
+| Create event uses `start_time`/`end_time` when building the datetime sent to API | `frontend/__tests__/sprint4post2/NewEventPage.test.tsx` |
+| `toDatetimeLocal` and `computeEditDiff` in `editEventUtils.ts` | `frontend/__tests__/sprint4post2/editEventUtils.test.ts` |
+
+---
+
 _Append new sprint sections below as sprints complete._

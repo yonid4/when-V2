@@ -147,9 +147,6 @@ Implementation details discovered while writing tests that aren't captured elsew
 - **`flow.oauth2session.scope = None` suppresses scope validation and should be removed.**
   This hack was added to suppress google-auth's scope mismatch check during the calendar OAuth callback. Removing it and passing scopes explicitly to `Flow.from_client_config` is the correct fix. The hack can cause subtle failures depending on the `requests-oauthlib` version.
 
-- **The `AvailabilityGrid` component is a static shell — busy slot rendering is not yet implemented.**
-  The `busySlots` prop is accepted and passed correctly from `useEventBusySlots`, but the component never reads it. All cell coloring, overlap detection, and timezone conversion logic is deferred to Sprint 5. The data pipeline (hook → prop) is confirmed working.
-
 - **Profile avatar in `Navbar` must use field names that actually exist on the stored user object.**
   Read `authStore.ts` to confirm exact field names before implementing avatar rendering. If `avatar_url` or `full_name` is null, fall back to the first letter of `email_address`. Mismatched field names cause the avatar to silently render nothing.
 
@@ -161,3 +158,34 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **Accept invitation should redirect to the event page, not stay on the current page.**
   After `takeAction` with `action='accept'` succeeds, the frontend should navigate to `/events/{event_uid}`. The notification object includes enough data (either `event_uid` directly or via metadata) to construct the URL. Declining should not redirect.
+
+---
+
+## Sprint 4 (Post-2) — Event Detail Rework & AvailabilityGrid
+
+- **`isCoordinator` and `currentUserId` should be derived client-side from `authStore`, not server-side.**
+  The original `EventDetailPage` (server component) made an extra `GET /api/auth/me` fetch to resolve the current user id, then passed `isCoordinator` and `currentUserId` as props to `EventDetailClient`. This adds a serial SSR fetch and duplicates logic that `authStore` already holds after login. The correct pattern: server component fetches only the event, client component reads `useAuthStore()` and derives coordinator status from `event.coordinator_id === user?.id`.
+
+- **`GET /api/busy-slots/event/{uid}` must return 404, not `[]`, when the event does not exist.**
+  The original router returned an empty list when the event lookup yielded no data. This masked bad event UIDs — callers could not distinguish "event has no participants yet" from "event does not exist". Changed to `raise HTTPException(404)` when `event.data` is falsy. Update any test that expected `[]` for an unknown uid to expect 404.
+
+- **Filter busy slots server-side to the event time window — don't return all-time slots.**
+  Without a filter, the busy slots query returns every synced calendar event for every participant across all time. For a grid covering a specific week, this produces enormous payloads. The fix: add `.lt("start_time_utc", latest).gt("end_time_utc", earliest)` to the Supabase query. Note the filter uses strict inequality (`lt`/`gt`), which correctly handles slots that partially overlap the window boundary.
+
+- **`AvailabilityGrid` must be driven by the event's actual time window, not hardcoded hours.**
+  The original grid hardcoded `hours = ['09:00 AM', ..., '05:00 PM']` and `days = ['MON', ..., 'FRI']`. This means any event outside 9–5 Mon–Fri was invisible. The grid now accepts `earliestTime` and `latestTime` UTC strings, derives `startHour`/`endHour` from them, and renders 7-day weeks with navigation. Always pass the event's actual `earliest_datetime_utc` / `latest_datetime_utc` as props.
+
+- **Edit modal state should update local component state optimistically — avoid full page reloads after edits.**
+  The original edit flow called `onSuccess: onClose` and left the displayed event data stale until the next page load. The fix: hold a `useState(initialEvent)` in `EventDetailClient`, pass an `onSave(result: EditSaveResult)` callback to `EditModal`, and merge the updated fields into local state after a successful mutation. This gives instant UI feedback without a round-trip.
+
+- **Extract edit logic (`editSchema`, `computeEditDiff`, `toDatetimeLocal`) into a separate utility file.**
+  Keeping the Zod schema, diff computation, and datetime conversion inside the 600-line `EventDetailClient.tsx` makes it hard to test in isolation. Moved to `app/events/[uid]/editEventUtils.ts`. These are pure functions with no React/DOM dependencies and can be unit-tested directly without rendering the component.
+
+- **`allow_guest_invites` must be added as a column to the `events` table — it is not in the original schema.**
+  The field was referenced in `types/index.ts` and the edit modal before the DB column existed. Migration: `alter table events add column allow_guest_invites boolean not null default false;`. Always add the column to `schema.sql` and run the migration before shipping code that reads or writes the field.
+
+- **Stale busy slot deletion must use `end_time_utc`, not `start_time_utc`, as the upper bound when querying the DB.**
+  Google's `timeMin=now` means any deleted event whose `start_time_utc` is in the past will not appear in Google's response — correctly. But if the DB query to find existing slots also uses `.gte("start_time_utc", now)`, those past-starting slots are excluded from the "existing" set and therefore never identified as stale. Fix: query the DB with `.lt("end_time_utc", time_max_iso)` only, with no lower bound. This catches any slot for the source that ended before the fetch horizon, regardless of when it started. Delete is then done by `provider_event_id` directly (scoped to `calendar_source_id`), not by slot `id`.
+
+- **`useSyncMyCalendar` and `useSyncCalendar` serve different purposes — do not conflate them.**
+  `useSyncMyCalendar` calls `POST /busy-slots/sync` and syncs only the current user's own calendar. `useSyncCalendar(uid)` calls `POST /busy-slots/sync/event/{uid}` and is coordinator-only (syncs all participants). The "Refresh" button in the actions panel should use `useSyncMyCalendar`; the coordinator "Sync All" button should use `useSyncCalendar`.

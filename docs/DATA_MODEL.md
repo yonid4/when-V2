@@ -43,6 +43,7 @@ Core coordination record.
 | status | enum | planning → confirmed → cancelled |
 | location | text | Nullable |
 | video_call_link | text | Nullable |
+| allow_guest_invites | boolean | When true, all participants can invite others (not just coordinator) |
 | finalized_start_time_utc | timestamptz | Set when status = confirmed |
 | finalized_end_time_utc | timestamptz | Set when status = confirmed |
 | google_calendar_event_id | text | Set after finalization write to Google Calendar |
