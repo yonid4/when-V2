@@ -16,6 +16,7 @@ from app.routers import (
     invitations,
     notifications,
     participants,
+    preferred_slots,
 )
 from app.scheduler.jobs import sync_all_users_job
 
@@ -57,3 +58,4 @@ app.include_router(notifications.router)
 app.include_router(calendar_accounts.router)
 app.include_router(calendar_sources.router)
 app.include_router(busy_slots.router)
+app.include_router(preferred_slots.router)
