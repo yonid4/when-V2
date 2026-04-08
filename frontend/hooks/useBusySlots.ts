@@ -9,12 +9,7 @@ const eventBusySlotsKey = (uid: string) => ['busy-slots', 'event', uid] as const
 export function useEventBusySlots(uid: string) {
   return useQuery({
     queryKey: eventBusySlotsKey(uid),
-    queryFn: async () => {
-      console.log('[useEventBusySlots] fetching for uid:', uid)
-      const result = await api.get<BusySlot[]>(`/busy-slots/event/${uid}`)
-      console.log('[useEventBusySlots] response:', result)
-      return result
-    },
+    queryFn: () => api.get<BusySlot[]>(`/busy-slots/event/${uid}`),
     enabled: !!uid,
   })
 }

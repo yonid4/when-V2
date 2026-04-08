@@ -24,7 +24,7 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown): Pro
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
 
-  if (res.status === 401) {
+  if (res.status === 401 || res.status === 403) {
     localStorage.removeItem('token')
     window.location.href = '/'
     throw new Error('Unauthorized')
