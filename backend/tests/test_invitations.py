@@ -258,3 +258,38 @@ def test_respond_wrong_user(mock_dep_svc, mock_get_authed, mock_inv_svc):
         headers=_auth_headers(),
     )
     assert response.status_code == 403
+
+
+# ─── 8. test_respond_accept_no_calendar_raises_422 ───────────────────────────
+
+@patch("app.services.invitation_service.service_client")
+@patch("app.services.invitation_service.get_authed_client")
+@patch("app.dependencies.service_client")
+def test_respond_accept_no_calendar_raises_422(mock_dep_svc, mock_get_authed, mock_inv_svc):
+    """PUT /api/invitations/{id}/respond with action='accept' when user has no
+    calendar_sources rows → 422 calendar_required."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+
+    db = MagicMock()
+    mock_get_authed.return_value = db
+
+    invite_row = _make_invitation_row(status="pending")
+
+    def make_svc_table(table_name):
+        tbl = MagicMock()
+        if table_name == "event_invitations":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=invite_row)
+        elif table_name == "calendar_sources":
+            # No connected calendar for this user
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
+        return tbl
+
+    mock_inv_svc.table.side_effect = make_svc_table
+
+    response = client.put(
+        "/api/invitations/invite-uuid-1/respond",
+        json={"action": "accept"},
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "calendar_required"
