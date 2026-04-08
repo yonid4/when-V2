@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -17,8 +17,11 @@ import {
   RefreshCcw,
   Calendar,
 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
 import { useEventBusySlots, useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
+import { usePreferredSlots } from '@/hooks/usePreferredSlots'
+import { supabase } from '@/lib/supabase'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
@@ -26,6 +29,7 @@ import { Navbar } from '@/components/layout/Navbar'
 import { useAuthStore } from '@/stores/authStore'
 import type { BusySlot, EventWithParticipants, EventType } from '@/types'
 import { getSlotsForCell } from '@/lib/gridUtils'
+import type { SlotLike } from '@/lib/gridUtils'
 import {
   editSchema,
   toDatetimeLocal,
@@ -292,12 +296,6 @@ function DeleteModal({
 // ─── Availability grid ────────────────────────────────────────────────────────
 // Internal logic is unchanged. Only the wrapper styling matches the design HTML.
 
-type SlotItem = {
-  start_time_utc: string
-  end_time_utc: string
-  user_id: string
-}
-
 function busyClass(count: number): string {
   if (count >= 7) return 'bg-error/90'
   if (count >= 5) return 'bg-error/65'
@@ -328,8 +326,8 @@ function AvailabilityGrid({
   earliestTime,
   latestTime,
 }: {
-  busySlots: SlotItem[]
-  preferredSlots: SlotItem[]
+  busySlots: SlotLike[]
+  preferredSlots: SlotLike[]
   startDate: string
   earliestTime: string
   latestTime: string
@@ -342,10 +340,6 @@ function AvailabilityGrid({
   const latestMinute = latestDate.getMinutes()
   const endHour = latestMinute > 0 ? latestHour + 1 : latestHour
   const totalHours = endHour - startHour
-
-  console.log('[Grid] props:', { startDate, earliestTime, latestTime })
-  console.log('[Grid] startHour:', startHour, 'endHour:', endHour, 'totalHours:', totalHours)
-  console.log('[Grid] busySlots received:', busySlots)
 
   const hours = Array.from({ length: totalHours }, (_, i) => {
     const h = startHour + i
@@ -363,7 +357,6 @@ function AvailabilityGrid({
   const dayOfWeek = baseDate.getDay()
   const offsetToMonday = (dayOfWeek + 6) % 7
   baseDate.setDate(baseDate.getDate() - offsetToMonday + weekOffset * 7)
-  console.log('[Grid] baseDate (after week align):', baseDate.toISOString(), 'local:', baseDate.toString())
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(baseDate)
@@ -442,9 +435,6 @@ function AvailabilityGrid({
                 // Build a local-midnight Date for this column's day
                 const colDate = new Date(baseDate)
                 colDate.setDate(colDate.getDate() + di)
-                if (di === 0) {
-                  console.log('[Grid] colDate[0] local:', colDate.toString())
-                }
 
                 return (
                   <div key={di} className={`flex flex-col ${isScrollable ? '' : 'flex-1'} ${di < 6 ? 'border-r border-outline-variant/25' : ''}`}>
@@ -469,10 +459,6 @@ function AvailabilityGrid({
 
                         const busyCount = getSlotsForCell(cellStartUtc, cellEndUtc, busySlots).length
                         const preferredCount = getSlotsForCell(cellStartUtc, cellEndUtc, preferredSlots).length
-                        if (di === 0 && hi === 0 && half === 0) {
-                          console.log('[Grid] first cell:', cellStartUtc.toISOString(), '→', cellEndUtc.toISOString(), '| busyCount:', busyCount)
-                          console.log('[Grid] slot[0] for comparison:', busySlots[0])
-                        }
                         const timeLabel = formatTimeRange(hour, half)
                         const halfClass = isScrollable ? 'h-8' : 'flex-1'
 
@@ -598,10 +584,29 @@ export default function EventDetailClient({
     }
   }
 
-  console.log('[EventDetail] event.uid:', event.uid, '| type:', typeof event.uid)
+  const queryClient = useQueryClient()
   const { data: busySlots = [] } = useEventBusySlots(event.uid)
-  console.log('[EventDetail] busySlots from hook:', busySlots)
+  const { data: preferredSlots = [] } = usePreferredSlots(event.uid)
   const { mutate: syncCalendar, isPending: isSyncing } = useSyncMyCalendar()
+
+  // Real-time subscription: invalidate preferred slots on INSERT or DELETE
+  useEffect(() => {
+    if (!event.id) return
+    const channel = supabase
+      .channel(`preferred-slots-${event.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${event.id}` },
+        () => queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${event.id}` },
+        () => queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [event.id, event.uid, queryClient])
   const { mutate: syncAll, isPending: isSyncingAll } = useSyncCalendar(event.uid)
 
   const currentParticipant = event.participants.find((p) => p.user_id === currentUserId)
@@ -683,7 +688,7 @@ export default function EventDetailClient({
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
               <AvailabilityGrid
                 busySlots={busySlots}
-                preferredSlots={[]}
+                preferredSlots={preferredSlots}
                 startDate={event.earliest_datetime_utc}
                 earliestTime={event.earliest_datetime_utc}
                 latestTime={event.latest_datetime_utc}
