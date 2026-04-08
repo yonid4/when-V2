@@ -209,6 +209,9 @@ Implementation details discovered while writing tests that aren't captured elsew
 - **Busy and conflict cells must be `cursor-default` in all modes, including edit mode.**
   When edit mode is added in Part C, the pointer style for empty cells will change to `crosshair`. Busy/conflict cells must explicitly stay `cursor-default` (not `cursor-not-allowed` as the spec says) to avoid implying the cell is interactive but blocked. The `not-allowed` cursor is reserved for the drag-over-busy-slot overlay if needed.
 
+- **`lib/api.ts` must handle both 401 and 403 as "unauthenticated" — `HTTPBearer` returns 403 when no Authorization header is sent.**
+  The original `api.ts` only cleared the token and redirected on 401. But FastAPI's `HTTPBearer` returns 403 (not 401) when the `Authorization` header is completely absent. If the token is missing from `localStorage` (e.g. expired session, cleared storage), client-side requests have no header at all — backend returns 403 — and `api.ts` used to treat this as a generic error rather than redirecting to login. Fix: `if (res.status === 401 || res.status === 403)` in the error branch of `lib/api.ts`.
+
 - **Remove `console.log` statements from `AvailabilityGrid` before Part B — they fire on every render.**
   The grid logs `busySlots received`, `first cell`, and individual slot comparisons on every render cycle. These were left in for debugging during Part A. Remove before wiring real preferred slots in Part B or the console will be flooded.
 

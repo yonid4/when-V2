@@ -580,8 +580,8 @@ screen.getByRole('heading', { level: 1, name: 'Settings' })
 
 ## Sprint 4 (Post) — Auth, Calendar & UI Rework
 
-**Completed:** 2026-04-04
-**Result:** All tests passing after rework and bug fixes
+**Completed:** 2026-04-04 (deferred tests completed 2026-04-07)
+**Result:** All tests passing after rework and bug fixes; deferred tests written and passing
 
 ### Files Modified
 
@@ -592,20 +592,47 @@ screen.getByRole('heading', { level: 1, name: 'Settings' })
 | `frontend/__tests__/sprint3/NotificationList.test.tsx` | Added `vi.mock('next/navigation', ...)` with `useRouter` stub — required after `NotificationList` gained `useRouter()` call |
 | `frontend/__tests__/sprint4/SettingsPage.test.tsx` | Added `useConnectCalendarAccount` to hook mock; added `useSearchParams` to `next/navigation` mock |
 
-### Tests needed (not yet written)
-The following behaviors were added during this rework but do not yet have test coverage. Write these at the start of Sprint 5 before beginning new sprint work:
+### Deferred Tests (written 2026-04-07)
 
-| Behavior | Suggested file |
-|----------|---------------|
-| `notificationStore.setCount` sets unreadCount to explicit value | `frontend/__tests__/sprint4post/notificationStore.test.ts` |
-| `NotificationBell` initializes unread count from fetched notifications on mount | `frontend/__tests__/sprint4post/NotificationBell.test.tsx` |
-| Accept invitation redirects to `/events/{uid}`, decline does not redirect | `frontend/__tests__/sprint4post/NotificationList.test.tsx` |
-| Create event form initializes step 2 date/time defaults on first open | `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` |
-| Create event form blocks submission when end date is before start date | `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` |
-| Create event form blocks submission when same-day end time <= start time | `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` |
-| Create event calls `api.post` for each participant email after creation | `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` |
-| Settings page write calendar radio group calls `updateSource` with `{ is_write_calendar: true }` | `frontend/__tests__/sprint4post/SettingsPage.test.tsx` |
-| `respond_to_invitation` with `accept` raises 422 when user has no `calendar_sources` | `backend/tests/test_invitations.py` |
+| File | Domain | Tests |
+|------|--------|-------|
+| `frontend/__tests__/sprint4post/NotificationBell.test.tsx` | NotificationBell unread count initialization | 1 |
+| `frontend/__tests__/sprint4post/NotificationList.test.tsx` | Invitation accept/decline redirects | 4 |
+| `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` | Step 2 defaults, validateStep2Times, api.post per participant | 9 |
+| `frontend/__tests__/sprint4post/SettingsPage.test.tsx` | Write calendar radio calls updateSource | 1 |
+| `backend/tests/test_invitations.py` | respond_to_invitation 422 with no calendar_sources | 1 |
+
+### Coverage (Deferred)
+
+**NotificationBell.test.tsx** (1 test)
+- Initializes `notificationStore.unreadCount` from count of `is_read=false` notifications fetched on mount (calls `setCount`)
+
+**NotificationList.test.tsx** (4 tests)
+- Accept invitation: calls `takeAction`, simulates `onSuccess`, redirects to `/events/{event_uid}`
+- Accept with no `event_uid` in notification: redirects to `/dashboard`
+- Decline invitation: calls `takeAction` with `action: 'decline'`, does NOT redirect
+- `calendar_required` error on accept: `onError({ message: 'calendar_required' })` redirects to `/settings?connect_calendar=true`
+
+**CreateEventForm.test.tsx** (13 tests)
+- `validateStep2Times` returns null for valid multi-day range
+- `validateStep2Times` returns `{ field: 'latest_date' }` when end date before start date
+- `validateStep2Times` returns `{ field: 'end_time' }` on same day with inverted times
+- `validateStep2Times` returns `{ field: 'end_time' }` on same day with equal times
+- `validateStep2Times` returns null for valid same-day range
+- Step 2 renders `earliest_date` input defaulting to today (`YYYY-MM-DD`)
+- Step 2 renders `latest_date` input defaulting to 7 days from today
+- Step 2 renders `start_time` input with default `09:00`
+- Step 2 renders `end_time` input with default `17:00`
+- Step 2 shows `1 hr` duration button as selected (has `bg-primary-container` class)
+- Does not advance to step 3 when end date is before start date (stays on "Find the perfect window")
+- Does not advance to step 3 when same-day end time is before start time
+- `api.post` called once per participant email after `createEvent` `onSuccess`
+
+**SettingsPage.test.tsx** (1 test)
+- Clicking the write calendar radio calls `updateSource` with `{ sourceId, data: { is_write_calendar: true } }`
+
+**test_invitations.py** (1 test)
+- `test_respond_accept_no_calendar_raises_422`: `PUT /api/invitations/{id}/respond` with `accept` when user has no `calendar_sources` rows → 422 with `detail='calendar_required'`
 
 ### Mock Patterns
 
@@ -638,15 +665,17 @@ useConnectCalendarAccount: () => ({ connect: vi.fn(), isPending: false }),
 
 ## Sprint 4 (Post-2) — Event Detail Rework & AvailabilityGrid
 
-**Completed:** 2026-04-04
-**Result:** New backend tests passing; frontend test file scaffolded
+**Completed:** 2026-04-04 (deferred frontend tests completed 2026-04-07)
+**Result:** All backend and frontend tests passing
 
 ### Files Written / Modified
 
 | File | Change |
 |------|--------|
 | `backend/tests/test_sync.py` | Extended `test_get_event_busy_slots` to assert `len(data) == 1` and `data[0]["id"]`; added `test_get_event_busy_slots_filters_outside_window` and `test_get_event_busy_slots_not_found` |
-| `frontend/__tests__/sprint4/EventDetailClient.test.ts` | New file — scaffolded (tests to be expanded in Sprint 5) |
+| `frontend/__tests__/sprint4post2/EventDetailClient.test.tsx` | New file — EventDetailClient component tests |
+| `frontend/__tests__/sprint4post2/NewEventPage.test.tsx` | New file — validateStep2Times error strings + datetime UTC payload test |
+| `frontend/__tests__/sprint4post2/editEventUtils.test.ts` | New file — toDatetimeLocal and computeEditDiff pure function tests |
 
 ### Coverage
 
@@ -656,6 +685,34 @@ useConnectCalendarAccount: () => ({ connect: vi.fn(), isPending: false }),
 - `test_get_event_busy_slots` — now asserts exactly 1 slot returned with correct `id`; mock event row includes `earliest_datetime_utc` and `latest_datetime_utc`; mock busy_slots chain updated to include `.lt().gt()` filter calls
 - `test_get_event_busy_slots_filters_outside_window` — mock returns empty list from busy_slots (simulating server-side filter excluding out-of-window slots); asserts response is `[]`
 - `test_get_event_busy_slots_not_found` — mock event query returns `data=None`; asserts 404 response
+
+#### Frontend
+
+**EventDetailClient.test.tsx** (9 tests)
+- Renders event name
+- Renders `planning` status badge
+- Opens edit modal when pencil button (aria-label "Edit event") is clicked
+- Edit modal shows event name input field
+- Edit modal shows `allow_guest_invites` checkbox
+- Edit modal shows `earliest_local` datetime-local input (label "Earliest time")
+- Edit modal shows `event_type` select with correct value displayed
+- Edit modal shows `duration_minutes` number input
+- "Copy Link" button copies `window.location.href` and changes label to "Copied!"
+
+**NewEventPage.test.tsx** (3 tests)
+- `validateStep2Times` returns error with `field: 'latest_date'` and message matching `/on or after start date/i` for inverted dates
+- `validateStep2Times` returns error with `field: 'end_time'` and message matching `/after start time/i` for same-day inverted times
+- `validateStep2Times` returns null for valid multi-day range (end date after start date)
+- Integration: `createEvent` called with `earliest_datetime_utc` and `latest_datetime_utc` as ISO Z strings when form submitted
+
+**editEventUtils.test.ts** (7 tests)
+- `toDatetimeLocal` returns string in `YYYY-MM-DDTHH:MM` format (length 16)
+- `toDatetimeLocal` round-trips: parsing output gives same wall-clock time as input UTC
+- `computeEditDiff` returns all-false flags when nothing changes
+- `computeEditDiff` returns `infoChanged: true` only when name changes
+- `computeEditDiff` returns `durationChanged: true` only when duration changes
+- `computeEditDiff` returns `guestInvitesChanged: true` only when `allow_guest_invites` flips
+- `computeEditDiff` converts empty strings to `null` in the updated payload
 
 ### Mock Patterns
 
@@ -677,21 +734,163 @@ data={
 }
 ```
 
+#### Frontend — mocking navigator.clipboard for Copy Link tests
+```typescript
+beforeEach(() => {
+  Object.assign(navigator, {
+    clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+  })
+})
+// Then in test:
+expect(navigator.clipboard.writeText).toHaveBeenCalledWith(window.location.href)
+```
+
+#### Frontend — vi.hoisted() for mocks referenced in vi.mock factories
+```typescript
+// Variables declared with const are not yet initialized when vi.mock factories run.
+// Use vi.hoisted() so they are available inside factory closures:
+const { mockPush, mockCreateEvent, mockApiPost } = vi.hoisted(() => ({
+  mockPush: vi.fn(),
+  mockCreateEvent: vi.fn(),
+  mockApiPost: vi.fn().mockResolvedValue({}),
+}))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: mockPush }) }))
+```
+
 ### Gotchas
 
 - **`GET /api/busy-slots/event/{uid}` now returns 404 (not `[]`) when event is not found.** Tests that previously expected an empty list for unknown events must now expect 404.
 - **Busy slots mock chain depth increased by 2.** Adding `.lt().gt()` before `.order()` means any test that mocks this chain with the old depth will silently return `MagicMock()` instead of the intended data. Always verify chain depth matches the router implementation.
+- **`vi.hoisted()` required when mock factory references a variable.** `vi.mock` factories are hoisted before `const` declarations initialize. Any `const` variable referenced inside a `vi.mock` factory must be declared with `vi.hoisted()` instead, or the test throws `ReferenceError: Cannot access 'x' before initialization`.
+- **EventDetailClient coordinator check uses `useAuthStore` user id.** Tests must mock `useAuthStore` to return a user whose `id` matches `event.coordinator_id`, otherwise coordinator-only UI (edit button) does not render.
 
-### Tests still needed (carry into Sprint 5)
+---
 
-| Behavior | Suggested file |
-|----------|---------------|
-| `EventDetailClient` renders event name and status badge | `frontend/__tests__/sprint4post2/EventDetailClient.test.tsx` |
-| Edit modal shows all fields (allow_guest_invites toggle, datetime-local inputs, event_type, duration) | `frontend/__tests__/sprint4post2/EventDetailClient.test.tsx` |
-| "Copy Link" button copies `window.location.href` and changes label to "Copied!" | `frontend/__tests__/sprint4post2/EventDetailClient.test.tsx` |
-| `validateStep2Times` returns correct error for same-day end ≤ start | `frontend/__tests__/sprint4post2/NewEventPage.test.tsx` |
-| Create event uses `start_time`/`end_time` when building the datetime sent to API | `frontend/__tests__/sprint4post2/NewEventPage.test.tsx` |
-| `toDatetimeLocal` and `computeEditDiff` in `editEventUtils.ts` | `frontend/__tests__/sprint4post2/editEventUtils.test.ts` |
+## Sprint 5 (Part A) — Busy Slot Rendering on the Grid
+
+**Completed:** 2026-04-07
+**Result:** 8/8 frontend tests passing
+
+### Files Written
+
+| File | Domain | Tests |
+|------|--------|-------|
+| `frontend/__tests__/sprint5/gridUtils.test.ts` | `getSlotsForCell` pure function — overlap detection for busy/preferred slot rendering | 8 |
+
+### Coverage
+
+**gridUtils.test.ts** (8 tests)
+- Returns `[]` when slots array is empty
+- Returns the slot when it exactly covers the cell window (`slot.start == cellStart` and `slot.end == cellEnd`)
+- Returns the slot when it starts before the cell and ends during it (partial left overlap)
+- Returns the slot when it starts during the cell and ends after it (partial right overlap)
+- Returns the slot when it fully contains the cell (slot larger than cell)
+- Returns 2 slots when two different users' slots both overlap the same cell
+- Does NOT return a slot whose `end` equals `cellStart` (strict boundary — slot ending exactly at cell start is excluded)
+- Does NOT return a slot whose `start` equals `cellEnd` (strict boundary — slot starting exactly at cell end is excluded)
+
+### Mock Patterns
+
+No mocks needed — `getSlotsForCell` is a pure function that takes `Date` objects and `SlotLike[]` and returns a filtered array. Tests construct `Date` objects and plain slot objects directly.
+
+### Gotchas
+
+- **`getSlotsForCell` uses strict inequality on both boundaries.** The overlap rule is `slot.start < cellEnd AND slot.end > cellStart`. A slot ending exactly at the cell's start time (or starting exactly at the cell's end time) is NOT included. Tests for both boundary conditions must assert `[]`, not a match.
+- **`getSlotsForCell` takes `Date` objects, not ISO strings.** The helper signature is `(cellStartUtc: Date, cellEndUtc: Date, slots: SlotLike[])`. Construct `Date` objects before calling — do not pass raw ISO strings.
+
+---
+
+## Sprint 5 (Part B) — Preferred Slots (Backend + Frontend)
+
+**Completed:** 2026-04-07
+**Result:** 7/7 backend tests passing, 6/6 frontend tests passing (83 backend total, 148 frontend total)
+
+### Files Written
+
+| File | Domain | Tests |
+|------|--------|-------|
+| `backend/tests/test_preferred_slots.py` | Preferred slots router — POST, GET, DELETE | 7 |
+| `frontend/__tests__/sprint5/usePreferredSlots.test.ts` | `usePreferredSlots`, `useSavePreferredSlot`, `useDeletePreferredSlot` hooks | 6 |
+
+### Coverage
+
+#### Backend
+
+**test_preferred_slots.py** (7 tests)
+- `POST /api/events/{uid}/preferred-slots` — participant saves slot → 201, returns created slot with correct `id`, `user_id`, `start_time_utc`
+- `POST /api/events/{uid}/preferred-slots` — sets `proposals_needs_regeneration=True` on the event via `events.update()`
+- `POST /api/events/{uid}/preferred-slots` → 403 when user is neither coordinator nor participant
+- `GET /api/events/{uid}/preferred-slots` — returns current user's own slots for the event → 200
+- `GET /api/events/{uid}/preferred-slots` → 403 when user is not a participant or coordinator
+- `DELETE /api/events/{uid}/preferred-slots/{slot_id}` — owner deletes own slot → 204
+- `DELETE /api/events/{uid}/preferred-slots/{slot_id}` → 403 when slot belongs to a different user
+
+#### Frontend
+
+**usePreferredSlots.test.ts** (6 tests)
+- `usePreferredSlots` — fetches from `GET /events/{uid}/preferred-slots` and returns slot array
+- `usePreferredSlots` — query is disabled (`fetchStatus: 'idle'`) when `uid` is empty string
+- `useSavePreferredSlot` — `POST /events/{uid}/preferred-slots` called with correct body
+- `useSavePreferredSlot` — invalidates `['preferred-slots', uid]` query on success (re-fetch triggered)
+- `useDeletePreferredSlot` — `DELETE /events/{uid}/preferred-slots/{slotId}` called with correct URL
+- `useDeletePreferredSlot` — invalidates `['preferred-slots', uid]` query on success (re-fetch triggered)
+
+### Mock Patterns
+
+#### Backend — coordinator short-circuits `event_participants` check
+```python
+# _get_event_and_check_participant returns early if event["coordinator_id"] == user_id.
+# Tests for coordinator callers only need to mock the "events" table — no need to mock
+# "event_participants" because that branch is never reached.
+def make_table(name):
+    tbl = MagicMock()
+    if name == "events":
+        tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+        tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+    elif name == "preferred_slots":
+        tbl.insert.return_value.execute.return_value = MagicMock(data=[slot_row])
+    return tbl
+```
+
+#### Backend — asserting `proposals_needs_regeneration` flag was set
+```python
+# Verify the update() was called with the correct payload, not just that it was called:
+events_mock.update.assert_called_once_with({"proposals_needs_regeneration": True})
+```
+
+#### Frontend — `makeWrapper()` factory for fresh QueryClient per describe block
+```typescript
+// Using a single shared wrapper causes query cache to bleed across describe blocks.
+// Always call makeWrapper() inside each hook invocation to get a fresh client:
+function makeWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return function wrapper({ children }: { children: React.ReactNode }) {
+    return React.createElement(QueryClientProvider, { client: queryClient }, children)
+  }
+}
+// Then per test:
+const { result } = renderHook(() => usePreferredSlots('uid'), { wrapper: makeWrapper() })
+```
+
+#### Frontend — counting `api.get` calls to verify cache invalidation
+```typescript
+// After seeding the query, record the call count before the mutation.
+// After mutation success, assert the count increased (invalidation triggered a re-fetch).
+await waitFor(() => expect(result.current.slots.isSuccess).toBe(true))
+const callsBefore = vi.mocked(api.get).mock.calls.length
+result.current.save.mutate({ ... })
+await waitFor(() => expect(result.current.save.isSuccess).toBe(true))
+await waitFor(() => expect(vi.mocked(api.get).mock.calls.length).toBeGreaterThan(callsBefore))
+```
+
+### Gotchas
+
+- **`EventDetailClient.test.tsx` started failing after Sprint 5B wiring with `supabaseUrl is required`.** `EventDetailClient` now imports `lib/supabase.ts` at module load time, which calls `createClient()` requiring `NEXT_PUBLIC_SUPABASE_URL`. Fixed by adding `vi.mock('@/lib/supabase', ...)`, `vi.mock('@/hooks/usePreferredSlots', ...)`, and a partial `vi.mock('@tanstack/react-query', ...)` override for `useQueryClient` to the existing test file.
+- **`service_client` must be patched at both `app.routers.preferred_slots.service_client` and `app.dependencies.service_client`.** The router uses `service_client` directly (not via a service layer) and the `get_current_user` dependency resolves the user from `dependencies.service_client`. Missing either patch causes either a real DB call or a failed user lookup.
+- **DELETE endpoint does not re-check event participation** — it only fetches the slot by `slot_id` and checks `slot["user_id"] == current_user.id`. The 403 test only needs to mock `preferred_slots` table, not `events` or `event_participants`.
+- **Real-time subscription uses `event.id` (DB integer PK), not `event.uid` (12-char string).** The Supabase filter `event_id=eq.${event.id}` must use the integer `id` column. Invalidation uses `['preferred-slots', event.uid]` as the query key (consistent with `usePreferredSlots`).
 
 ---
 

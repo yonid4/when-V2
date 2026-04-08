@@ -226,22 +226,22 @@ After syncing calendar, busy slots appear as red blocks on the correct days and 
 
 ---
 
-### Part B — Preferred slots (backend + frontend)
+### Part B — Preferred slots (backend + frontend) ✅ DONE
 
 **Goal:** Users can save and retrieve their preferred time slots for an event.
 
 #### Backend
-- [ ] `POST /api/events/{uid}/preferred-slots` — save a preferred slot for current user; set `proposals_needs_regeneration=true` on the event; body: `{ start_time_utc, end_time_utc }`
-- [ ] `GET /api/events/{uid}/preferred-slots` — return only the current user's preferred slots for this event
-- [ ] `DELETE /api/events/{uid}/preferred-slots/{slot_id}` — delete a preferred slot (own slots only)
-- [ ] All three endpoints return 403 if the user is not a participant or coordinator
+- [x] `POST /api/events/{uid}/preferred-slots` — save a preferred slot for current user; set `proposals_needs_regeneration=true` on the event; body: `{ start_time_utc, end_time_utc }`
+- [x] `GET /api/events/{uid}/preferred-slots` — return only the current user's preferred slots for this event
+- [x] `DELETE /api/events/{uid}/preferred-slots/{slot_id}` — delete a preferred slot (own slots only)
+- [x] All three endpoints return 403 if the user is not a participant or coordinator
 
 #### Frontend
-- [ ] `hooks/usePreferredSlots.ts` — `usePreferredSlots(uid)`, `useSavePreferredSlot(uid)`, `useDeletePreferredSlot(uid)`
-- [ ] Pass real `preferredSlots` data from `usePreferredSlots` into `AvailabilityGrid` — replacing the `[]` placeholder from Part A
-- [ ] Confirmed preferred slots render as solid green 30-min half-row blocks (Part A rendering already handles this)
-- [ ] Conflict cells now show correctly when a preferred slot overlaps a busy slot
-- [ ] Supabase real-time subscription on `preferred_slots` INSERT/DELETE → invalidate `['preferred-slots', uid]` query → grid re-renders
+- [x] `hooks/usePreferredSlots.ts` — `usePreferredSlots(uid)`, `useSavePreferredSlot(uid)`, `useDeletePreferredSlot(uid)`
+- [x] Pass real `preferredSlots` data from `usePreferredSlots` into `AvailabilityGrid` — replacing the `[]` placeholder from Part A
+- [x] Confirmed preferred slots render as solid green 30-min half-row blocks (Part A rendering already handles this)
+- [x] Conflict cells now show correctly when a preferred slot overlaps a busy slot
+- [x] Supabase real-time subscription on `preferred_slots` INSERT/DELETE → invalidate `['preferred-slots', uid]` query → grid re-renders
 
 #### Done when
 User saves a preferred slot via the API. It appears as a green block on the grid immediately. If it overlaps a busy slot, a split conflict cell appears. Deleting it removes it from the grid. Real-time: a second browser tab sees the change without refreshing.
