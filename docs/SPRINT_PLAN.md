@@ -313,33 +313,33 @@ User clicks their own green preferred slot in view mode → sees "Remove this sl
 
 ---
 
-### Part A — Scheduling algorithm & proposals
+### Part A — Scheduling algorithm & proposals ✅ DONE
 
 **Goal:** Backend generates ranked time proposals. Frontend displays them in the ProposalPanel.
 
 #### Backend
-- [ ] `proposal_service.py`:
+- [x] `proposal_service.py`:
   - Slot generator — 30-min sliding window across the full event scheduling window
   - Conflict scorer — for each window, count participants with overlapping `busy_slots`
   - Preference scorer — for each window, count participants with overlapping `preferred_slots`
   - Reasoning builder — human-readable string: "X/Y participants free, Z marked as preferred"
   - Ranker — sort by `conflicts ASC` then `preferred_count DESC`, take top 5
   - Cache result in `proposed_times` table; set `proposals_last_generated_at`
-- [ ] `POST /api/events/{uid}/proposals` — return cached proposals if `proposals_needs_regeneration=false` and cache exists; otherwise run algorithm and cache
-- [ ] `POST /api/events/{uid}/proposals/refresh` — force regenerate regardless of cache state
+- [x] `POST /api/events/{uid}/proposals` — return cached proposals if `proposals_needs_regeneration=false` and cache exists; otherwise run algorithm and cache
+- [x] `POST /api/events/{uid}/proposals/refresh` — force regenerate regardless of cache state
 
 #### Frontend
-- [ ] `hooks/useProposals.ts` — `useProposals(uid)`, `useRefreshProposals(uid)`
-- [ ] Wire ProposalPanel — replace the current placeholder with real ranked proposals from the API
-- [ ] Each proposal card shows: day + time, reasoning string ("X/Y participants free, Z marked as preferred"), "Select" button (coordinator only)
-- [ ] "View Proposed Times" CTA button triggers `useProposals` fetch and scrolls to ProposalPanel
-- [ ] If `proposals_needs_regeneration=true`, show a "Results may be outdated — Regenerate" prompt above the list
-- [ ] Real-time: `preferred_slots` INSERT/DELETE → ProposalPanel shows regenerate prompt
+- [x] `hooks/useProposals.ts` — `useProposals(uid, enabled)`, `useRefreshProposals(uid)`
+- [x] Wire ProposalPanel — replace the current placeholder with real ranked proposals from the API
+- [x] Each proposal card shows: day + time, reasoning string ("X/Y participants free, Z marked as preferred"), "Select" button (coordinator only)
+- [x] "View Proposed Times" CTA button triggers `useProposals` fetch and scrolls to ProposalPanel
+- [x] If `proposals_needs_regeneration=true`, show a "Results may be outdated — Regenerate" prompt above the list
+- [x] Real-time: `preferred_slots` INSERT/DELETE → ProposalPanel shows regenerate prompt
 
 #### Done when
 After participants mark preferred slots, coordinator clicks "View Proposed Times" and sees a ranked list with reasoning. Regenerate works. Proposals update prompt appears when preferred slots change.
 
-> Tests: `backend/tests/test_proposals.py`, `frontend/__tests__/sprint6/useProposals.test.ts`
+> Tests: `backend/tests/test_proposals.py` (11 tests), `frontend/__tests__/sprint6/useProposals.test.ts` (5 tests) — all passing
 
 ---
 

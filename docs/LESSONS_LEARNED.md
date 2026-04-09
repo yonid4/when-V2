@@ -272,3 +272,34 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **Clicking elsewhere on the grid column must dismiss the confirmation — add `onClick` to the column div.**
   The column div (`<div key={di} className="flex flex-col relative ...">`) receives an `onClick` that calls `onSlotDeleteCancel()` when `deletingSlotId` is set. The confirmation div itself calls `e.stopPropagation()` so clicks within the popover do not dismiss it. Combined with the Escape key handler in the parent, this covers both pointer and keyboard dismissal.
+
+---
+
+## Sprint 6A — Slot Rendering
+
+- **Slot overlays must be clipped to the grid's visible time bounds before computing geometry and labels.**
+  Slots from the DB may span outside the event window (e.g. an all-day Google Calendar event or a busy slot starting at 08:00 on a 09:00–17:00 grid). Always clip `startUtc`/`endUtc` to `colDayStart`/`colDayEnd` per column before calling `overlayStyle()` and before rendering time labels. If the clipped end ≤ clipped start, skip rendering entirely. The clipped times are used only for rendering — do not mutate the original slot data. The pending slot is built from grid cell coordinates so it is always in bounds and needs no clipping.
+
+## Sprint 6A — Scheduling Algorithm & Proposals
+
+- **Patch `service_client` in both the router module AND the service module.**
+  When `proposal_service.py` does `from app.utils.supabase import service_client`, Python binds that name locally in `proposal_service`'s namespace. Patching `app.routers.proposals.service_client` does NOT affect the service module's binding — both must be patched separately. Use two `@patch` decorators: `@patch("app.routers.proposals.service_client")` and `@patch("app.services.proposal_service.service_client")`. The same principle applies to any module that imports `service_client` at the top level.
+
+- **`db.table.side_effect` creates a fresh `MagicMock()` every invocation — you cannot introspect a specific table mock via `db.table("name")` after the test.**
+  Using `db.table.side_effect = lambda name: MagicMock()` means calling `db.table("proposed_times")` after the test creates a brand-new mock that was never called, so `call_args` is always `None`. Fix: create the mock before `make_table`, reference it inside the lambda, and inspect THAT variable directly post-test:
+  ```python
+  proposed_times_mock = MagicMock()
+  def make_table(name):
+      if name == "proposed_times": return proposed_times_mock
+      ...
+  db.table.side_effect = make_table
+  # after generate_proposals():
+  inserted = proposed_times_mock.insert.call_args[0][0]
+  ```
+
+- **`useProposals` uses a POST request, not GET.**
+  The proposals endpoint (`POST /events/{uid}/proposals`) accepts filter params via the request body (future extensibility). The hook calls `api.post(...)`. In tests, mock `api.post`, not `api.get`.
+
+- **Lazy-loading proposals with an `enabled` boolean prevents unnecessary backend calls.**
+  Rather than fetching proposals on page load (slow, expensive), the `useProposals(uid, enabled)` hook only fires when `enabled=true`. The "View Proposed Times" button flips `proposalsEnabled` state — on first click the query runs, on subsequent views the cache is reused. This also prevents generating proposals before the user asks for them.
+

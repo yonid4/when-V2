@@ -1010,4 +1010,82 @@ The `subtractConflicts` function is a pure function. Its behavior is verified by
 
 ---
 
+## Sprint 5D — Click-to-Delete Confirmed Preferred Slots
+
+**Completed:** 2026-04-08
+**Result:** 150/150 tests passing (16 component-level tests remain skipped — jsdom hang, unchanged from prior sprint)
+
+No new test files written. Feature implemented in `EventDetailClient.tsx`.
+
+### Changes Made
+
+| File | Change |
+|------|--------|
+| `frontend/app/events/[uid]/EventDetailClient.tsx` | Added `deletingSlotId` state, two-layer overlay architecture (merged display + transparent click overlays), Escape/click-away dismissal, view-mode and edit-mode deletion flows |
+
+---
+
+## Sprint 6A — Scheduling Algorithm & Proposals
+
+**Completed:** 2026-04-09
+**Result:** 11/11 backend tests, 166/166 frontend tests (5 new) passing
+
+### Files Written
+
+| File | Domain | Tests |
+|------|--------|-------|
+| `backend/tests/test_proposals.py` | Proposals router + proposal_service | 11 |
+| `frontend/__tests__/sprint6/useProposals.test.ts` | useProposals + useRefreshProposals hooks | 5 |
+
+### Coverage
+
+#### Backend — `test_proposals.py` (11 tests)
+
+**Router tests (via TestClient):**
+- `test_get_proposals_returns_cached_when_fresh` — returns DB-cached proposals when `proposals_needs_regeneration=false`
+- `test_get_proposals_regenerates_when_stale` — runs algorithm and returns new proposals when stale
+- `test_get_proposals_404_event_not_found` — 404 when event doesn't exist
+- `test_get_proposals_403_not_participant` — 403 when user is not a participant or coordinator
+- `test_get_proposals_accepted_participant_can_access` — accepted participants can fetch proposals
+- `test_refresh_proposals_coordinator_only` — 403 when non-coordinator calls refresh
+- `test_refresh_proposals_success` — coordinator refresh runs algorithm and returns new proposals
+
+**Service unit tests (calling `generate_proposals()` directly):**
+- `test_generate_proposals_returns_empty_when_event_not_found` — empty list when event missing
+- `test_generate_proposals_scores_conflicts` — window with overlapping busy slot gets conflict_count=1
+- `test_generate_proposals_preferred_count_scored` — window with overlapping preferred slot gets preferred_count=1
+- `test_generate_proposals_updates_event_metadata` — `proposals_last_generated_at` and `proposals_needs_regeneration=false` written back to events table
+
+#### Frontend — `useProposals.test.ts` (5 tests)
+
+**useProposals:**
+- Fetches via POST to `/events/{uid}/proposals` when `enabled=true`
+- Stays idle (`fetchStatus='idle'`) when `enabled=false`
+- Stays idle when `uid=''`
+
+**useRefreshProposals:**
+- POSTs to `/events/{uid}/proposals/refresh` and updates cached proposals via `setQueryData` on success
+
+### Mock Patterns
+
+**Backend:**
+- Router tests use two `@patch` decorators: `app.routers.proposals.service_client` (for auth/access checks) and `app.services.proposal_service.service_client` (for the algorithm's DB calls) — both must be patched separately because each module imports `service_client` at load time as its own binding
+- `make_router_table` and `make_svc_table` closures assigned to separate mock `.table.side_effect` — keeps router and service DB calls isolated
+- To inspect a specific table mock's `call_args` after `generate_proposals()`, create the mock instance BEFORE `make_table` and return the same instance from the `side_effect` lambda — do NOT call `db.table("proposed_times")` after the test, as that creates a new `MagicMock()` instance
+
+**Frontend:**
+- `vi.mock('@/lib/api')` with `api.post` as `vi.fn()`
+- Fresh `QueryClient` per test via `makeWrapper()` factory to prevent cross-test state leakage
+- `renderHook` + `waitFor` for async query resolution
+
+### Gotchas
+
+1. **Service-layer client must be patched separately.** `proposal_service.py` imports `service_client` at module load time: `from app.utils.supabase import service_client`. Patching only `app.routers.proposals.service_client` does NOT affect what `proposal_service.py` uses — it still holds its own reference. Must also patch `app.services.proposal_service.service_client`.
+
+2. **`db.table.side_effect` creates a new MagicMock per call.** Calling `db.table("proposed_times")` AFTER the test creates a fresh mock with `call_args=None`. Capture the mock instance inside the `side_effect` setup, return the same object each time, and inspect THAT object's `call_args` post-test.
+
+3. **`useProposals` uses POST not GET.** The proposals endpoint is a `POST` (body carries filter params). In tests, mock `api.post`, not `api.get`.
+
+---
+
 _Append new sprint sections below as sprints complete._
