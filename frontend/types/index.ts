@@ -172,3 +172,12 @@ export interface ProposalResponse {
   reasoning: string
   rank: number
 }
+
+// ─── Finalization ─────────────────────────────────────────────────────────────
+
+export interface FinalizeStatus {
+  status: string
+  finalized_start_time_utc: string | null
+  finalized_end_time_utc: string | null
+  google_calendar_event_id: string | null
+}
