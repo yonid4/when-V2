@@ -363,38 +363,38 @@ After participants mark preferred slots, coordinator clicks "View Proposed Times
 
 ---
 
-### Part B — Event finalization
+### Part B — Event finalization ✅ DONE
 
 **Goal:** Coordinator selects a proposal, confirms in a modal, and a real Google Calendar event is created.
 
 #### Backend
-- [ ] `POST /api/events/{uid}/finalize` — coordinator only:
+- [x] `POST /api/events/{uid}/finalize` — coordinator only:
   - Accepts `proposed_time_id`
   - Creates a Google Calendar event on the coordinator's write calendar
   - Adds all `status=accepted` participants as attendees
   - Updates event: `status=confirmed`, `finalized_start_time_utc`, `finalized_end_time_utc`, `google_calendar_event_id`
   - Sends `event_finalized` notification to all participants
-- [ ] `GET /api/events/{uid}/finalize/status` — returns finalized time and Google Calendar event ID
+- [x] `GET /api/events/{uid}/finalize/status` — returns finalized time and Google Calendar event ID
 
 #### Frontend
-- [ ] `hooks/useFinalize.ts` — `useFinalize(uid)`
-- [ ] "Select" button on a proposal card opens a confirm modal showing:
+- [x] `hooks/useFinalize.ts` — `useFinalize(uid)`, `useFinalizeStatus(uid)`
+- [x] "Select" button on a proposal card opens a confirm modal showing:
   - Selected time (day, date, full time range)
   - List of accepted participants who will be added as attendees
   - Optional note field
   - "Confirm & Add to Calendar" button (terracotta) and "Back" button (outlined)
-- [ ] On confirmation: calls `POST /api/events/{uid}/finalize`, shows loading state on button
-- [ ] Confirmed event state (after finalization):
+- [x] On confirmation: calls `POST /api/events/{uid}/finalize`, shows loading state on button
+- [x] Confirmed event state (after finalization):
   - Finalized time shown prominently at top of right panel
   - Grid editing disabled — "Edit Availability" button hidden
   - "Added to Google Calendar" indicator with calendar icon
   - All proposal "Select" buttons hidden
-- [ ] Real-time: Supabase subscription on `events.status` change → all participants see confirmed state live without refreshing
+- [x] Real-time: Supabase subscription on `events.status` change → all participants see confirmed state live without refreshing
 
 #### Done when
 Coordinator selects a proposal, confirms in the modal, Google Calendar event appears in attendees' calendars, all participants see the confirmed time on the event page in real-time.
 
-> Tests: `backend/tests/test_finalize.py`, `frontend/__tests__/sprint6/useFinalize.test.ts`
+> Tests: `backend/tests/test_finalize.py` (7 tests), `frontend/__tests__/sprint6/useFinalize.test.ts` (3 tests) — all passing
 
 ---
 

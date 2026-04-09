@@ -331,3 +331,53 @@ Implementation details discovered while writing tests that aren't captured elsew
 - **Lazy-loading proposals with an `enabled` boolean prevents unnecessary backend calls.**
   Rather than fetching proposals on page load (slow, expensive), the `useProposals(uid, enabled)` hook only fires when `enabled=true`. The "View Proposed Times" button flips `proposalsEnabled` state — on first click the query runs, on subsequent views the cache is reused. This also prevents generating proposals before the user asks for them.
 
+---
+
+## Sprint 6B — Event Finalization
+
+### Backend
+
+- **Three `@patch` decorators required for finalize tests: service, dep, and GCal.**
+  `finalize_service.py` imports `service_client` at load time AND imports `build` from `googleapiclient.discovery`. All three must be patched at their import site in the service module:
+  ```python
+  @patch("app.services.finalize_service.build")
+  @patch("app.services.finalize_service.service_client")
+  @patch("app.dependencies.service_client")
+  ```
+  Patching `googleapiclient.discovery.build` directly does NOT affect the already-bound name in `finalize_service`.
+
+- **`calendar_sources` write-cal filter is Python-side, not SQL.**
+  `finalize_service.py` queries `calendar_sources` with only `.eq("is_write_calendar", True)` (no user_id filter in SQL), then loops through results to find the row whose `calendar_accounts.user_id` matches `current_user.id`. The mock chain for `calendar_sources` is therefore `.select().eq().execute()` — just one `.eq()` call.
+
+- **DB update is intentionally deferred until after successful GCal API call.**
+  The service calls `events().insert(...).execute()` first, then writes the event update and notifications. If `HttpError` is raised, the except block raises 502 without touching the DB. Tests for the 502 case should verify `mock_svc_svc.table("events").update` was never called.
+
+- **`HttpError` requires a mock response with `.status` and `.reason` attributes.**
+  `googleapiclient.errors.HttpError.__init__` reads `resp.status` and `resp.reason` synchronously. Use a plain `Mock()` (not `MagicMock()`) with those attributes set explicitly:
+  ```python
+  mock_resp = Mock()
+  mock_resp.status = 403
+  mock_resp.reason = "Forbidden"
+  HttpError(resp=mock_resp, content=b"error")
+  ```
+
+- **`calendar_accounts` credentials query uses two `.eq()` calls.**
+  The query filters by both `user_id` and `provider="google"`. Mock chain depth: `.select().eq().eq().maybe_single().execute()`. If only one `.eq()` is mocked, the second call returns a fresh `MagicMock()` whose `.maybe_single().execute().data` will not be the expected dict.
+
+### Frontend
+
+- **`act()` wrapper is required when triggering mutations in `renderHook` tests.**
+  Calling `result.current.mutate(...)` inside `renderHook` without `act()` causes React state update warnings and flaky assertions. Always wrap the mutation call:
+  ```typescript
+  await act(async () => {
+    result.current.mutate({ proposed_time_id: 'pt-uuid-1', note: 'See you there!' })
+  })
+  await waitFor(() => expect(result.current.isSuccess).toBe(true))
+  ```
+
+- **Supabase real-time subscription for events UPDATE must filter on the DB row `id`, not the public `uid`.**
+  The `events` table has both `id` (integer PK / UUID) and `uid` (public slug). Supabase real-time `filter` expressions use the actual column name. Use `id=eq.${event.id}` (the internal DB id) so the filter matches the row that Supabase sends in the change payload.
+
+- **`event_finalized` notification messages should render the finalized time in the user's local timezone, not the raw `n.message` string.**
+  The backend sets `n.message = "The event time has been confirmed."` (generic). The actual time is in `n.metadata.finalized_start_time_utc` / `finalized_end_time_utc`. `NotificationList` checks `n.notification_type === 'event_finalized'` and calls `getFinalizedMessage(n)` which formats the UTC times into a local-timezone string (e.g. "Mon, Apr 10 at 12:00 PM – 1:00 PM"). Always check `n.metadata` for richer display data before falling back to `n.message`.
+

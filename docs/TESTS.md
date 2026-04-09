@@ -1089,3 +1089,90 @@ No new test files written. Feature implemented in `EventDetailClient.tsx`.
 ---
 
 _Append new sprint sections below as sprints complete._
+
+---
+
+## Sprint 6B — Event Finalization
+
+**Result:** 7/7 backend tests passing, 3/3 frontend tests passing. Total: 85 backend, 153 frontend (no regressions).
+
+### Files written
+
+| File | Tests | What it covers |
+|---|---|---|
+| `backend/tests/test_finalize.py` | 7 | Finalize router + finalize_service |
+| `frontend/__tests__/sprint6/useFinalize.test.ts` | 3 | useFinalize mutation + useFinalizeStatus query |
+
+### Backend test coverage (`test_finalize.py`)
+
+- `test_finalize_success` — coordinator finalizes event; GCal event created; 200 returned
+- `test_finalize_404_event_not_found` — nonexistent uid → 404
+- `test_finalize_403_not_coordinator` — non-coordinator caller → 403
+- `test_finalize_422_no_write_calendar` — coordinator has no write calendar configured → 422 with `"no_write_calendar"` detail
+- `test_finalize_502_calendar_api_error` — GCal `events().insert().execute()` raises `HttpError` → 502 with `"calendar_create_failed"` detail; DB NOT updated
+- `test_get_finalize_status_coordinator` — confirmed event; coordinator gets status, finalized times, and gcal id
+- `test_get_finalize_status_403_outsider` — user who is neither coordinator nor accepted participant → 403
+
+### Frontend test coverage (`useFinalize.test.ts`)
+
+- `POSTs to the correct finalize endpoint with proposed_time_id and note` — mutation hits `/events/{uid}/finalize` with correct body
+- `fetches finalize status via GET from the correct endpoint` — useFinalizeStatus GETs `/events/{uid}/finalize/status`
+- `does not fetch when uid is empty` — query stays idle when uid is `""`
+
+### Key mock patterns
+
+**Backend — three-patch decorator pattern:**
+```python
+@patch("app.services.finalize_service.build")        # GCal API
+@patch("app.services.finalize_service.service_client") # DB in service
+@patch("app.dependencies.service_client")             # auth dep
+def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_build):
+```
+All three must be patched separately — each module holds its own binding at load time.
+
+**Backend — `_make_finalize_db` helper routes table() calls:**
+```python
+def _make_finalize_db(event_row, proposed_time_row=None, write_cal_rows=None, ...):
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events": ...
+        elif name == "proposed_times": ...
+        elif name == "calendar_sources": ...
+        elif name == "calendar_accounts": ...
+        elif name == "notifications": ...
+        return tbl
+    db = MagicMock()
+    db.table.side_effect = make_table
+    return db
+```
+Assign via: `mock_svc_svc.table.side_effect = _make_finalize_db(...).table.side_effect`
+
+**Backend — constructing `HttpError` for 502 test:**
+```python
+from googleapiclient.errors import HttpError
+from unittest.mock import Mock
+mock_resp = Mock()
+mock_resp.status = 403
+mock_resp.reason = "Forbidden"
+mock_cal_service.events.return_value.insert.return_value.execute.side_effect = HttpError(
+    resp=mock_resp, content=b"error"
+)
+```
+
+**Frontend — `act()` wrapper required for mutations:**
+```typescript
+await act(async () => {
+  result.current.mutate({ proposed_time_id: 'pt-uuid-1', note: 'See you there!' })
+})
+await waitFor(() => expect(result.current.isSuccess).toBe(true))
+```
+
+### Gotchas
+
+1. **`build` must be patched at the service layer, not the router.** `finalize_service.py` imports `build` from `googleapiclient.discovery` at load time. Patch `app.services.finalize_service.build` — patching `googleapiclient.discovery.build` directly does not affect the already-imported binding.
+
+2. **`calendar_sources` write-cal filter is in Python, not SQL.** The query fetches all `is_write_calendar=True` rows, then checks `row["calendar_accounts"]["user_id"] == current_user.id` in Python. The mock must return `write_cal_rows` from the `.select().eq().execute()` chain (only one `.eq()` for `is_write_calendar`).
+
+3. **DB never updated if GCal call fails.** The update to `events` + notifications insert happen only after a successful `events().insert().execute()` call. The 502 test verifies `update` is never called on the mock.
+
+4. **`calendar_accounts` credentials query uses two `.eq()` calls.** Chain depth: `.select().eq("user_id", ...).eq("provider", "google").maybe_single().execute()` — the mock must match exactly.
