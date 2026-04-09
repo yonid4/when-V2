@@ -5,6 +5,30 @@ import { formatDistanceToNow } from 'date-fns'
 import { useNotifications, useMarkRead, useTakeAction } from '@/hooks/useNotifications'
 import type { Notification } from '@/types'
 
+function formatLocalTimeRange(startUtc: string, endUtc: string): string {
+  const start = new Date(startUtc)
+  const end = new Date(endUtc)
+  const sameDay = start.toDateString() === end.toDateString()
+  const dateStr = start.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  const startTime = start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const endTime = end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  if (sameDay) return `${dateStr} at ${startTime} – ${endTime}`
+  const endDateStr = end.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  return `${dateStr} at ${startTime} – ${endDateStr} at ${endTime}`
+}
+
+function getFinalizedMessage(n: Notification): string {
+  const meta = n.metadata
+  if (
+    meta &&
+    typeof meta.finalized_start_time_utc === 'string' &&
+    typeof meta.finalized_end_time_utc === 'string'
+  ) {
+    return `The event has been confirmed for ${formatLocalTimeRange(meta.finalized_start_time_utc, meta.finalized_end_time_utc)}`
+  }
+  return n.message
+}
+
 export function NotificationList() {
   const router = useRouter()
   const { data: notifications, isLoading } = useNotifications()
@@ -36,7 +60,9 @@ export function NotificationList() {
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-bold text-on-surface">{n.title}</p>
-              <p className="text-xs text-on-surface-variant mt-0.5">{n.message}</p>
+              <p className="text-xs text-on-surface-variant mt-0.5">
+                {n.notification_type === 'event_finalized' ? getFinalizedMessage(n) : n.message}
+              </p>
             </div>
             <span className="text-[10px] text-on-surface-variant shrink-0">
               {formatDistanceToNow(new Date(n.created_at), { addSuffix: true })}
