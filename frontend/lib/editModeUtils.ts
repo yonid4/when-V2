@@ -45,7 +45,7 @@ export function computeMerge(
 
     const slotStart = new Date(slot.start_time_utc)
     const slotEnd = new Date(slot.end_time_utc)
-    const overlaps = startUtc < slotEnd && endUtc > slotStart
+    const overlaps = startUtc <= slotEnd && endUtc >= slotStart
 
     if (overlaps) {
       // Expand the pending slot to cover both ranges

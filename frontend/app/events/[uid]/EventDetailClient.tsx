@@ -401,6 +401,45 @@ function subtractConflicts(
   return segments.filter((s) => s.endUtc > s.startUtc)
 }
 
+/**
+ * Break a list of slots into non-overlapping segments with accurate per-segment
+ * participant counts. Each boundary point (slot start/end) becomes a segment
+ * boundary, and each segment's count = number of input slots that cover it.
+ */
+function buildCountedSegments(slots: SlotLike[]): SlotOverlay[] {
+  if (slots.length === 0) return []
+  // Collect all unique boundary timestamps
+  const points = Array.from(
+    new Set(slots.flatMap((s) => [new Date(s.start_time_utc).getTime(), new Date(s.end_time_utc).getTime()]))
+  ).sort((a, b) => a - b)
+
+  const raw: SlotOverlay[] = []
+  for (let i = 0; i < points.length - 1; i++) {
+    const segStart = new Date(points[i])
+    const segEnd = new Date(points[i + 1])
+    const count = slots.filter((s) => {
+      const ss = new Date(s.start_time_utc).getTime()
+      const se = new Date(s.end_time_utc).getTime()
+      return ss <= points[i] && se >= points[i + 1]
+    }).length
+    if (count > 0) raw.push({ startUtc: segStart, endUtc: segEnd, count })
+  }
+
+  // Merge adjacent segments with the same count into one block
+  if (raw.length === 0) return []
+  const result: SlotOverlay[] = [{ ...raw[0] }]
+  for (let i = 1; i < raw.length; i++) {
+    const last = result[result.length - 1]
+    if (preferredIntensityClass(raw[i].count) === preferredIntensityClass(last.count) && raw[i].startUtc.getTime() === last.endUtc.getTime()) {
+      last.endUtc = raw[i].endUtc
+      if (raw[i].count > last.count) last.count = raw[i].count
+    } else {
+      result.push({ ...raw[i] })
+    }
+  }
+  return result
+}
+
 /** Clip a slot's start/end to the grid's visible time bounds for a given column. */
 function clipToGridBounds(
   startUtc: Date,
@@ -602,8 +641,11 @@ function AvailabilityGrid({
                 })
 
                 const busyOverlays = mergeSlots(colBusy)
-                const preferredOverlays = mergeSlots(colPreferred)
-                const conflictOverlays = buildConflictOverlays(busyOverlays, preferredOverlays)
+                // Build per-segment preferred overlays with accurate per-region counts
+                const preferredOverlays = buildCountedSegments(colPreferred)
+                // For conflict detection, merge preferred into single blocks (as before)
+                const preferredMerged = mergeSlots(colPreferred)
+                const conflictOverlays = buildConflictOverlays(busyOverlays, preferredMerged)
 
 
                 // ── Pending slot overlay ─────────────────────────────────────
@@ -698,11 +740,30 @@ function AvailabilityGrid({
                       })
                     )}
 
-                    {/* Own preferred slot click/delete overlays — clipped to grid bounds */}
+                    {/* Own slot dot indicators — one per own preferred slot */}
                     {colPreferred
+                      .filter((slot) => (slot as PreferredSlot).user_id === currentUserId && !slotsToDelete.includes((slot as PreferredSlot).id))
+                      .map((slot) => {
+                        const s = slot as PreferredSlot
+                        const clipped = clipToGridBounds(new Date(s.start_time_utc), new Date(s.end_time_utc), colDayStart, colDayEnd)
+                        if (clipped.endUtc <= clipped.startUtc) return null
+                        return (
+                          <div
+                            key={`own-dot-${s.id}`}
+                            style={{ ...overlayStyle(clipped.startUtc, clipped.endUtc), pointerEvents: 'none', zIndex: 15 }}
+                            className="relative"
+                          >
+                            <div className="absolute bg-secondary rounded-full" style={{ top: 4, right: 6, width: 8, height: 8 }} />
+                          </div>
+                        )
+                      })
+                    }
+
+                    {/* Own preferred slot click/delete overlays — only in edit mode */}
+                    {isEditMode && colPreferred
                       .filter((slot) => {
                         const s = slot as PreferredSlot
-                        return s.user_id === currentUserId && !(isEditMode && slotsToDelete.includes(s.id))
+                        return s.user_id === currentUserId && !slotsToDelete.includes(s.id)
                       })
                       .map((slot) => {
                         const s = slot as PreferredSlot
@@ -911,22 +972,29 @@ export default function EventDetailClient({
         return -1
       }
     )
+    const foreignSlots = (preferredSlots as PreferredSlot[]).filter(
+      (s) => s.user_id !== user?.id
+    )
     setPendingSlot(result.pendingSlot)
     setSlotsToDelete(result.slotsToDelete)
-    setDisplayedPreferredSlots(result.remainingSlots)
+    // Keep foreign slots visible alongside the remaining own slots
+    setDisplayedPreferredSlots([...result.remainingSlots, ...foreignSlots])
   }
 
   // Mouse-up handler — global, attached when dragging or resizing
   const handleDocumentMouseUp = useCallback(() => {
+    const ownSlots = (preferredSlots as PreferredSlot[]).filter(
+      (s) => s.user_id === user?.id
+    )
     if (pendingSlot && dragState) {
-      runMergeCheck(pendingSlot, preferredSlots as PreferredSlot[], dragState.baseDate)
+      runMergeCheck(pendingSlot, ownSlots, dragState.baseDate)
     } else if (pendingSlot && resizeState) {
       // For resize, derive baseDate from the pending slot's startUtc
       const bd = new Date(pendingSlot.startUtc)
       bd.setHours(0, 0, 0, 0)
       const dow = bd.getDay()
       bd.setDate(bd.getDate() - (dow + 6) % 7)
-      runMergeCheck(pendingSlot, preferredSlots as PreferredSlot[], bd)
+      runMergeCheck(pendingSlot, ownSlots, bd)
     }
     setDragState(null)
     setResizeState(null)
@@ -1051,7 +1119,14 @@ export default function EventDetailClient({
     setDoneError(null)
     try {
       // 1. Delete all slots that were merged/replaced (in parallel)
-      await Promise.all(slotsToDelete.map((id) => deletePreferredSlot(id)))
+      const deleteResults = await Promise.allSettled(
+        slotsToDelete.map((id) => deletePreferredSlot(id))
+      )
+      const deleteFailures = deleteResults.filter((r) => r.status === 'rejected')
+      if (deleteFailures.length > 0) {
+        setDoneError('Failed to save — try again')
+        return
+      }
 
       // 2. Save the pending slot if one exists
       if (pendingSlot) {
