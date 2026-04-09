@@ -114,7 +114,6 @@ def get_preferred_slots(
         service_client.table("preferred_slots")
         .select("id, event_id, user_id, start_time_utc, end_time_utc, created_at")
         .eq("event_id", event_id)
-        .eq("user_id", current_user.id)
         .execute()
     )
     return result.data or []

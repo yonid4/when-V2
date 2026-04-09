@@ -161,3 +161,14 @@ export interface ProposedTime {
   rank: number
   created_at: string
 }
+
+export interface ProposalResponse {
+  id: string
+  event_id: string
+  start_time_utc: string
+  end_time_utc: string
+  conflict_count: number
+  preferred_count: number
+  reasoning: string
+  rank: number
+}
