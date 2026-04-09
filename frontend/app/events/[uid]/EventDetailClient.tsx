@@ -408,9 +408,15 @@ function AvailabilityGrid({
   latestTime,
   isEditMode,
   pendingSlot,
+  currentUserId,
+  deletingSlotId,
+  slotsToDelete,
   onCellMouseDown,
   onCellMouseEnter,
   onPendingSlotEdgeMouseDown,
+  onSlotClick,
+  onSlotDeleteConfirm,
+  onSlotDeleteCancel,
 }: {
   busySlots: SlotLike[]
   preferredSlots: SlotLike[]
@@ -419,9 +425,15 @@ function AvailabilityGrid({
   latestTime: string
   isEditMode: boolean
   pendingSlot: PendingSlot | null
+  currentUserId: string
+  deletingSlotId: string | null
+  slotsToDelete: string[]
   onCellMouseDown: (dayIndex: number, rowIndex: number, cellStartUtc: Date) => void
   onCellMouseEnter: (dayIndex: number, rowIndex: number, cellStartUtc: Date) => void
   onPendingSlotEdgeMouseDown: (edge: 'top' | 'bottom', e: React.MouseEvent) => void
+  onSlotClick: (slotId: string) => void
+  onSlotDeleteConfirm: (slotId: string) => void
+  onSlotDeleteCancel: () => void
 }) {
   const earliestDate = new Date(earliestTime)
   const latestDate = new Date(latestTime)
@@ -588,6 +600,7 @@ function AvailabilityGrid({
                   <div
                     key={di}
                     className={`flex flex-col relative ${isScrollable ? '' : 'flex-1'} ${di < 6 ? 'border-r border-outline-variant/25' : ''}`}
+                    onClick={() => { if (deletingSlotId) onSlotDeleteCancel() }}
                   >
                     {Array.from({ length: totalHours }, (_, hi) => {
                       const hour = startHour + hi
@@ -644,7 +657,7 @@ function AvailabilityGrid({
                       ))
                     )}
 
-                    {/* Preferred overlays — clipped to non-conflict segments */}
+                    {/* Preferred overlays — clipped to non-conflict segments (display only) */}
                     {preferredOverlays.flatMap((o, oi) =>
                       subtractConflicts(o, conflictOverlays).map((seg, si) => (
                         <div
@@ -658,6 +671,51 @@ function AvailabilityGrid({
                         </div>
                       ))
                     )}
+
+                    {/* Own preferred slot click/delete overlays — full slot geometry (not clipped) */}
+                    {colPreferred
+                      .filter((slot) => {
+                        const s = slot as PreferredSlot
+                        return s.user_id === currentUserId && !(isEditMode && slotsToDelete.includes(s.id))
+                      })
+                      .map((slot) => {
+                        const s = slot as PreferredSlot
+                        const isConfirming = deletingSlotId === s.id
+                        const slotStart = new Date(s.start_time_utc)
+                        const slotEnd = new Date(s.end_time_utc)
+                        return (
+                          <div
+                            key={`own-preferred-${s.id}`}
+                            style={{ ...overlayStyle(slotStart, slotEnd), pointerEvents: 'auto', zIndex: 25 }}
+                            className="rounded-md cursor-pointer relative flex items-center justify-center"
+                            onClick={(e) => { e.stopPropagation(); onSlotClick(s.id) }}
+                          >
+                            {isConfirming && (
+                              <div
+                                className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-surface-container-lowest/95 rounded-md z-30 px-1"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <span className="text-[10px] font-bold text-on-surface text-center leading-tight">Remove this slot?</span>
+                                <div className="flex gap-1">
+                                  <button
+                                    className="px-2 py-0.5 rounded text-[10px] font-bold border border-outline-variant text-on-surface-variant hover:bg-surface-container transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); onSlotDeleteCancel() }}
+                                  >
+                                    Cancel
+                                  </button>
+                                  <button
+                                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-error text-on-error hover:bg-error/90 transition-colors"
+                                    onClick={(e) => { e.stopPropagation(); onSlotDeleteConfirm(s.id) }}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })
+                    }
 
                     {/* Pending slot overlay */}
                     {pendingOverlayStyle && (
@@ -742,6 +800,7 @@ export default function EventDetailClient({
   const [displayedPreferredSlots, setDisplayedPreferredSlots] = useState<PreferredSlot[]>([])
   const [doneError, setDoneError] = useState<string | null>(null)
   const [isDonePending, setIsDonePending] = useState(false)
+  const [deletingSlotId, setDeletingSlotId] = useState<string | null>(null)
 
   function handleSave(result: EditSaveResult) {
     if (result.infoChanged || result.timeRangeChanged) {
@@ -839,6 +898,15 @@ export default function EventDetailClient({
       return () => document.removeEventListener('mouseup', handleDocumentMouseUp)
     }
   }, [dragState, resizeState, handleDocumentMouseUp])
+
+  useEffect(() => {
+    if (!deletingSlotId) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setDeletingSlotId(null)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [deletingSlotId])
 
   // ── Grid event handlers ──────────────────────────────────────────────────
 
@@ -1066,9 +1134,23 @@ export default function EventDetailClient({
                 latestTime={event.latest_datetime_utc}
                 isEditMode={isEditMode}
                 pendingSlot={pendingSlot}
+                currentUserId={currentUserId}
+                deletingSlotId={deletingSlotId}
+                slotsToDelete={slotsToDelete}
                 onCellMouseDown={handleCellMouseDown}
                 onCellMouseEnter={handleCellMouseEnter}
                 onPendingSlotEdgeMouseDown={handlePendingSlotEdgeMouseDown}
+                onSlotClick={(id) => setDeletingSlotId(id)}
+                onSlotDeleteConfirm={(id) => {
+                  setDeletingSlotId(null)
+                  if (isEditMode) {
+                    setSlotsToDelete((prev) => [...prev, id])
+                    setDisplayedPreferredSlots((prev) => prev.filter((s) => s.id !== id))
+                  } else {
+                    deletePreferredSlot(id)
+                  }
+                }}
+                onSlotDeleteCancel={() => setDeletingSlotId(null)}
               />
             </div>
           </div>
