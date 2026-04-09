@@ -112,8 +112,8 @@ describe('computeMerge', () => {
     expect(result.pendingSlot.endUtc).toEqual(new Date('2025-01-08T12:00:00Z'))
   })
 
-  it('handles adjacent slots that touch but do not overlap', () => {
-    // slot ends exactly when pending starts — no overlap
+  it('merges adjacent slots that touch at a boundary', () => {
+    // slot ends exactly when pending starts — treated as touching/overlapping
     const confirmedSlot = makeSlot(
       'slot-8',
       '2025-01-08T09:00:00Z',
@@ -123,8 +123,10 @@ describe('computeMerge', () => {
 
     const result = computeMerge(pending, [confirmedSlot], getDayIndex)
 
-    expect(result.slotsToDelete).toHaveLength(0)
-    expect(result.remainingSlots).toHaveLength(1)
+    expect(result.slotsToDelete).toHaveLength(1)
+    expect(result.slotsToDelete[0]).toBe('slot-8')
+    expect(result.remainingSlots).toHaveLength(0)
+    expect(result.pendingSlot.startUtc).toEqual(new Date('2025-01-08T09:00:00Z'))
   })
 
   it('returns empty arrays and original pending when no confirmed slots', () => {
