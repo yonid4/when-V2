@@ -21,13 +21,14 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
 import { useEventBusySlots, useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
 import { usePreferredSlots, useSavePreferredSlot, useDeletePreferredSlot } from '@/hooks/usePreferredSlots'
+import { useProposals, useRefreshProposals } from '@/hooks/useProposals'
 import { supabase } from '@/lib/supabase'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
 import { Navbar } from '@/components/layout/Navbar'
 import { useAuthStore } from '@/stores/authStore'
-import type { BusySlot, EventWithParticipants, EventType, PreferredSlot } from '@/types'
+import type { BusySlot, EventWithParticipants, EventType, PreferredSlot, ProposalResponse } from '@/types'
 import type { SlotLike } from '@/lib/gridUtils'
 import { computeMerge } from '@/lib/editModeUtils'
 import type { PendingSlot } from '@/lib/editModeUtils'
@@ -400,6 +401,19 @@ function subtractConflicts(
   return segments.filter((s) => s.endUtc > s.startUtc)
 }
 
+/** Clip a slot's start/end to the grid's visible time bounds for a given column. */
+function clipToGridBounds(
+  startUtc: Date,
+  endUtc: Date,
+  gridStartUtc: Date,
+  gridEndUtc: Date,
+): { startUtc: Date; endUtc: Date } {
+  return {
+    startUtc: startUtc < gridStartUtc ? gridStartUtc : startUtc,
+    endUtc: endUtc > gridEndUtc ? gridEndUtc : endUtc,
+  }
+}
+
 function AvailabilityGrid({
   busySlots,
   preferredSlots,
@@ -625,54 +639,66 @@ function AvailabilityGrid({
                     })}
 
                     {/* Conflict overlays (rendered first so busy/preferred don't cover them) */}
-                    {conflictOverlays.map((c, ci) => (
-                      <div
-                        key={`conflict-${ci}`}
-                        style={overlayStyle(c.startUtc, c.endUtc)}
-                        className="rounded-md z-20 overflow-hidden relative"
-                      >
-                        <div className="flex w-full h-full">
-                          <div className={`w-1/2 h-full ${busyIntensityClass(c.busyCount)}`} />
-                          <div className={`w-1/2 h-full ${preferredIntensityClass(c.preferredCount)}`} />
-                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
-                            <span className="text-xs font-semibold text-error">CONFLICT</span>
-                            <span className="text-xs text-gray-600">{formatSlotTime(c.startUtc.toISOString())} – {formatSlotTime(c.endUtc.toISOString())}</span>
+                    {conflictOverlays.map((c, ci) => {
+                      const cc = clipToGridBounds(c.startUtc, c.endUtc, colDayStart, colDayEnd)
+                      if (cc.endUtc <= cc.startUtc) return null
+                      return (
+                        <div
+                          key={`conflict-${ci}`}
+                          style={overlayStyle(cc.startUtc, cc.endUtc)}
+                          className="rounded-md z-20 overflow-hidden relative"
+                        >
+                          <div className="flex w-full h-full">
+                            <div className={`w-1/2 h-full ${busyIntensityClass(c.busyCount)}`} />
+                            <div className={`w-1/2 h-full ${preferredIntensityClass(c.preferredCount)}`} />
+                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
+                              <span className="text-xs font-semibold text-error">CONFLICT</span>
+                              <span className="text-xs text-gray-600">{formatSlotTime(cc.startUtc.toISOString())} – {formatSlotTime(cc.endUtc.toISOString())}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
 
                     {/* Busy overlays — clipped to non-conflict segments */}
                     {busyOverlays.flatMap((o, oi) =>
-                      subtractConflicts(o, conflictOverlays).map((seg, si) => (
-                        <div
-                          key={`busy-${oi}-${si}`}
-                          style={overlayStyle(seg.startUtc, seg.endUtc)}
-                          className={`${busyIntensityClass(o.count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
-                        >
-                          {seg.endUtc.getTime() - seg.startUtc.getTime() >= 30 * 60 * 1000 && (
-                            <span className="text-xs text-error font-medium">{formatSlotTime(seg.startUtc.toISOString())} – {formatSlotTime(seg.endUtc.toISOString())}</span>
-                          )}
-                        </div>
-                      ))
+                      subtractConflicts(o, conflictOverlays).map((seg, si) => {
+                        const cs = clipToGridBounds(seg.startUtc, seg.endUtc, colDayStart, colDayEnd)
+                        if (cs.endUtc <= cs.startUtc) return null
+                        return (
+                          <div
+                            key={`busy-${oi}-${si}`}
+                            style={overlayStyle(cs.startUtc, cs.endUtc)}
+                            className={`${busyIntensityClass(o.count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
+                          >
+                            {cs.endUtc.getTime() - cs.startUtc.getTime() >= 30 * 60 * 1000 && (
+                              <span className="text-xs text-error font-medium">{formatSlotTime(cs.startUtc.toISOString())} – {formatSlotTime(cs.endUtc.toISOString())}</span>
+                            )}
+                          </div>
+                        )
+                      })
                     )}
 
                     {/* Preferred overlays — clipped to non-conflict segments (display only) */}
                     {preferredOverlays.flatMap((o, oi) =>
-                      subtractConflicts(o, conflictOverlays).map((seg, si) => (
-                        <div
-                          key={`preferred-${oi}-${si}`}
-                          style={overlayStyle(seg.startUtc, seg.endUtc)}
-                          className={`${preferredIntensityClass(o.count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
-                        >
-                          {seg.endUtc.getTime() - seg.startUtc.getTime() >= 30 * 60 * 1000 && (
-                            <span className="text-xs text-secondary font-medium">{formatSlotTime(seg.startUtc.toISOString())} – {formatSlotTime(seg.endUtc.toISOString())}</span>
-                          )}
-                        </div>
-                      ))
+                      subtractConflicts(o, conflictOverlays).map((seg, si) => {
+                        const cs = clipToGridBounds(seg.startUtc, seg.endUtc, colDayStart, colDayEnd)
+                        if (cs.endUtc <= cs.startUtc) return null
+                        return (
+                          <div
+                            key={`preferred-${oi}-${si}`}
+                            style={overlayStyle(cs.startUtc, cs.endUtc)}
+                            className={`${preferredIntensityClass(o.count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
+                          >
+                            {cs.endUtc.getTime() - cs.startUtc.getTime() >= 30 * 60 * 1000 && (
+                              <span className="text-xs text-secondary font-medium">{formatSlotTime(cs.startUtc.toISOString())} – {formatSlotTime(cs.endUtc.toISOString())}</span>
+                            )}
+                          </div>
+                        )
+                      })
                     )}
 
-                    {/* Own preferred slot click/delete overlays — full slot geometry (not clipped) */}
+                    {/* Own preferred slot click/delete overlays — clipped to grid bounds */}
                     {colPreferred
                       .filter((slot) => {
                         const s = slot as PreferredSlot
@@ -681,8 +707,10 @@ function AvailabilityGrid({
                       .map((slot) => {
                         const s = slot as PreferredSlot
                         const isConfirming = deletingSlotId === s.id
-                        const slotStart = new Date(s.start_time_utc)
-                        const slotEnd = new Date(s.end_time_utc)
+                        const clipped = clipToGridBounds(new Date(s.start_time_utc), new Date(s.end_time_utc), colDayStart, colDayEnd)
+                        if (clipped.endUtc <= clipped.startUtc) return null
+                        const slotStart = clipped.startUtc
+                        const slotEnd = clipped.endUtc
                         return (
                           <div
                             key={`own-preferred-${s.id}`}
@@ -802,6 +830,10 @@ export default function EventDetailClient({
   const [isDonePending, setIsDonePending] = useState(false)
   const [deletingSlotId, setDeletingSlotId] = useState<string | null>(null)
 
+  // ── Proposals state ──────────────────────────────────────────────────────
+  const [proposalsEnabled, setProposalsEnabled] = useState(false)
+  const [proposalsStale, setProposalsStale] = useState(false)
+
   function handleSave(result: EditSaveResult) {
     if (result.infoChanged || result.timeRangeChanged) {
       setEvent((prev) => ({ ...prev, ...result.updated }))
@@ -833,18 +865,27 @@ export default function EventDetailClient({
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${event.id}` },
-        () => queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
+          setProposalsStale(true)
+        }
       )
       .on(
         'postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${event.id}` },
-        () => queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
+          setProposalsStale(true)
+        }
       )
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [event.id, event.uid, queryClient])
 
   const { mutate: syncAll, isPending: isSyncingAll } = useSyncCalendar(event.uid)
+
+  const { data: proposals, isLoading: isLoadingProposals } = useProposals(event.uid, proposalsEnabled)
+  const { mutate: refreshProposals, isPending: isRefreshing } = useRefreshProposals(event.uid)
 
   function runMergeCheck(
     pending: PendingSlot,
@@ -1240,7 +1281,7 @@ export default function EventDetailClient({
             </label>
 
             <button
-              onClick={() => { /* wired in Sprint 6 */ }}
+              onClick={() => setProposalsEnabled(true)}
               className="w-full py-4 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-xl font-bold shadow-[0_15px_30px_-10px_rgba(155,68,40,0.3)] flex items-center justify-center gap-2 transform hover:-translate-y-0.5 transition-all duration-300"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -1303,19 +1344,85 @@ export default function EventDetailClient({
           <RsvpSelector uid={event.uid} coordinatorId={event.coordinator_id} currentUserId={currentUserId} />
 
           {/* ── Section 3: Top Proposals ── */}
-          <div className="space-y-4">
-            <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em] px-1">
-              Top Proposals
-            </label>
-            <div className="bg-surface-container-lowest p-4 rounded-xl flex items-center gap-4 shadow-sm">
-              <div className="h-10 w-10 bg-surface-container-low rounded-lg flex items-center justify-center text-primary flex-shrink-0">
-                <Calendar className="w-5 h-5" />
+          {proposalsEnabled && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em]">
+                  Top Proposals
+                </label>
+                {isCoordinator && (
+                  <button
+                    onClick={() => refreshProposals(undefined, { onSuccess: () => setProposalsStale(false) })}
+                    disabled={isRefreshing}
+                    className="flex items-center gap-1 text-[10px] font-bold text-primary uppercase tracking-wider hover:text-primary/70 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                    {isRefreshing ? 'Regenerating…' : 'Regenerate'}
+                  </button>
+                )}
               </div>
-              <p className="text-sm font-medium text-on-surface-variant">
-                No proposals yet — proposals will appear here once the algorithm runs.
-              </p>
+
+              {/* Stale banner */}
+              {(proposalsStale || event.proposals_needs_regeneration) && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-tertiary-container/40 border border-tertiary/20">
+                  <RefreshCw className="w-3.5 h-3.5 text-on-tertiary-container flex-shrink-0" />
+                  <p className="text-xs font-medium text-on-tertiary-container">
+                    Availability changed — proposals may be outdated.
+                  </p>
+                </div>
+              )}
+
+              {isLoadingProposals && (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+
+              {!isLoadingProposals && proposals && proposals.length === 0 && (
+                <div className="bg-surface-container-lowest p-4 rounded-xl flex items-center gap-4 shadow-sm">
+                  <div className="h-10 w-10 bg-surface-container-low rounded-lg flex items-center justify-center text-primary flex-shrink-0">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <p className="text-sm font-medium text-on-surface-variant">
+                    No proposals yet — add availability to generate proposals.
+                  </p>
+                </div>
+              )}
+
+              {!isLoadingProposals && proposals && proposals.length > 0 && (
+                <div className="space-y-3">
+                  {proposals.map((proposal: ProposalResponse) => {
+                    const start = new Date(proposal.start_time_utc)
+                    const end = new Date(proposal.end_time_utc)
+                    const dayLabel = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                    const timeRange = `${start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} – ${end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+                    return (
+                      <div
+                        key={proposal.id}
+                        className="bg-surface-container-lowest rounded-xl p-4 shadow-sm border border-outline-variant/20 space-y-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-bold text-on-surface">{dayLabel}</p>
+                            <p className="text-xs font-medium text-on-surface-variant">{timeRange}</p>
+                          </div>
+                          <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full shrink-0">
+                            #{proposal.rank}
+                          </span>
+                        </div>
+                        <p className="text-xs text-on-surface-variant">{proposal.reasoning}</p>
+                        {isCoordinator && (
+                          <button className="w-full py-2 rounded-lg bg-secondary-container text-on-secondary-container text-xs font-bold hover:bg-secondary-container/70 transition-colors">
+                            Select
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           {/* ── Section 4: Participants ── */}
           <div className="space-y-4 pb-12">
