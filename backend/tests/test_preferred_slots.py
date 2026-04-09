@@ -170,7 +170,7 @@ def test_create_preferred_slot_403_not_participant(mock_dep_svc, mock_router_svc
 @patch("app.routers.preferred_slots.service_client")
 @patch("app.dependencies.service_client")
 def test_get_preferred_slots_success(mock_dep_svc, mock_router_svc):
-    """GET /api/events/{uid}/preferred-slots → 200, returns current user's slots."""
+    """GET /api/events/{uid}/preferred-slots → 200, returns all participants' slots."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile("coordinator-uuid-1")
     )
@@ -183,7 +183,8 @@ def test_get_preferred_slots_success(mock_dep_svc, mock_router_svc):
         if name == "events":
             tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
         elif name == "preferred_slots":
-            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[slot_row])
+            # Only one .eq() now (event_id), no user_id filter
+            tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[slot_row])
         return tbl
 
     mock_router_svc.table.side_effect = make_table
@@ -196,6 +197,43 @@ def test_get_preferred_slots_success(mock_dep_svc, mock_router_svc):
     data = response.json()
     assert len(data) == 1
     assert data[0]["id"] == "slot-uuid-1"
+
+
+@patch("app.routers.preferred_slots.service_client")
+@patch("app.dependencies.service_client")
+def test_get_preferred_slots_returns_all_participants(mock_dep_svc, mock_router_svc):
+    """GET returns slots from multiple participants, not just the requesting user."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile("coordinator-uuid-1")
+    )
+
+    event_row = _make_event_row(coordinator_id="coordinator-uuid-1")
+    slot_alice = _make_slot_row(id="slot-alice", user_id="alice-uuid")
+    slot_bob = _make_slot_row(id="slot-bob", user_id="bob-uuid",
+                              start_time_utc="2026-04-10T11:00:00+00:00",
+                              end_time_utc="2026-04-10T11:30:00+00:00")
+
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+        elif name == "preferred_slots":
+            tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[slot_alice, slot_bob])
+        return tbl
+
+    mock_router_svc.table.side_effect = make_table
+
+    # coordinator calls GET — should receive slots from both alice and bob
+    response = client.get(
+        "/api/events/event-uid-1/preferred-slots",
+        headers=_auth_headers("coordinator-uuid-1"),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    user_ids = {s["user_id"] for s in data}
+    assert "alice-uuid" in user_ids
+    assert "bob-uuid" in user_ids
 
 
 @patch("app.routers.preferred_slots.service_client")
