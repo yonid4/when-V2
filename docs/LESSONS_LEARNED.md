@@ -280,6 +280,34 @@ Implementation details discovered while writing tests that aren't captured elsew
 - **Slot overlays must be clipped to the grid's visible time bounds before computing geometry and labels.**
   Slots from the DB may span outside the event window (e.g. an all-day Google Calendar event or a busy slot starting at 08:00 on a 09:00–17:00 grid). Always clip `startUtc`/`endUtc` to `colDayStart`/`colDayEnd` per column before calling `overlayStyle()` and before rendering time labels. If the clipped end ≤ clipped start, skip rendering entirely. The clipped times are used only for rendering — do not mutate the original slot data. The pending slot is built from grid cell coordinates so it is always in bounds and needs no clipping.
 
+## Sprint 5E — Preferred Slot Edit Mode Hardening
+
+- **Pass only the current user's own slots to `runMergeCheck` — never all participants' slots.**
+  `computeMerge` determines which existing preferred slots overlap the pending drag slot and marks them for deletion. If all participants' slots are passed in, foreign users' slot IDs end up in `slotsToDelete` and the `handleDone` call tries to DELETE them, hitting a 403. Fix: filter to `ownSlots = preferredSlots.filter(s => s.user_id === user?.id)` at both `handleDocumentMouseUp` call sites (drag branch and resize branch) before calling `runMergeCheck`.
+
+- **Re-append foreign slots to `displayedPreferredSlots` inside `runMergeCheck` after every merge.**
+  `computeMerge` only returns `remainingSlots` from the set it was given (own slots). If you set `displayedPreferredSlots` to `result.remainingSlots` directly, foreign users' slots disappear from the grid mid-drag. Fix: derive `foreignSlots` from the full `preferredSlots` list (filtering to `user_id !== user?.id`) and spread them in: `setDisplayedPreferredSlots([...result.remainingSlots, ...foreignSlots])`.
+
+- **Use `Promise.allSettled` instead of `Promise.all` for batched preferred slot deletes in `handleDone`.**
+  `Promise.all` short-circuits and throws on the first rejection. If a 403 arrives (e.g. a foreign slot id slipped into `slotsToDelete`), the entire batch is aborted and the UI is left in a broken state. `Promise.allSettled` collects all outcomes; check `.filter(r => r.status === 'rejected').length` and surface a single error message if any failed. This is the defensive fallback — the root cause (foreign ids) is fixed by the own-slot filter above, but `allSettled` prevents silent partial failures.
+
+- **Gate the own-slot interactive (click-to-delete) overlay on `isEditMode`.**
+  In view mode the click overlay should not exist — clicking a preferred slot should do nothing. The overlay render block for own slots must be wrapped in `{isEditMode && ...}`. In view mode, the separate click overlay that handles deletion (Part D) is still active; only the edit-mode overlay (which adds to `slotsToDelete` rather than calling the API directly) should be gated.
+
+- **`computeMerge` overlap condition must use `<=`/`>=` so touching boundaries merge.**
+  Original: `startUtc < slotEnd && endUtc > slotStart` (strict). This excluded slots that touch at exactly one boundary point — a preferred slot ending at 10:00 and a pending slot starting at 10:00 were not merged, leaving a 0-width gap between them. Fix: `startUtc <= slotEnd && endUtc >= slotStart`. Adjacent slots that share a single boundary instant are now merged into one continuous block. Update the corresponding test case: "merges adjacent slots that touch at a boundary" now expects `slotsToDelete` to have length 1 (not 0).
+
+- **Dot indicators for own preferred slots must be rendered per original DB slot, not per merged display segment.**
+  The first attempt rendered a dot inside each merged `preferredOverlays` segment and checked whether the current user's slot overlapped it. This failed for partial overlaps — the dot was skipped when the own slot only covered part of the segment. Fix: render a completely separate set of dot divs, one per own preferred slot, each using `clipToGridBounds(s.start_time_utc, s.end_time_utc, ...)` for geometry. These divs are `pointer-events: none` so they never interfere with drag or click handlers.
+
+- **Preferred slot color density must reflect per-region participant count, not the whole merged block's max count.**
+  The initial implementation used `mergeSlots(colPreferred)` which collapsed all overlapping slots into one merged block and assigned the max participant count to the entire span. This made a 1-participant region that happened to be adjacent to a 4-participant region render at 4-participant intensity. Fix: replace with `buildCountedSegments(colPreferred)` which splits slots at every boundary point, counts coverage per segment, then re-merges adjacent segments that fall in the same density bucket (1–2, 3–4, 5–6, 7+). Only crossing a bucket boundary creates a visual split.
+
+- **`buildCountedSegments` merge condition must use `preferredIntensityClass` equality, not raw count equality.**
+  If two adjacent segments have counts 1 and 2 (both in the 1–2 bucket), they should render as one block at the same color — splitting them creates a visible seam at the same intensity. Using `preferredIntensityClass(raw[i].count) === preferredIntensityClass(last.count)` as the merge key collapses same-bucket adjacent segments correctly. When merging, keep the higher count: `if (raw[i].count > last.count) last.count = raw[i].count` — this ensures `preferredIntensityClass` computed from the merged segment's stored count still maps to the correct bucket.
+
+---
+
 ## Sprint 6A — Scheduling Algorithm & Proposals
 
 - **Patch `service_client` in both the router module AND the service module.**

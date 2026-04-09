@@ -303,6 +303,26 @@ User clicks their own green preferred slot in view mode → sees "Remove this sl
 
 ---
 
+### Part E — Edit mode hardening & density rendering ✅ DONE
+
+**Goal:** Fix correctness bugs in edit mode merge logic and improve preferred slot density visualization.
+
+#### Frontend
+- [x] `runMergeCheck` only receives own slots — `handleDocumentMouseUp` filters to `user_id === user?.id` before calling it at both drag and resize call sites
+- [x] `runMergeCheck` re-appends foreign slots to `displayedPreferredSlots` so other participants' slots remain visible in edit mode
+- [x] `handleDone` uses `Promise.allSettled` for batched deletes — surfaces a single error if any delete fails, never crashes on a stale foreign id
+- [x] Edit-mode own-slot interactive overlay gated on `isEditMode` — clicking preferred slots in view mode does nothing
+- [x] Other participants' preferred slots visible in edit mode as read-only (no click handler, no pointer events)
+- [x] `computeMerge` overlap condition changed to `<=`/`>=` so slots touching at a single boundary point merge into one continuous block
+- [x] Own slot dot indicator rendered as a separate pass per DB slot (`own-dot-{id}`) — visible even when the slot partially overlaps a merged segment
+- [x] Preferred slot color density computed per region via `buildCountedSegments` — only splits at density bucket boundaries (1–2, 3–4, 5–6, 7+); adjacent same-bucket segments merge into one visual block
+- [x] `editModeUtils.test.ts` updated to reflect new adjacent-boundary merge semantics
+
+#### Done when
+Edit mode merges only own slots. Foreign slots remain visible. Done completes without crash. Color intensity accurately reflects participant overlap per region, not per merged block.
+
+---
+
 ## Sprint 6 — Proposals & Event Finalization
 
 **Design references:** `docs/STITCH_DESIGN.md` → Event Detail (right panel: Top Proposals Select button, confirmed state)
