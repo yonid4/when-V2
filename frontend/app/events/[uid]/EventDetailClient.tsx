@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -20,16 +20,17 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
 import { useEventBusySlots, useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
-import { usePreferredSlots } from '@/hooks/usePreferredSlots'
+import { usePreferredSlots, useSavePreferredSlot, useDeletePreferredSlot } from '@/hooks/usePreferredSlots'
 import { supabase } from '@/lib/supabase'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
 import { Navbar } from '@/components/layout/Navbar'
 import { useAuthStore } from '@/stores/authStore'
-import type { BusySlot, EventWithParticipants, EventType } from '@/types'
-import { getSlotsForCell } from '@/lib/gridUtils'
+import type { BusySlot, EventWithParticipants, EventType, PreferredSlot } from '@/types'
 import type { SlotLike } from '@/lib/gridUtils'
+import { computeMerge } from '@/lib/editModeUtils'
+import type { PendingSlot } from '@/lib/editModeUtils'
 import {
   editSchema,
   toDatetimeLocal,
@@ -294,29 +295,109 @@ function DeleteModal({
 }
 
 // ─── Availability grid ────────────────────────────────────────────────────────
-// Internal logic is unchanged. Only the wrapper styling matches the design HTML.
 
-function busyClass(count: number): string {
+function busyIntensityClass(count: number): string {
   if (count >= 7) return 'bg-error/90'
   if (count >= 5) return 'bg-error/65'
   if (count >= 3) return 'bg-error/40'
   return 'bg-error/20'
 }
 
-function preferredClass(count: number): string {
+function preferredIntensityClass(count: number): string {
   if (count >= 7) return 'bg-secondary/90'
   if (count >= 5) return 'bg-secondary/65'
   if (count >= 3) return 'bg-secondary/40'
   return 'bg-secondary/20'
 }
 
-function formatTimeRange(hour: number, half: number): string {
-  const startH = String(hour).padStart(2, '0')
-  const startM = half === 0 ? '00' : '30'
-  const endHour = half === 0 ? hour : hour + 1
-  const endH = String(endHour).padStart(2, '0')
-  const endM = half === 0 ? '30' : '00'
-  return `${startH}:${startM} – ${endH}:${endM}`
+function formatSlotTime(utcString: string): string {
+  const d = new Date(utcString)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+interface SlotOverlay {
+  startUtc: Date
+  endUtc: Date
+  /** unique participants involved (for intensity) */
+  count: number
+}
+
+interface ConflictOverlay {
+  startUtc: Date
+  endUtc: Date
+  busyCount: number
+  preferredCount: number
+}
+
+/** Group continuous/overlapping slots of the same type into merged overlay blocks. */
+function mergeSlots(slots: SlotLike[]): SlotOverlay[] {
+  if (slots.length === 0) return []
+  // Sort by start
+  const sorted = [...slots].sort(
+    (a, b) => new Date(a.start_time_utc).getTime() - new Date(b.start_time_utc).getTime(),
+  )
+  const result: SlotOverlay[] = []
+  let curStart = new Date(sorted[0].start_time_utc)
+  let curEnd = new Date(sorted[0].end_time_utc)
+  let curCount = 1
+
+  for (let i = 1; i < sorted.length; i++) {
+    const s = new Date(sorted[i].start_time_utc)
+    const e = new Date(sorted[i].end_time_utc)
+    if (s <= curEnd) {
+      // overlapping or adjacent — extend
+      if (e > curEnd) curEnd = e
+      curCount++
+    } else {
+      result.push({ startUtc: curStart, endUtc: curEnd, count: curCount })
+      curStart = s
+      curEnd = e
+      curCount = 1
+    }
+  }
+  result.push({ startUtc: curStart, endUtc: curEnd, count: curCount })
+  return result
+}
+
+/** Build conflict overlays: only the intersection where busy and preferred overlap. */
+function buildConflictOverlays(
+  busyOverlays: SlotOverlay[],
+  preferredOverlays: SlotOverlay[],
+): ConflictOverlay[] {
+  const conflicts: ConflictOverlay[] = []
+  for (const b of busyOverlays) {
+    for (const p of preferredOverlays) {
+      const overlapStart = b.startUtc > p.startUtc ? b.startUtc : p.startUtc
+      const overlapEnd = b.endUtc < p.endUtc ? b.endUtc : p.endUtc
+      if (overlapStart < overlapEnd) {
+        conflicts.push({ startUtc: overlapStart, endUtc: overlapEnd, busyCount: b.count, preferredCount: p.count })
+      }
+    }
+  }
+  return conflicts
+}
+
+/** Return the portions of overlay NOT covered by any conflict. */
+function subtractConflicts(
+  overlay: SlotOverlay,
+  conflicts: ConflictOverlay[],
+): Array<{ startUtc: Date; endUtc: Date }> {
+  let segments: Array<{ startUtc: Date; endUtc: Date }> = [
+    { startUtc: overlay.startUtc, endUtc: overlay.endUtc },
+  ]
+  for (const conflict of conflicts) {
+    const next: Array<{ startUtc: Date; endUtc: Date }> = []
+    for (const seg of segments) {
+      if (seg.startUtc < conflict.startUtc) {
+        next.push({ startUtc: seg.startUtc, endUtc: conflict.startUtc < seg.endUtc ? conflict.startUtc : seg.endUtc })
+      }
+      if (seg.endUtc > conflict.endUtc) {
+        next.push({ startUtc: conflict.endUtc > seg.startUtc ? conflict.endUtc : seg.startUtc, endUtc: seg.endUtc })
+      }
+    }
+    segments = next
+  }
+  return segments.filter((s) => s.endUtc > s.startUtc)
 }
 
 function AvailabilityGrid({
@@ -325,16 +406,25 @@ function AvailabilityGrid({
   startDate,
   earliestTime,
   latestTime,
+  isEditMode,
+  pendingSlot,
+  onCellMouseDown,
+  onCellMouseEnter,
+  onPendingSlotEdgeMouseDown,
 }: {
   busySlots: SlotLike[]
   preferredSlots: SlotLike[]
   startDate: string
   earliestTime: string
   latestTime: string
+  isEditMode: boolean
+  pendingSlot: PendingSlot | null
+  onCellMouseDown: (dayIndex: number, rowIndex: number, cellStartUtc: Date) => void
+  onCellMouseEnter: (dayIndex: number, rowIndex: number, cellStartUtc: Date) => void
+  onPendingSlotEdgeMouseDown: (edge: 'top' | 'bottom', e: React.MouseEvent) => void
 }) {
   const earliestDate = new Date(earliestTime)
   const latestDate = new Date(latestTime)
-  // Use local hours so the grid displays times in the user's timezone
   const startHour = earliestDate.getHours()
   const latestHour = latestDate.getHours()
   const latestMinute = latestDate.getMinutes()
@@ -369,17 +459,19 @@ function AvailabilityGrid({
     }
   })
 
-  // Month indicator — "Apr 2026" or "Mar – Apr 2026" if week spans two months
   const firstDay = days[0]
   const lastDay = days[6]
   const monthLabel = firstDay.month === lastDay.month
     ? `${firstDay.month} ${firstDay.year}`
     : `${firstDay.month} – ${lastDay.month} ${lastDay.year}`
 
+  // Total half-rows per day column
+  const totalRows = totalHours * 2
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-surface-container-lowest rounded-xl p-6 shadow-[0_20px_40px_-15px_rgba(155,68,40,0.05)]">
-      {/* Week nav + month indicator */}
-      <div className="flex items-center justify-between mb-3 shrink-0">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-surface-container-lowest rounded-xl shadow-[0_20px_40px_-15px_rgba(155,68,40,0.05)]">
+      {/* Grid card header: week nav + edit button */}
+      <div className="flex items-center justify-between px-6 pt-5 pb-3 shrink-0">
         <button
           onClick={() => setWeekOffset((o) => o - 1)}
           className="p-1.5 rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant"
@@ -390,19 +482,39 @@ function AvailabilityGrid({
           </svg>
         </button>
         <span className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">{monthLabel}</span>
-        <button
-          onClick={() => setWeekOffset((o) => o + 1)}
-          className="p-1.5 rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant"
-          aria-label="Next week"
-        >
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 18l6-6-6-6" />
-          </svg>
-        </button>
+
+        <div className="flex items-center gap-2">
+          {isEditMode ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-primary/30 bg-primary/5">
+              <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+              <span className="text-xs font-bold text-primary">Editing…</span>
+            </div>
+          ) : (
+            <button
+              data-testid="edit-availability-btn"
+              onClick={() => {
+                // Signal handled by parent via onCellMouseDown dummy; edit toggle is in parent
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-outline-variant text-on-surface-variant text-xs font-bold hover:bg-surface-container transition-colors"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Edit Availability
+            </button>
+          )}
+          <button
+            onClick={() => setWeekOffset((o) => o + 1)}
+            className="p-1.5 rounded-lg hover:bg-surface-container transition-colors text-on-surface-variant"
+            aria-label="Next week"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Day headers */}
-      <div className="grid grid-cols-[80px_1fr] border-b border-outline-variant/25 shrink-0">
+      <div className="grid grid-cols-[80px_1fr] border-b border-outline-variant/25 shrink-0 mx-6">
         <div className="h-12 border-r border-outline-variant/25" />
         <div className="grid grid-cols-7 h-12">
           {days.map((d, i) => (
@@ -416,8 +528,8 @@ function AvailabilityGrid({
         </div>
       </div>
 
-      {/* Grid body — scrollable if > 8 hours, otherwise fills height */}
-      <div className={`flex flex-col flex-1 min-h-0 ${isScrollable ? 'overflow-y-auto' : 'overflow-hidden'}`}>
+      {/* Grid body */}
+      <div className={`flex flex-col flex-1 min-h-0 mx-6 mb-6 ${isScrollable ? 'overflow-y-auto' : 'overflow-hidden'}`}>
         <div className={`flex flex-row ${isScrollable ? '' : 'flex-1 min-h-0'}`}>
           {/* Time labels */}
           <div className="w-[80px] shrink-0 flex flex-col">
@@ -432,87 +544,139 @@ function AvailabilityGrid({
           <div className={`flex-1 flex flex-col ${isScrollable ? '' : 'min-h-0'}`}>
             <div className={`grid grid-cols-7 ${isScrollable ? '' : 'flex-1 min-h-0'}`}>
               {days.map((_day, di) => {
-                // Build a local-midnight Date for this column's day
                 const colDate = new Date(baseDate)
                 colDate.setDate(colDate.getDate() + di)
 
+                // ── Overlay geometry helper ──────────────────────────────────
+                const ROW_HEIGHT_PX = 32 // h-8 when scrollable
+                function overlayStyle(slotStartUtc: Date, slotEndUtc: Date): React.CSSProperties {
+                  const startMinutes = (slotStartUtc.getHours() - startHour) * 60 + slotStartUtc.getMinutes()
+                  const endMinutes = (slotEndUtc.getHours() - startHour) * 60 + slotEndUtc.getMinutes()
+                  const startRow = startMinutes / 30
+                  const rowsSpanned = (endMinutes - startMinutes) / 30
+                  if (isScrollable) {
+                    return { position: 'absolute', left: 0, right: 0, pointerEvents: 'none', top: startRow * ROW_HEIGHT_PX + 2, height: rowsSpanned * ROW_HEIGHT_PX - 4 }
+                  }
+                  const topPct = (startRow / totalRows) * 100
+                  const heightPct = (rowsSpanned / totalRows) * 100
+                  return { position: 'absolute', left: 0, right: 0, pointerEvents: 'none', top: `calc(${topPct}% + 2px)`, height: `calc(${heightPct}% - 4px)` }
+                }
+
+                // ── Slot overlays for this column ────────────────────────────
+                const colDayStart = new Date(colDate.getFullYear(), colDate.getMonth(), colDate.getDate(), startHour, 0)
+                const colDayEnd = new Date(colDate.getFullYear(), colDate.getMonth(), colDate.getDate(), endHour, 0)
+
+                const colBusy = busySlots.filter((s) => {
+                  const ss = new Date(s.start_time_utc); const se = new Date(s.end_time_utc)
+                  return ss < colDayEnd && se > colDayStart
+                })
+                const colPreferred = preferredSlots.filter((s) => {
+                  const ss = new Date(s.start_time_utc); const se = new Date(s.end_time_utc)
+                  return ss < colDayEnd && se > colDayStart
+                })
+
+                const busyOverlays = mergeSlots(colBusy)
+                const preferredOverlays = mergeSlots(colPreferred)
+                const conflictOverlays = buildConflictOverlays(busyOverlays, preferredOverlays)
+
+
+                // ── Pending slot overlay ─────────────────────────────────────
+                const colPending = pendingSlot !== null && pendingSlot.dayIndex === di ? pendingSlot : null
+                const pendingOverlayStyle = colPending ? overlayStyle(colPending.startUtc, colPending.endUtc) : null
+
                 return (
-                  <div key={di} className={`flex flex-col ${isScrollable ? '' : 'flex-1'} ${di < 6 ? 'border-r border-outline-variant/25' : ''}`}>
+                  <div
+                    key={di}
+                    className={`flex flex-col relative ${isScrollable ? '' : 'flex-1'} ${di < 6 ? 'border-r border-outline-variant/25' : ''}`}
+                  >
                     {Array.from({ length: totalHours }, (_, hi) => {
                       const hour = startHour + hi
                       return [0, 1].map((half) => {
-                        // Build cell boundaries in local time so they match local slot times
-                        const cellStartUtc = new Date(
-                          colDate.getFullYear(),
-                          colDate.getMonth(),
-                          colDate.getDate(),
-                          hour,
-                          half === 0 ? 0 : 30,
-                        )
-                        const cellEndUtc = new Date(
-                          colDate.getFullYear(),
-                          colDate.getMonth(),
-                          colDate.getDate(),
-                          half === 0 ? hour : hour + 1,
-                          half === 0 ? 30 : 0,
-                        )
-
-                        const busyCount = getSlotsForCell(cellStartUtc, cellEndUtc, busySlots).length
-                        const preferredCount = getSlotsForCell(cellStartUtc, cellEndUtc, preferredSlots).length
-                        const timeLabel = formatTimeRange(hour, half)
+                        const rowIndex = hi * 2 + half
+                        const cellStartUtc = new Date(colDate.getFullYear(), colDate.getMonth(), colDate.getDate(), hour, half === 0 ? 0 : 30)
                         const halfClass = isScrollable ? 'h-8' : 'flex-1'
 
-                        if (busyCount > 0 && preferredCount > 0) {
-                          // Conflict — split cell vertically
-                          return (
-                            <div
-                              key={`${hi}-${half}`}
-                              className={`relative flex flex-row border-b border-outline-variant/20 cursor-default ${halfClass}`}
-                            >
-                              <div className={`w-1/2 h-full ${busyClass(busyCount)}`} />
-                              <div className={`w-1/2 h-full ${preferredClass(preferredCount)}`} />
-                              <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold uppercase text-error pointer-events-none">
-                                CONFLICT
-                              </span>
-                            </div>
-                          )
-                        }
-
-                        if (busyCount > 0) {
-                          return (
-                            <div
-                              key={`${hi}-${half}`}
-                              className={`relative flex items-center justify-center border-b border-outline-variant/20 cursor-default ${busyClass(busyCount)} ${halfClass}`}
-                            >
-                              <span className="text-[9px] font-semibold text-white pointer-events-none">
-                                {timeLabel}
-                              </span>
-                            </div>
-                          )
-                        }
-
-                        if (preferredCount > 0) {
-                          return (
-                            <div
-                              key={`${hi}-${half}`}
-                              className={`relative flex items-center justify-center border-b border-outline-variant/20 cursor-default ${preferredClass(preferredCount)} ${halfClass}`}
-                            >
-                              <span className="text-[9px] font-semibold text-white pointer-events-none">
-                                {timeLabel}
-                              </span>
-                            </div>
-                          )
-                        }
-
-                        // Empty cell
                         return (
                           <div
                             key={`${hi}-${half}`}
-                            className={`border-b border-outline-variant/20 hover:bg-surface-container-high cursor-pointer transition-colors ${halfClass}`}
+                            className={`border-b border-outline-variant/20 transition-colors ${halfClass} ${
+                              isEditMode
+                                ? 'cursor-crosshair hover:bg-secondary/10'
+                                : 'hover:bg-surface-container-high cursor-pointer'
+                            }`}
+                            onMouseDown={isEditMode ? () => onCellMouseDown(di, rowIndex, cellStartUtc) : undefined}
+                            onMouseEnter={isEditMode ? () => onCellMouseEnter(di, rowIndex, cellStartUtc) : undefined}
                           />
                         )
                       })
                     })}
+
+                    {/* Conflict overlays (rendered first so busy/preferred don't cover them) */}
+                    {conflictOverlays.map((c, ci) => (
+                      <div
+                        key={`conflict-${ci}`}
+                        style={overlayStyle(c.startUtc, c.endUtc)}
+                        className="rounded-md z-20 overflow-hidden relative"
+                      >
+                        <div className="flex w-full h-full">
+                          <div className={`w-1/2 h-full ${busyIntensityClass(c.busyCount)}`} />
+                          <div className={`w-1/2 h-full ${preferredIntensityClass(c.preferredCount)}`} />
+                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
+                            <span className="text-xs font-semibold text-error">CONFLICT</span>
+                            <span className="text-xs text-gray-600">{formatSlotTime(c.startUtc.toISOString())} – {formatSlotTime(c.endUtc.toISOString())}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Busy overlays — clipped to non-conflict segments */}
+                    {busyOverlays.flatMap((o, oi) =>
+                      subtractConflicts(o, conflictOverlays).map((seg, si) => (
+                        <div
+                          key={`busy-${oi}-${si}`}
+                          style={overlayStyle(seg.startUtc, seg.endUtc)}
+                          className={`${busyIntensityClass(o.count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
+                        >
+                          {seg.endUtc.getTime() - seg.startUtc.getTime() >= 30 * 60 * 1000 && (
+                            <span className="text-xs text-error font-medium">{formatSlotTime(seg.startUtc.toISOString())} – {formatSlotTime(seg.endUtc.toISOString())}</span>
+                          )}
+                        </div>
+                      ))
+                    )}
+
+                    {/* Preferred overlays — clipped to non-conflict segments */}
+                    {preferredOverlays.flatMap((o, oi) =>
+                      subtractConflicts(o, conflictOverlays).map((seg, si) => (
+                        <div
+                          key={`preferred-${oi}-${si}`}
+                          style={overlayStyle(seg.startUtc, seg.endUtc)}
+                          className={`${preferredIntensityClass(o.count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
+                        >
+                          {seg.endUtc.getTime() - seg.startUtc.getTime() >= 30 * 60 * 1000 && (
+                            <span className="text-xs text-secondary font-medium">{formatSlotTime(seg.startUtc.toISOString())} – {formatSlotTime(seg.endUtc.toISOString())}</span>
+                          )}
+                        </div>
+                      ))
+                    )}
+
+                    {/* Pending slot overlay */}
+                    {pendingOverlayStyle && (
+                      <div
+                        style={{ ...pendingOverlayStyle, pointerEvents: 'none' }}
+                        className="border-2 border-dashed border-secondary bg-secondary/20 rounded-md z-10"
+                      >
+                        <div
+                          style={{ pointerEvents: 'auto' }}
+                          className="absolute top-0 left-0 right-0 h-2 cursor-ns-resize"
+                          onMouseDown={(e) => { e.stopPropagation(); onPendingSlotEdgeMouseDown('top', e) }}
+                        />
+                        <div
+                          style={{ pointerEvents: 'auto' }}
+                          className="absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize"
+                          onMouseDown={(e) => { e.stopPropagation(); onPendingSlotEdgeMouseDown('bottom', e) }}
+                        />
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -559,10 +723,7 @@ export default function EventDetailClient({
   const { user } = useAuthStore()
   const currentUserId = user?.id ?? ''
 
-  // Local event state — updated optimistically after edits so the UI reflects
-  // changes without a full page reload
   const [event, setEvent] = useState(initialEvent)
-  // Bumping this key force-remounts ParticipantList to re-fetch when allow_guest_invites changes
   const [participantsKey, setParticipantsKey] = useState(0)
 
   const isCoordinator = !!user?.id && user.id === event.coordinator_id
@@ -572,6 +733,16 @@ export default function EventDetailClient({
   const [showInvite, setShowInvite] = useState(false)
   const [copyLabel, setCopyLabel] = useState('Copy Link')
 
+  // ── Edit mode state ──────────────────────────────────────────────────────
+  const [isEditMode, setIsEditMode] = useState(false)
+  const [pendingSlot, setPendingSlot] = useState<PendingSlot | null>(null)
+  const [dragState, setDragState] = useState<{ dayIndex: number; anchorCellStartUtc: Date; baseDate: Date } | null>(null)
+  const [resizeState, setResizeState] = useState<{ edge: 'top' | 'bottom' } | null>(null)
+  const [slotsToDelete, setSlotsToDelete] = useState<string[]>([])
+  const [displayedPreferredSlots, setDisplayedPreferredSlots] = useState<PreferredSlot[]>([])
+  const [doneError, setDoneError] = useState<string | null>(null)
+  const [isDonePending, setIsDonePending] = useState(false)
+
   function handleSave(result: EditSaveResult) {
     if (result.infoChanged || result.timeRangeChanged) {
       setEvent((prev) => ({ ...prev, ...result.updated }))
@@ -579,15 +750,21 @@ export default function EventDetailClient({
     if (result.guestInvitesChanged) {
       setParticipantsKey((k) => k + 1)
     }
-    if (result.durationChanged || result.timeRangeChanged) {
-      // TODO: trigger proposed times algorithm once it exists
-    }
   }
 
   const queryClient = useQueryClient()
   const { data: busySlots = [] } = useEventBusySlots(event.uid)
   const { data: preferredSlots = [] } = usePreferredSlots(event.uid)
   const { mutate: syncCalendar, isPending: isSyncing } = useSyncMyCalendar()
+  const { mutateAsync: savePreferredSlot } = useSavePreferredSlot(event.uid)
+  const { mutateAsync: deletePreferredSlot } = useDeletePreferredSlot(event.uid)
+
+  // Keep displayed preferred slots in sync with fetched data (when not in edit mode)
+  useEffect(() => {
+    if (!isEditMode) {
+      setDisplayedPreferredSlots(preferredSlots as PreferredSlot[])
+    }
+  }, [preferredSlots, isEditMode])
 
   // Real-time subscription: invalidate preferred slots on INSERT or DELETE
   useEffect(() => {
@@ -607,7 +784,188 @@ export default function EventDetailClient({
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [event.id, event.uid, queryClient])
+
   const { mutate: syncAll, isPending: isSyncingAll } = useSyncCalendar(event.uid)
+
+  function runMergeCheck(
+    pending: PendingSlot,
+    allConfirmedSlots: PreferredSlot[],
+    weekBaseDate: Date
+  ) {
+    const result = computeMerge(
+      pending,
+      allConfirmedSlots,
+      (slot) => {
+        const slotDate = new Date(slot.start_time_utc)
+        for (let i = 0; i < 7; i++) {
+          const colDate = new Date(weekBaseDate)
+          colDate.setDate(colDate.getDate() + i)
+          if (
+            slotDate.getFullYear() === colDate.getFullYear() &&
+            slotDate.getMonth() === colDate.getMonth() &&
+            slotDate.getDate() === colDate.getDate()
+          ) {
+            return i
+          }
+        }
+        return -1
+      }
+    )
+    setPendingSlot(result.pendingSlot)
+    setSlotsToDelete(result.slotsToDelete)
+    setDisplayedPreferredSlots(result.remainingSlots)
+  }
+
+  // Mouse-up handler — global, attached when dragging or resizing
+  const handleDocumentMouseUp = useCallback(() => {
+    if (pendingSlot && dragState) {
+      runMergeCheck(pendingSlot, preferredSlots as PreferredSlot[], dragState.baseDate)
+    } else if (pendingSlot && resizeState) {
+      // For resize, derive baseDate from the pending slot's startUtc
+      const bd = new Date(pendingSlot.startUtc)
+      bd.setHours(0, 0, 0, 0)
+      const dow = bd.getDay()
+      bd.setDate(bd.getDate() - (dow + 6) % 7)
+      runMergeCheck(pendingSlot, preferredSlots as PreferredSlot[], bd)
+    }
+    setDragState(null)
+    setResizeState(null)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragState, resizeState, pendingSlot, preferredSlots])
+
+  useEffect(() => {
+    if (dragState || resizeState) {
+      document.addEventListener('mouseup', handleDocumentMouseUp)
+      return () => document.removeEventListener('mouseup', handleDocumentMouseUp)
+    }
+  }, [dragState, resizeState, handleDocumentMouseUp])
+
+  // ── Grid event handlers ──────────────────────────────────────────────────
+
+  function handleCellMouseDown(dayIndex: number, _rowIndex: number, cellStartUtc: Date) {
+    if (!isEditMode) return
+    const startUtc = new Date(cellStartUtc)
+    const endUtc = new Date(startUtc)
+    endUtc.setMinutes(endUtc.getMinutes() + 30)
+
+    // baseDate is needed by runMergeCheck to resolve dayIndex → calendar date.
+    // Derive it from cellStartUtc itself: go back to Monday of the cell's week.
+    const baseDate = new Date(cellStartUtc)
+    baseDate.setHours(0, 0, 0, 0)
+    const dow = baseDate.getDay()
+    baseDate.setDate(baseDate.getDate() - (dow + 6) % 7)
+
+    setDragState({ dayIndex, anchorCellStartUtc: startUtc, baseDate })
+    setPendingSlot({ dayIndex, startUtc, endUtc })
+    setSlotsToDelete([])
+    setDisplayedPreferredSlots(preferredSlots as PreferredSlot[])
+  }
+
+  function handleCellMouseEnter(dayIndex: number, _rowIndex: number, cellStartUtc: Date) {
+    if (!isEditMode) return
+
+    if (dragState) {
+      if (dayIndex !== dragState.dayIndex) return
+
+      const anchorStart = dragState.anchorCellStartUtc
+      const currentStart = cellStartUtc
+
+      let startUtc: Date
+      let endUtc: Date
+
+      if (currentStart >= anchorStart) {
+        // Dragging downward
+        startUtc = new Date(anchorStart)
+        endUtc = new Date(currentStart)
+        endUtc.setMinutes(endUtc.getMinutes() + 30)
+      } else {
+        // Dragging upward
+        startUtc = new Date(currentStart)
+        endUtc = new Date(anchorStart)
+        endUtc.setMinutes(endUtc.getMinutes() + 30)
+      }
+
+      setPendingSlot({ dayIndex: dragState.dayIndex, startUtc, endUtc })
+      return
+    }
+
+    if (resizeState && pendingSlot) {
+      const cellStart = new Date(cellStartUtc)
+      const cellEnd = new Date(cellStart)
+      cellEnd.setMinutes(cellEnd.getMinutes() + 30)
+
+      if (resizeState.edge === 'top') {
+        // Move start, clamp so start stays at least 30min before end
+        const minStart = new Date(pendingSlot.endUtc)
+        minStart.setMinutes(minStart.getMinutes() - 30)
+        const newStart = cellStart <= minStart ? cellStart : minStart
+        setPendingSlot({ ...pendingSlot, startUtc: newStart })
+      } else {
+        // Move end, clamp so end stays at least 30min after start
+        const maxEnd = new Date(pendingSlot.startUtc)
+        maxEnd.setMinutes(maxEnd.getMinutes() + 30)
+        const newEnd = cellEnd >= maxEnd ? cellEnd : maxEnd
+        setPendingSlot({ ...pendingSlot, endUtc: newEnd })
+      }
+    }
+  }
+
+  function handlePendingSlotEdgeMouseDown(edge: 'top' | 'bottom', e: React.MouseEvent) {
+    e.preventDefault()
+    setResizeState({ edge })
+  }
+
+  // ── Enter / cancel / done ────────────────────────────────────────────────
+
+  function enterEditMode() {
+    setIsEditMode(true)
+    setPendingSlot(null)
+    setDragState(null)
+    setResizeState(null)
+    setSlotsToDelete([])
+    setDoneError(null)
+    setDisplayedPreferredSlots(preferredSlots as PreferredSlot[])
+  }
+
+  function cancelEditMode() {
+    setIsEditMode(false)
+    setPendingSlot(null)
+    setDragState(null)
+    setResizeState(null)
+    setSlotsToDelete([])
+    setDoneError(null)
+    setDisplayedPreferredSlots(preferredSlots as PreferredSlot[])
+  }
+
+  async function handleDone() {
+    setIsDonePending(true)
+    setDoneError(null)
+    try {
+      // 1. Delete all slots that were merged/replaced (in parallel)
+      await Promise.all(slotsToDelete.map((id) => deletePreferredSlot(id)))
+
+      // 2. Save the pending slot if one exists
+      if (pendingSlot) {
+        await savePreferredSlot({
+          start_time_utc: pendingSlot.startUtc.toISOString(),
+          end_time_utc: pendingSlot.endUtc.toISOString(),
+        })
+      }
+
+      // Success — exit edit mode; query invalidation from mutation hooks will refresh the grid
+      setIsEditMode(false)
+      setPendingSlot(null)
+      setDragState(null)
+      setResizeState(null)
+      setSlotsToDelete([])
+    } catch {
+      setDoneError('Failed to save — try again')
+    } finally {
+      setIsDonePending(false)
+    }
+  }
+
+  const changesCount = slotsToDelete.length + (pendingSlot ? 1 : 0)
 
   const currentParticipant = event.participants.find((p) => p.user_id === currentUserId)
   const canInvite = isCoordinator || (currentParticipant?.can_invite ?? false)
@@ -629,8 +987,7 @@ export default function EventDetailClient({
       {/* Two-column full-height split */}
       <main className="flex-1 min-h-0 flex flex-row overflow-hidden">
 
-        {/* ── Left: Availability Grid ──
-              design: flex-1 h-full overflow-y-auto p-6 lg:p-8 bg-surface */}
+        {/* ── Left: Availability Grid ── */}
         <section className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 lg:p-8 bg-surface">
           <div className="flex flex-col flex-1 gap-4 min-h-0">
 
@@ -685,29 +1042,75 @@ export default function EventDetailClient({
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {/* Edit availability button — sits above grid card when not in edit mode */}
+            {!isEditMode && (
+              <div className="flex justify-end">
+                <button
+                  data-testid="edit-availability-btn"
+                  onClick={enterEditMode}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-outline-variant text-on-surface-variant text-xs font-bold hover:bg-surface-container transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  Edit Availability
+                </button>
+              </div>
+            )}
+
+            {/* Grid — extra bottom padding when action bar is visible */}
+            <div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${isEditMode ? 'pb-20' : ''}`}>
               <AvailabilityGrid
                 busySlots={busySlots}
-                preferredSlots={preferredSlots}
+                preferredSlots={displayedPreferredSlots}
                 startDate={event.earliest_datetime_utc}
                 earliestTime={event.earliest_datetime_utc}
                 latestTime={event.latest_datetime_utc}
+                isEditMode={isEditMode}
+                pendingSlot={pendingSlot}
+                onCellMouseDown={handleCellMouseDown}
+                onCellMouseEnter={handleCellMouseEnter}
+                onPendingSlotEdgeMouseDown={handlePendingSlotEdgeMouseDown}
               />
             </div>
           </div>
+
+          {/* ── Floating action bar — visible while in edit mode ── */}
+          {isEditMode && (
+            <div className="absolute bottom-0 left-0 right-0 mx-6 lg:mx-8 mb-6 z-20 pointer-events-none">
+              <div className="pointer-events-auto bg-surface-container-lowest rounded-xl shadow-[0_8px_32px_-8px_rgba(155,68,40,0.25)] border border-outline-variant/30 px-5 py-3 flex items-center justify-between gap-4">
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold text-on-surface">
+                    {changesCount} {changesCount === 1 ? 'change' : 'changes'} pending
+                  </span>
+                  {doneError && (
+                    <span className="text-xs text-error font-semibold">{doneError}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={cancelEditMode}
+                    className="px-4 py-2 rounded-lg border border-outline-variant text-on-surface-variant text-sm font-bold hover:bg-surface-container transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDone}
+                    disabled={isDonePending}
+                    className="px-5 py-2 rounded-lg bg-primary text-on-primary text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-60"
+                  >
+                    {isDonePending ? 'Saving…' : 'Done'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
-        {/* ── Right: Event Info + Actions ──
-              design: w-full md:w-[400px] lg:w-[450px] h-full overflow-y-auto
-                      hide-scrollbar bg-surface-container-low p-6 flex flex-col
-                      gap-8 shadow-[-20px_0_40px_-15px_rgba(0,0,0,0.03)] z-10 */}
+        {/* ── Right: Event Info + Actions ── */}
         <section className="w-full md:w-[456px] shrink-0 lg:w-[504px] xl:w-[552px] h-full overflow-y-auto hide-scrollbar bg-surface-container-low p-6 flex flex-col gap-8 shadow-[-20px_0_40px_-15px_rgba(0,0,0,0.03)] z-10">
 
-          {/* ── Section 1: Event Header card ──
-                design: bg-surface-container-lowest p-6 rounded-lg relative shadow-sm */}
+          {/* ── Section 1: Event Header card ── */}
           <div className="bg-surface-container-lowest p-6 rounded-lg relative shadow-sm">
 
-            {/* Edit pencil — coordinator only, absolute top-right */}
             {isCoordinator && (
               <button
                 onClick={() => setShowEdit(true)}
@@ -754,22 +1157,18 @@ export default function EventDetailClient({
               Actions
             </label>
 
-            {/* View Proposed Times — full-width gradient button */}
             <button
-              onClick={() => { /* wired in Sprint 5 */ }}
+              onClick={() => { /* wired in Sprint 6 */ }}
               className="w-full py-4 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-xl font-bold shadow-[0_15px_30px_-10px_rgba(155,68,40,0.3)] flex items-center justify-center gap-2 transform hover:-translate-y-0.5 transition-all duration-300"
             >
-              {/* auto_awesome equivalent */}
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74z" />
               </svg>
               View Proposed Times
             </button>
 
-            {/* 2×2 grid of secondary action buttons — only renders visible buttons */}
             <div className="grid grid-cols-2 gap-3">
 
-              {/* Refresh — always visible */}
               <button
                 onClick={() => syncCalendar()}
                 disabled={isSyncing}
@@ -779,7 +1178,6 @@ export default function EventDetailClient({
                 {isSyncing ? 'Syncing…' : 'Refresh'}
               </button>
 
-              {/* Invite — coordinator or can_invite; empty cell otherwise */}
               {canInvite ? (
                 <button
                   onClick={() => setShowInvite((v) => !v)}
@@ -790,7 +1188,6 @@ export default function EventDetailClient({
                 </button>
               ) : null}
 
-              {/* Copy Link — always visible */}
               <button
                 onClick={handleCopyLink}
                 className="p-3 bg-surface-container-lowest border-2 border-outline-variant/30 text-on-surface-variant rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-white transition-colors"
@@ -799,7 +1196,6 @@ export default function EventDetailClient({
                 {copyLabel}
               </button>
 
-              {/* Sync All — coordinator only */}
               {isCoordinator ? (
                 <button
                   onClick={() => syncAll()}
@@ -812,7 +1208,6 @@ export default function EventDetailClient({
               ) : null}
             </div>
 
-            {/* InviteInput — shown inline when Invite is toggled */}
             {showInvite && (
               <InviteInput
                 uid={event.uid}
@@ -822,11 +1217,10 @@ export default function EventDetailClient({
             )}
           </div>
 
-          {/* RSVP selector — component handles its own coordinator guard */}
+          {/* RSVP selector */}
           <RsvpSelector uid={event.uid} coordinatorId={event.coordinator_id} currentUserId={currentUserId} />
 
-          {/* ── Section 3: Top Proposals ──
-                Sprint 5 placeholder — real cards wired later */}
+          {/* ── Section 3: Top Proposals ── */}
           <div className="space-y-4">
             <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em] px-1">
               Top Proposals
@@ -846,8 +1240,6 @@ export default function EventDetailClient({
             <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em] px-1">
               Participants ({event.participants.length})
             </label>
-            {/* ParticipantList owns all participant fetching, remove, and
-                permission-toggle logic — only styling wraps it here */}
             <div className="space-y-1">
               <ParticipantList
                 key={participantsKey}
@@ -858,7 +1250,7 @@ export default function EventDetailClient({
             </div>
           </div>
 
-          {/* Delete event — coordinator only, at bottom of panel */}
+          {/* Delete event — coordinator only */}
           {isCoordinator && (
             <div className="pb-4 -mt-4">
               <button
