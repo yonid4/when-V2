@@ -282,6 +282,27 @@ User enters edit mode, drags to select a time range, sees dashed green pending b
 
 ---
 
+### Part D — Click to delete confirmed preferred slots ✅ DONE
+
+**Goal:** Users can remove their own confirmed preferred slots directly from the grid in both view mode and edit mode.
+
+#### Frontend
+- [x] Clicking a confirmed preferred slot owned by the current user shows an inline "Remove this slot?" confirmation with Cancel and Remove buttons
+- [x] Other participants' preferred slots have no click handler — not interactive
+- [x] Two-layer overlay architecture: merged display overlays (pointer-events: none) for correct intensity rendering, plus a separate transparent click overlay (z-index: 25, pointer-events: auto) covering the full slot geometry for each own slot
+- [x] Click overlay covers the full slot height including any conflict-overlapping portion — clicking the conflict zone of an own slot still triggers the confirmation
+- [x] `deletingSlotId: string | null` state in `EventDetailClient` tracks which slot is awaiting confirmation
+- [x] Pressing Escape dismisses the confirmation (keydown listener attached/removed with useEffect)
+- [x] Clicking elsewhere on the grid column dismisses the confirmation (onClick on column div)
+- [x] **View mode confirm:** calls `useDeletePreferredSlot` immediately — slot removed from DB
+- [x] **Edit mode confirm:** adds slot to `slotsToDelete` + removes from `displayedPreferredSlots` optimistically — slot physically deleted on Done (same flow as merge-replaced slots)
+- [x] Slots already in `slotsToDelete` are excluded from the click overlay — no ghost clickable region over a visually-removed slot
+
+#### Done when
+User clicks their own green preferred slot in view mode → sees "Remove this slot?" → confirms → slot disappears. Same in edit mode: confirmation appears, confirm marks it pending deletion, Done commits. Clicking conflict zone of own slot works. Escape and clicking away dismiss without action.
+
+---
+
 ## Sprint 6 — Proposals & Event Finalization
 
 **Design references:** `docs/STITCH_DESIGN.md` → Event Detail (right panel: Top Proposals Select button, confirmed state)

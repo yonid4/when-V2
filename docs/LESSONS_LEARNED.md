@@ -250,3 +250,25 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **Show the time label for any segment ≥ 30 minutes, not ≥ 60 minutes.**
   The initial label-visibility threshold was 60 minutes (2 rows). A 30-minute segment (1 row) is a common real-world case (e.g. a preferred slot outside the conflict zone) and is tall enough to display its time range. Threshold is `seg.endUtc - seg.startUtc >= 30 * 60 * 1000`.
+
+---
+
+## Sprint 5D — Preferred Slot Deletion (Click to Remove)
+
+- **Render the display overlay and the click overlay as two separate layers — do not conflate them.**
+  The preferred slot display overlays are merged across all users' slots (using `mergeSlots`) so intensity scales with participant count. Click handling requires knowing the individual DB slot ID, which is lost after merging. Fix: keep the merged display overlays for visual rendering (pointer-events: none), then render a second set of transparent, full-geometry click overlays for only the current user's own slots (z-index: 25, pointer-events: auto) on top. Two layers, two concerns.
+
+- **The click overlay must span the full slot geometry — not be clipped to non-conflict segments.**
+  Clipping the clickable overlay with `subtractConflicts` means the user cannot click the portion of their preferred slot that overlaps a conflict block. Since the conflict overlay is z-20 and the click overlay is z-25, the click overlay can sit safely above the conflict block and still register clicks across the full slot height.
+
+- **In edit mode, clicking an own preferred slot must add it to `slotsToDelete` and remove it from `displayedPreferredSlots` — but only after confirmation.**
+  The initial implementation immediately removed the slot on click without asking. The correct flow matches view mode: show the "Remove this slot?" confirmation popover first. On confirm, add to `slotsToDelete` and filter it out of `displayedPreferredSlots` (optimistic removal). The slot is physically deleted from the DB only when the user later clicks Done (same `handleDone` flow that processes all pending deletions).
+
+- **Slots already in `slotsToDelete` must be excluded from the clickable overlay.**
+  Once a slot is marked for deletion (via either the click-to-delete flow or the merge flow), its overlay is no longer visible in `displayedPreferredSlots`. The own-slot click overlay filter must also exclude them — `!(isEditMode && slotsToDelete.includes(s.id))` — to prevent a ghost clickable region over a slot that visually no longer exists.
+
+- **`deletingSlotId` state and the Escape key handler live in the main component, not in `AvailabilityGrid`.**
+  The confirmation logic (`deletingSlotId`, `onSlotClick`, `onSlotDeleteConfirm`, `onSlotDeleteCancel`) is driven by the parent `EventDetailClient`. `AvailabilityGrid` receives these as props and renders the confirmation UI inline on the overlay div. Keeping the state in the parent ensures cancel/confirm can trigger parent-level actions (e.g. `setSlotsToDelete`, `deletePreferredSlot`) without callback threading through multiple grid levels.
+
+- **Clicking elsewhere on the grid column must dismiss the confirmation — add `onClick` to the column div.**
+  The column div (`<div key={di} className="flex flex-col relative ...">`) receives an `onClick` that calls `onSlotDeleteCancel()` when `deletingSlotId` is set. The confirmation div itself calls `e.stopPropagation()` so clicks within the popover do not dismiss it. Combined with the Escape key handler in the parent, this covers both pointer and keyboard dismissal.
