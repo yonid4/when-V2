@@ -217,3 +217,36 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **`SlotLike` interface in `gridUtils.ts` must match the shape used by both `busySlots` and `preferredSlots`.**
   Both slot types share `{ start_time_utc: string, end_time_utc: string, user_id: string }`. The `SlotLike` interface in `gridUtils.ts` is the canonical shape. `EventDetailClient` defines a local `SlotItem` type that is structurally identical — these can be unified by importing `SlotLike` directly from `gridUtils.ts` instead of duplicating the definition.
+
+---
+
+## Sprint 5C — Edit Mode Drag & Resize Fixes
+
+- **Pass `cellStartUtc: Date` through `onCellMouseEnter` — never recompute from rowIndex in the parent.**
+  The `AvailabilityGrid` already has `cellStartUtc` computed correctly for each cell (using `weekOffset` from its internal state). If you instead pass `rowIndex` up and try to reconstruct the date in the parent with `rowIndexToStartDate(dragState.baseDate, dayIndex, rowIndex)`, the parent's `baseDate` does not know about the current `weekOffset`, so dates will be wrong for any week other than week 0. Fix: change `onCellMouseEnter` to accept `cellStartUtc: Date` and use it directly in the drag/resize handlers.
+
+- **`dragState.baseDate` must be derived from `cellStartUtc`, not from `event.earliest_datetime_utc`.**
+  The original `handleCellMouseDown` computed `baseDate` from `event.earliest_datetime_utc` (always week 0's Monday). When the user is viewing a different week, `baseDate` was wrong, making `runMergeCheck`'s `getDayIndex` function return `-1` for all slots. Fix: derive `baseDate` from `cellStartUtc` itself — set hours to 0, then back up to Monday of that cell's week: `baseDate.setDate(baseDate.getDate() - (dayOfWeek + 6) % 7)`.
+
+- **Resize `baseDate` must be derived from `pendingSlot.startUtc`, not `dragState.baseDate`.**
+  During a resize, `dragState` is null (the user is not dragging a new slot — they are resizing an existing one). The original `handleDocumentMouseUp` called `runMergeCheck(..., dragState.baseDate)` which would throw at runtime because `dragState` was null. Fix: in the resize branch of `handleDocumentMouseUp`, derive `baseDate` from `pendingSlot.startUtc` the same way as in `handleCellMouseDown`.
+
+- **`pointer-events: none` on the pending slot overlay is required so mouse events fall through to cells during drag.**
+  When the pending slot renders as an absolute overlay div on top of a preferred-count cell, that overlay div must have `pointer-events-none`. Without it, `onMouseEnter` on the underlying cell div fires once (when the mouse first enters the cell), but subsequent movements within the cell are absorbed by the overlay, preventing drag extension from working on cells already covered by the pending slot. This applies to any decorative overlay added on top of a cell that needs to remain draggable.
+
+- **`e.stopPropagation()` on resize handle `onMouseDown` is required to prevent triggering cell drag.**
+  Resize handles (top/bottom edge of the pending slot) are child elements inside the cell div. The cell div also has `onMouseDown` to start a drag. Without `e.stopPropagation()` on the handle's `onMouseDown`, both the handle and the cell fire — the cell's handler runs first in bubble phase and sets `dragState`, which immediately clobbers `resizeState` and starts a new drag instead of a resize. `stopPropagation` on the handle prevents this.
+
+- **Add `onMouseEnter` to resize handle divs in addition to the cell itself.**
+  The cell's `onMouseEnter` fires when the mouse first enters the cell element. If the mouse enters a resize handle div (a child) without having been over the cell first, the cell's `onMouseEnter` does not re-fire. Since the handle is positioned at the very top or bottom edge, fast cursor movement can land directly on the handle. Wiring `onMouseEnter` on the handle div itself (in addition to the cell) ensures every entry point triggers the drag/resize extension logic.
+
+## Sprint 5C — Conflict/Busy/Preferred Overlay Rendering
+
+- **Busy and preferred overlays must be clipped to their non-conflict segments before rendering.**
+  Rendering full-bounds busy/preferred divs underneath a z-20 conflict overlay causes two problems: (1) the busy/preferred background color bleeds into the conflict zone visually (the conflict block's visual boundary is muddied by the color underneath it), and (2) the label centers relative to the full original div height, landing at the midpoint of the full span rather than the visible non-conflict portion. Fix: use `subtractConflicts(overlay, conflicts)` to split each overlay into its visible non-conflict segments. Render one independent div per segment, each with its own geometry, rounded corners, overflow-hidden, and label centered to its own height. The conflict overlay renders separately as before (z-20, split block, no changes).
+
+- **The `overlayStyle` helper adds a 2px vertical gap (top + 2, height − 4) to every slot overlay.**
+  Adjacent slots that touch at their boundaries (e.g. preferred ending at 09:30, conflict starting at 09:30) would otherwise render as flat edges against each other with no visual separation. The 2px gap keeps rounded corners fully visible and ensures adjacent blocks never visually merge. The gap applies to all slot types (busy, preferred, conflict, pending) via `overlayStyle`.
+
+- **Show the time label for any segment ≥ 30 minutes, not ≥ 60 minutes.**
+  The initial label-visibility threshold was 60 minutes (2 rows). A 30-minute segment (1 row) is a common real-world case (e.g. a preferred slot outside the conflict zone) and is tall enough to display its time range. Threshold is `seg.endUtc - seg.startUtc >= 30 * 60 * 1000`.
