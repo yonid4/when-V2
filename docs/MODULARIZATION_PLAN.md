@@ -55,16 +55,16 @@ Each priority group should be fully complete before the next begins — P2 items
 
 ### Frontend — Split `EventDetailClient.tsx`
 
-- [ ] Move `mergeSlots`, `buildConflictOverlays`, `subtractConflicts`, `buildCountedSegments`, `clipToGridBounds` from `app/events/[uid]/EventDetailClient.tsx` into `lib/gridUtils.ts`
-- [ ] Move `formatSlotTime()` from `app/events/[uid]/EventDetailClient.tsx` into `lib/dates.ts`
-- [ ] Extract inline `StatusBadge`, `typeLabel`, and `formatDateWindow` from `app/events/[uid]/EventDetailClient.tsx` into appropriate component or lib files
-- [ ] Replace all 21+ direct `new Date()` usages in display/calculation code in `app/events/[uid]/EventDetailClient.tsx` with `lib/dates.ts` helpers
-- [ ] Extract `EditModal` section from `app/events/[uid]/EventDetailClient.tsx` into `components/event/EditModal.tsx`
-- [ ] Extract `DeleteModal` section from `app/events/[uid]/EventDetailClient.tsx` into `components/event/DeleteModal.tsx`
-- [ ] Extract `AvailabilityGrid` section from `app/events/[uid]/EventDetailClient.tsx` into `components/event/AvailabilityGrid.tsx`
-- [ ] Extract `FinalizeCard` section from `app/events/[uid]/EventDetailClient.tsx` into `components/event/FinalizeCard.tsx`
-- [ ] Extract proposal display section from `app/events/[uid]/EventDetailClient.tsx` into a dedicated component
-- [ ] Extract grid legend/header section from `app/events/[uid]/EventDetailClient.tsx` into a dedicated component
+- [x] Move `mergeSlots`, `buildConflictOverlays`, `subtractConflicts`, `buildCountedSegments`, `clipToGridBounds` from `app/events/[uid]/EventDetailClient.tsx` into `lib/gridUtils.ts`
+- [x] Move `formatSlotTime()` from `app/events/[uid]/EventDetailClient.tsx` into `lib/dates.ts`
+- [x] Extract inline `StatusBadge`, `typeLabel`, and `formatDateWindow` from `app/events/[uid]/EventDetailClient.tsx` into appropriate component or lib files
+- [x] Replace all 21+ direct `new Date()` usages in display/calculation code in `app/events/[uid]/EventDetailClient.tsx` with `lib/dates.ts` helpers
+- [x] Extract `EditModal` section from `app/events/[uid]/EventDetailClient.tsx` into `components/event/EditModal.tsx`
+- [x] Extract `DeleteModal` section from `app/events/[uid]/EventDetailClient.tsx` into `components/event/DeleteModal.tsx`
+- [x] Extract `AvailabilityGrid` section from `app/events/[uid]/EventDetailClient.tsx` into `components/event/AvailabilityGrid.tsx`
+- [x] Extract `FinalizeCard` section from `app/events/[uid]/EventDetailClient.tsx` into `components/event/FinalizeCard.tsx`
+- [x] Extract proposal display section from `app/events/[uid]/EventDetailClient.tsx` into a dedicated component
+- [x] Extract grid legend/header section from `app/events/[uid]/EventDetailClient.tsx` into a dedicated component
 
 ---
 
