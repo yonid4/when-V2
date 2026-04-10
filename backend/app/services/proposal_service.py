@@ -1,0 +1,175 @@
+"""Scheduling algorithm service — generates ranked time proposals for an event."""
+
+from datetime import datetime, timedelta, timezone
+
+from app.utils.supabase import service_client
+
+
+def _parse_dt(s: str) -> datetime:
+    """Parse an ISO datetime string (with or without Z) to a UTC-aware datetime."""
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def generate_proposals(event_id: str, db=None) -> list[dict]:
+    """Generate ranked time proposals for an event and persist them.
+
+    Steps:
+    1. Fetch event metadata (duration, window).
+    2. Fetch accepted participants.
+    3. Fetch busy and preferred slots within the window.
+    4. Generate candidate 30-min-stride windows of duration_minutes length.
+    5. Score each candidate (conflict_count, preferred_count).
+    6. Rank: conflict_count ASC, preferred_count DESC, start_time ASC — take top 5.
+    7. Delete old proposed_times rows for this event, insert new ones.
+    8. Update event: proposals_last_generated_at, proposals_needs_regeneration=false.
+    9. Return inserted rows.
+    """
+    client = db if db is not None else service_client
+
+    # 1. Fetch event
+    event_result = (
+        client.table("events")
+        .select("id, duration_minutes, earliest_datetime_utc, latest_datetime_utc")
+        .eq("id", event_id)
+        .maybe_single()
+        .execute()
+    )
+    event = event_result.data
+    if not event:
+        return []
+
+    duration_min = int(event["duration_minutes"])
+    window_start = _parse_dt(event["earliest_datetime_utc"])
+    window_end = _parse_dt(event["latest_datetime_utc"])
+
+    # 2. Fetch accepted participants
+    participants_result = (
+        client.table("event_participants")
+        .select("user_id")
+        .eq("event_id", event_id)
+        .eq("status", "accepted")
+        .execute()
+    )
+    accepted_participant_ids = [r["user_id"] for r in (participants_result.data or [])]
+    total = len(accepted_participant_ids)
+
+    # 3. Fetch busy slots for accepted participants within the window
+    busy_slots: list[dict] = []
+    if accepted_participant_ids:
+        busy_result = (
+            client.table("busy_slots")
+            .select("user_id, start_time_utc, end_time_utc")
+            .in_("user_id", accepted_participant_ids)
+            .lt("start_time_utc", event["latest_datetime_utc"])
+            .gt("end_time_utc", event["earliest_datetime_utc"])
+            .execute()
+        )
+        busy_slots = busy_result.data or []
+
+    # 4. Fetch preferred slots for accepted participants within the window
+    preferred_slots: list[dict] = []
+    if accepted_participant_ids:
+        pref_result = (
+            client.table("preferred_slots")
+            .select("user_id, start_time_utc, end_time_utc")
+            .eq("event_id", event_id)
+            .in_("user_id", accepted_participant_ids)
+            .execute()
+        )
+        preferred_slots = pref_result.data or []
+
+    # 5. Generate candidate windows
+    stride = timedelta(minutes=30)
+    duration = timedelta(minutes=duration_min)
+    candidates = []
+    t = window_start
+    while t + duration <= window_end:
+        candidates.append(t)
+        t += stride
+
+    # 6. Score each candidate
+    scored = []
+    for cand_start in candidates:
+        cand_end = cand_start + duration
+
+        # conflict_count: unique participants with at least one overlapping busy slot
+        conflicting = set()
+        for bs in busy_slots:
+            bs_start = _parse_dt(bs["start_time_utc"])
+            bs_end = _parse_dt(bs["end_time_utc"])
+            if bs_start < cand_end and bs_end > cand_start:
+                conflicting.add(bs["user_id"])
+        conflict_count = len(conflicting)
+
+        # preferred_count: unique participants with at least one overlapping preferred slot
+        preferring = set()
+        for ps in preferred_slots:
+            ps_start = _parse_dt(ps["start_time_utc"])
+            ps_end = _parse_dt(ps["end_time_utc"])
+            if ps_start < cand_end and ps_end > cand_start:
+                preferring.add(ps["user_id"])
+        preferred_count = len(preferring)
+
+        free_count = total - conflict_count
+        reasoning = f"{free_count}/{total} participants free"
+        if preferred_count > 0:
+            reasoning += f", {preferred_count} marked as preferred"
+
+        scored.append({
+            "start": cand_start,
+            "end": cand_end,
+            "conflict_count": conflict_count,
+            "preferred_count": preferred_count,
+            "reasoning": reasoning,
+        })
+
+    # 7. Rank: conflict_count ASC, preferred_count DESC, start_time ASC — take top 5
+    scored.sort(key=lambda x: (x["conflict_count"], -x["preferred_count"], x["start"]))
+    top5 = scored[:5]
+
+    # 8. Delete old proposed_times rows for this event
+    client.table("proposed_times").delete().eq("event_id", event_id).execute()
+
+    # 9. Insert new rows
+    now_iso = datetime.now(timezone.utc).isoformat()
+    rows_to_insert = []
+    for rank, item in enumerate(top5, start=1):
+        rows_to_insert.append({
+            "event_id": event_id,
+            "start_time_utc": item["start"].isoformat(),
+            "end_time_utc": item["end"].isoformat(),
+            "conflicts": item["conflict_count"],
+            "preferred_count": item["preferred_count"],
+            "reasoning": item["reasoning"],
+            "rank": rank,
+        })
+
+    inserted = []
+    if rows_to_insert:
+        insert_result = (
+            client.table("proposed_times")
+            .insert(rows_to_insert)
+            .execute()
+        )
+        inserted = insert_result.data or []
+
+    # 10. Update event metadata
+    client.table("events").update({
+        "proposals_last_generated_at": now_iso,
+        "proposals_needs_regeneration": False,
+    }).eq("id", event_id).execute()
+
+    # Return rows with the expected field names for the API response
+    result = []
+    for row in inserted:
+        result.append({
+            "id": row["id"],
+            "event_id": row["event_id"],
+            "start_time_utc": row["start_time_utc"],
+            "end_time_utc": row["end_time_utc"],
+            "conflict_count": row.get("conflicts", 0),
+            "preferred_count": row.get("preferred_count", 0),
+            "reasoning": row["reasoning"],
+            "rank": row["rank"],
+        })
+    return result

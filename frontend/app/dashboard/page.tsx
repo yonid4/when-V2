@@ -16,6 +16,16 @@ async function getEvents(token: string): Promise<EventWithParticipants[]> {
   return res.json()
 }
 
+async function hasCalendarConnected(token: string): Promise<boolean> {
+  const res = await fetch(`${process.env.API_URL}/api/calendar-accounts`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+  })
+  if (!res.ok) return false
+  const accounts = await res.json()
+  return Array.isArray(accounts) && accounts.length > 0
+}
+
 export default async function DashboardPage() {
   const cookieStore = await cookies()
   const token = cookieStore.get('token')?.value
@@ -24,7 +34,10 @@ export default async function DashboardPage() {
     redirect('/')
   }
 
-  const events = await getEvents(token)
+  const [events, calendarConnected] = await Promise.all([
+    getEvents(token),
+    hasCalendarConnected(token),
+  ])
 
   return (
     <div className="min-h-screen bg-surface">
@@ -77,38 +90,40 @@ export default async function DashboardPage() {
           </div>
         )}
 
-        {/* "Sync with calendar" banner */}
-        <div className="mt-12 rounded-3xl bg-primary-fixed overflow-hidden">
-          <div className="flex flex-col md:flex-row items-center gap-8 px-8 py-8">
-            <div className="flex-1">
-              <h2 className="text-xl font-bold text-on-surface mb-2">Sync with your calendar</h2>
-              <p className="text-sm text-on-surface-variant max-w-md">
-                Connect your Google or Outlook account to automatically see where your free slots align with friends.
-              </p>
-              <Link
-                href="/settings"
-                className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full border border-outline text-on-surface text-sm font-semibold hover:bg-surface/50 transition-colors"
-              >
-                <Calendar className="w-4 h-4" />
-                Connect now
-              </Link>
-            </div>
+        {/* "Sync with calendar" banner — only shown when no calendar is connected */}
+        {!calendarConnected && (
+          <div className="mt-12 rounded-3xl bg-primary-fixed overflow-hidden">
+            <div className="flex flex-col md:flex-row items-center gap-8 px-8 py-8">
+              <div className="flex-1">
+                <h2 className="text-xl font-bold text-on-surface mb-2">Sync with your calendar</h2>
+                <p className="text-sm text-on-surface-variant max-w-md">
+                  Connect your Google or Outlook account to automatically see where your free slots align with friends.
+                </p>
+                <Link
+                  href="/settings"
+                  className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full border border-outline text-on-surface text-sm font-semibold hover:bg-surface/50 transition-colors"
+                >
+                  <Calendar className="w-4 h-4" />
+                  Connect now
+                </Link>
+              </div>
 
-            {/* Decorative heatmap grid */}
-            <div className="grid grid-cols-7 gap-1 shrink-0" aria-hidden="true">
-              {Array.from({ length: 35 }).map((_, i) => {
-                const intensity = Math.random()
-                const cls =
-                  intensity > 0.7
-                    ? 'bg-primary'
-                    : intensity > 0.4
-                    ? 'bg-primary-container opacity-70'
-                    : 'bg-surface-container-high'
-                return <div key={i} className={`w-5 h-5 rounded-sm ${cls}`} />
-              })}
+              {/* Decorative heatmap grid */}
+              <div className="grid grid-cols-7 gap-1 shrink-0" aria-hidden="true">
+                {Array.from({ length: 35 }).map((_, i) => {
+                  const intensity = Math.random()
+                  const cls =
+                    intensity > 0.7
+                      ? 'bg-primary'
+                      : intensity > 0.4
+                      ? 'bg-primary-container opacity-70'
+                      : 'bg-surface-container-high'
+                  return <div key={i} className={`w-5 h-5 rounded-sm ${cls}`} />
+                })}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </main>
     </div>
   )

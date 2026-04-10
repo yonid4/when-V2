@@ -10,6 +10,7 @@ from app.models.calendar import (
     CalendarSourceResponse,
     CalendarSourceUpdate,
 )
+from app.config import settings
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,8 @@ def get_credentials_for_account(account_id: str) -> Optional[Credentials]:
         token=creds_data.get("access_token"),
         refresh_token=creds_data.get("refresh_token"),
         token_uri="https://oauth2.googleapis.com/token",
+        client_id=settings.google_client_id,
+        client_secret=settings.google_client_secret,
     )
 
 

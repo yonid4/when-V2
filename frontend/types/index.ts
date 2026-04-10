@@ -31,6 +31,7 @@ export interface Event {
   video_call_link: string | null
   finalized_start_time_utc: string | null
   finalized_end_time_utc: string | null
+  allow_guest_invites: boolean
   google_calendar_event_id: string | null
   proposals_needs_regeneration: boolean
   proposals_last_generated_at: string | null
@@ -159,4 +160,26 @@ export interface ProposedTime {
   reasoning: string
   rank: number
   created_at: string
+}
+
+export interface ProposalResponse {
+  id: string
+  event_id: string
+  start_time_utc: string
+  end_time_utc: string
+  conflict_count: number
+  preferred_count: number
+  reasoning: string
+  rank: number
+}
+
+// ─── Finalization ─────────────────────────────────────────────────────────────
+
+export interface FinalizeStatus {
+  status: string
+  finalized_start_time_utc: string | null
+  finalized_end_time_utc: string | null
+  google_calendar_event_id: string | null
+  location: string | null
+  video_call_link: string | null
 }

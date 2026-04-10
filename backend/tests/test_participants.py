@@ -63,22 +63,21 @@ def _make_event_row(**overrides) -> dict:
 
 # ─── 1. test_get_participants_success ─────────────────────────────────────────
 
+@patch("app.services.participant_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
-def test_get_participants_success(mock_dep_svc, mock_get_authed):
+def test_get_participants_success(mock_dep_svc, mock_get_authed, mock_svc):
     """GET /api/events/{uid}/participants → 200 with participant list."""
     profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+    mock_svc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"id": "user-uuid-1", "full_name": "Alice", "avatar_url": None, "email_address": "alice@example.com"}]
+    )
 
     db = MagicMock()
     mock_get_authed.return_value = db
 
     event_row = _make_event_row()
-    participant_row = {
-        **_make_participant_row(),
-        "profiles": {"full_name": "Alice", "avatar_url": None, "email_address": "alice@example.com"},
-    }
-    # Remove flattened profile keys — service pops 'profiles' and merges
     participant_raw = {
         "event_id": "event-db-id-1",
         "user_id": "user-uuid-1",
@@ -86,7 +85,6 @@ def test_get_participants_success(mock_dep_svc, mock_get_authed):
         "rsvp_status": "going",
         "can_invite": False,
         "joined_at": "2026-04-01T00:00:00+00:00",
-        "profiles": {"full_name": "Alice", "avatar_url": None, "email_address": "alice@example.com"},
     }
 
     db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
@@ -103,12 +101,16 @@ def test_get_participants_success(mock_dep_svc, mock_get_authed):
 
 # ─── 2. test_get_participants_not_member ──────────────────────────────────────
 
+@patch("app.services.participant_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
-def test_get_participants_not_member(mock_dep_svc, mock_get_authed):
+def test_get_participants_not_member(mock_dep_svc, mock_get_authed, mock_svc):
     """GET /api/events/{uid}/participants → 403 when current user is not a participant."""
     profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+    mock_svc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"id": "other-user", "full_name": "Bob", "avatar_url": None, "email_address": "bob@example.com"}]
+    )
 
     db = MagicMock()
     mock_get_authed.return_value = db
@@ -122,7 +124,6 @@ def test_get_participants_not_member(mock_dep_svc, mock_get_authed):
         "rsvp_status": "going",
         "can_invite": False,
         "joined_at": "2026-04-01T00:00:00+00:00",
-        "profiles": {"full_name": "Bob", "avatar_url": None, "email_address": "bob@example.com"},
     }
 
     db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
@@ -134,12 +135,16 @@ def test_get_participants_not_member(mock_dep_svc, mock_get_authed):
 
 # ─── 3. test_update_rsvp_own_status ──────────────────────────────────────────
 
+@patch("app.services.participant_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
-def test_update_rsvp_own_status(mock_dep_svc, mock_get_authed):
+def test_update_rsvp_own_status(mock_dep_svc, mock_get_authed, mock_svc):
     """PUT /api/events/{uid}/participants/{user_id}/rsvp → 200 when updating own RSVP."""
     profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+    mock_svc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"id": "user-uuid-1", "full_name": "Alice", "avatar_url": None, "email_address": "alice@example.com"}]
+    )
 
     db = MagicMock()
     mock_get_authed.return_value = db
@@ -152,7 +157,6 @@ def test_update_rsvp_own_status(mock_dep_svc, mock_get_authed):
         "rsvp_status": "maybe",
         "can_invite": False,
         "joined_at": "2026-04-01T00:00:00+00:00",
-        "profiles": {"full_name": "Alice", "avatar_url": None, "email_address": "alice@example.com"},
     }
 
     db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
@@ -277,12 +281,16 @@ def test_get_participants_event_not_found(mock_dep_svc, mock_get_authed):
 
 # ─── 9. test_update_permissions_success ──────────────────────────────────────
 
+@patch("app.services.participant_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
-def test_update_permissions_success(mock_dep_svc, mock_get_authed):
+def test_update_permissions_success(mock_dep_svc, mock_get_authed, mock_svc):
     """PUT .../permissions → 200 when coordinator grants can_invite."""
     profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+    mock_svc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"id": "target-user-id", "full_name": "Bob", "avatar_url": None, "email_address": "bob@example.com"}]
+    )
 
     db = MagicMock()
     mock_get_authed.return_value = db
@@ -296,7 +304,6 @@ def test_update_permissions_success(mock_dep_svc, mock_get_authed):
         "rsvp_status": "going",
         "can_invite": True,
         "joined_at": "2026-04-01T00:00:00+00:00",
-        "profiles": {"full_name": "Bob", "avatar_url": None, "email_address": "bob@example.com"},
     }
 
     db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)

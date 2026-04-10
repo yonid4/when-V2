@@ -165,4 +165,8 @@
   .shadow-warm-md {
     box-shadow: 0 20px 40px -15px rgba(155, 68, 40, 0.2);
   }
+
+  /* Hide scrollbar while keeping scrollability (used on right panel) */
+  .hide-scrollbar::-webkit-scrollbar { display: none; }
+  .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 }

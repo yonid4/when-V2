@@ -171,6 +171,36 @@ Calendar connect flow works end-to-end. Login shows identity-only consent. Navba
 
 ---
 
+## Sprint 4 (Post-2) — Event Detail Rework & AvailabilityGrid ✅ DONE
+
+**Goal:** Overhaul the event detail page to match the updated design: full-height two-column layout, enriched edit modal, AvailabilityGrid driven by real event time window, and server-side simplification by moving coordinator/user resolution to the client via `authStore`.
+
+### Backend
+- [x] `GET /api/busy-slots/event/{uid}` — fetch event row now selects `earliest_datetime_utc` and `latest_datetime_utc`; busy slots filtered server-side to only those overlapping the event window (`.lt("start_time_utc", latest).gt("end_time_utc", earliest)`); returns 404 if event not found (was previously returning empty list)
+
+### Frontend
+- [x] `types/index.ts` — added `allow_guest_invites: boolean` to `Event` interface
+- [x] `app/events/[uid]/page.tsx` — removed server-side `getCurrentUserId` fetch and `isCoordinator` derivation; page now only fetches the event and passes it to `EventDetailClient`
+- [x] `app/events/[uid]/EventDetailClient.tsx` — complete rework:
+  - Reads `currentUserId` and `isCoordinator` from `useAuthStore` (client-side)
+  - Holds local `event` state (optimistic updates after edits, no full page reload)
+  - Full-height two-column layout: left = AvailabilityGrid, right = event info panel
+  - `Navbar` spans full width (removed `max-w-7xl` constraint on header)
+  - Edit modal expanded: now edits `allow_guest_invites`, `earliest_local`/`latest_local` (datetime-local inputs), `event_type`, `duration_minutes`, description, location, video call link
+  - Edit save calls `computeEditDiff` to detect what changed; sets `participantsKey` to re-mount `ParticipantList` when `allow_guest_invites` changes
+  - Actions panel: "View Proposed Times" CTA button, 2×2 grid of secondary actions (Refresh, Invite, Copy Link, Sync All); Invite button shown only to users with `can_invite`; Sync All shown only to coordinator
+  - Copy link button copies `window.location.href` to clipboard with transient "Copied!" label
+  - `useSyncMyCalendar` for "Refresh" button (syncs current user's calendar); `useSyncCalendar` for "Sync All" (coordinator-only participant sync)
+- [x] `app/events/[uid]/editEventUtils.ts` — extracted edit schema (`editSchema`), `EditValues` type, `EditSaveResult` type, `toDatetimeLocal()` helper, and `computeEditDiff()` function
+- [x] `app/events/new/page.tsx` — Step 2 now collects `start_time` and `end_time` (time-of-day pickers, defaults 09:00–17:00); `validateStep2Times` extracted as a pure exported function; event creation uses local datetime strings (`${date}T${time}:00`) instead of midnight/end-of-day UTC
+- [x] `components/layout/Navbar.tsx` — changed from `max-w-7xl mx-auto px-6` to `w-full px-4` so navbar spans the full viewport width on the two-column layout
+- [x] `AvailabilityGrid` — moved inline into `EventDetailClient.tsx`; now accepts `startDate`, `earliestTime`, `latestTime` props; derives `startHour`/`endHour` from the event's UTC window; renders a 7-day week view with week navigation (`weekOffset` state); month label shows span when week crosses months
+
+### Done when
+Event detail page renders in full-height two-column layout. Edit modal covers all editable fields. AvailabilityGrid shows hours within the event time window. Create event form captures start/end time of day. Busy slot API filters to event window only.
+
+---
+
 ## Sprint 5 — Availability grid & scheduling algorithm
 
 **Design references:** `docs/STITCH_DESIGN.md` → Event Detail (left panel: availability grid, legend, heatmap, overlays)

@@ -69,6 +69,7 @@ create table events (
   status                      event_status_enum not null default 'planning',
   location                    text,
   video_call_link             text,
+  allow_guest_invites         boolean not null default false,
   finalized_start_time_utc    timestamptz,
   finalized_end_time_utc      timestamptz,
   google_calendar_event_id    text,
@@ -215,14 +216,15 @@ create index preferred_slots_user_id_idx on preferred_slots(user_id);
 -- proposed_times
 -- ============================================================
 create table proposed_times (
-  id             uuid primary key default gen_random_uuid(),
-  event_id       uuid not null references events(id) on delete cascade,
-  start_time_utc timestamptz not null,
-  end_time_utc   timestamptz not null,
-  conflicts      int not null default 0,
-  reasoning      text,
-  rank           int not null,
-  created_at     timestamptz not null default now(),
+  id              uuid primary key default gen_random_uuid(),
+  event_id        uuid not null references events(id) on delete cascade,
+  start_time_utc  timestamptz not null,
+  end_time_utc    timestamptz not null,
+  conflicts       int not null default 0,
+  preferred_count int not null default 0,
+  reasoning       text,
+  rank            int not null,
+  created_at      timestamptz not null default now(),
   unique (event_id, rank)
 );
 

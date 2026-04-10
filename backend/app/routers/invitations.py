@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.dependencies import get_current_user
-from app.models.invitation import InviteRequest, InvitationResponse, InvitationRespondRequest
+from app.models.invitation import InviteRequest, InvitationResponse, InvitationRespondRequest, InvitationRespondResponse
 from app.models.user import User
 from app.services import invitation_service
 
@@ -13,6 +13,7 @@ def invite_by_email(uid: str, data: InviteRequest, current_user: User = Depends(
     return invitation_service.invite_by_email(uid, current_user, data.email)
 
 
-@router.put('/api/invitations/{id}/respond', status_code=204)
+@router.put('/api/invitations/{id}/respond', response_model=InvitationRespondResponse)
 def respond_to_invitation(id: str, data: InvitationRespondRequest, current_user: User = Depends(get_current_user)):
-    invitation_service.respond_to_invitation(id, current_user, data.action)
+    event_uid = invitation_service.respond_to_invitation(id, current_user, data.action)
+    return InvitationRespondResponse(event_uid=event_uid)

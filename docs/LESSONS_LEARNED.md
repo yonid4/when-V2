@@ -147,9 +147,6 @@ Implementation details discovered while writing tests that aren't captured elsew
 - **`flow.oauth2session.scope = None` suppresses scope validation and should be removed.**
   This hack was added to suppress google-auth's scope mismatch check during the calendar OAuth callback. Removing it and passing scopes explicitly to `Flow.from_client_config` is the correct fix. The hack can cause subtle failures depending on the `requests-oauthlib` version.
 
-- **The `AvailabilityGrid` component is a static shell — busy slot rendering is not yet implemented.**
-  The `busySlots` prop is accepted and passed correctly from `useEventBusySlots`, but the component never reads it. All cell coloring, overlap detection, and timezone conversion logic is deferred to Sprint 5. The data pipeline (hook → prop) is confirmed working.
-
 - **Profile avatar in `Navbar` must use field names that actually exist on the stored user object.**
   Read `authStore.ts` to confirm exact field names before implementing avatar rendering. If `avatar_url` or `full_name` is null, fall back to the first letter of `email_address`. Mismatched field names cause the avatar to silently render nothing.
 
@@ -161,3 +158,320 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **Accept invitation should redirect to the event page, not stay on the current page.**
   After `takeAction` with `action='accept'` succeeds, the frontend should navigate to `/events/{event_uid}`. The notification object includes enough data (either `event_uid` directly or via metadata) to construct the URL. Declining should not redirect.
+
+---
+
+## Sprint 4 (Post-2) — Event Detail Rework & AvailabilityGrid
+
+- **`isCoordinator` and `currentUserId` should be derived client-side from `authStore`, not server-side.**
+  The original `EventDetailPage` (server component) made an extra `GET /api/auth/me` fetch to resolve the current user id, then passed `isCoordinator` and `currentUserId` as props to `EventDetailClient`. This adds a serial SSR fetch and duplicates logic that `authStore` already holds after login. The correct pattern: server component fetches only the event, client component reads `useAuthStore()` and derives coordinator status from `event.coordinator_id === user?.id`.
+
+- **`GET /api/busy-slots/event/{uid}` must return 404, not `[]`, when the event does not exist.**
+  The original router returned an empty list when the event lookup yielded no data. This masked bad event UIDs — callers could not distinguish "event has no participants yet" from "event does not exist". Changed to `raise HTTPException(404)` when `event.data` is falsy. Update any test that expected `[]` for an unknown uid to expect 404.
+
+- **Filter busy slots server-side to the event time window — don't return all-time slots.**
+  Without a filter, the busy slots query returns every synced calendar event for every participant across all time. For a grid covering a specific week, this produces enormous payloads. The fix: add `.lt("start_time_utc", latest).gt("end_time_utc", earliest)` to the Supabase query. Note the filter uses strict inequality (`lt`/`gt`), which correctly handles slots that partially overlap the window boundary.
+
+- **`AvailabilityGrid` must be driven by the event's actual time window, not hardcoded hours.**
+  The original grid hardcoded `hours = ['09:00 AM', ..., '05:00 PM']` and `days = ['MON', ..., 'FRI']`. This means any event outside 9–5 Mon–Fri was invisible. The grid now accepts `earliestTime` and `latestTime` UTC strings, derives `startHour`/`endHour` from them, and renders 7-day weeks with navigation. Always pass the event's actual `earliest_datetime_utc` / `latest_datetime_utc` as props.
+
+- **Edit modal state should update local component state optimistically — avoid full page reloads after edits.**
+  The original edit flow called `onSuccess: onClose` and left the displayed event data stale until the next page load. The fix: hold a `useState(initialEvent)` in `EventDetailClient`, pass an `onSave(result: EditSaveResult)` callback to `EditModal`, and merge the updated fields into local state after a successful mutation. This gives instant UI feedback without a round-trip.
+
+- **Extract edit logic (`editSchema`, `computeEditDiff`, `toDatetimeLocal`) into a separate utility file.**
+  Keeping the Zod schema, diff computation, and datetime conversion inside the 600-line `EventDetailClient.tsx` makes it hard to test in isolation. Moved to `app/events/[uid]/editEventUtils.ts`. These are pure functions with no React/DOM dependencies and can be unit-tested directly without rendering the component.
+
+- **`allow_guest_invites` must be added as a column to the `events` table — it is not in the original schema.**
+  The field was referenced in `types/index.ts` and the edit modal before the DB column existed. Migration: `alter table events add column allow_guest_invites boolean not null default false;`. Always add the column to `schema.sql` and run the migration before shipping code that reads or writes the field.
+
+- **Stale busy slot deletion must use `end_time_utc`, not `start_time_utc`, as the upper bound when querying the DB.**
+  Google's `timeMin=now` means any deleted event whose `start_time_utc` is in the past will not appear in Google's response — correctly. But if the DB query to find existing slots also uses `.gte("start_time_utc", now)`, those past-starting slots are excluded from the "existing" set and therefore never identified as stale. Fix: query the DB with `.lt("end_time_utc", time_max_iso)` only, with no lower bound. This catches any slot for the source that ended before the fetch horizon, regardless of when it started. Delete is then done by `provider_event_id` directly (scoped to `calendar_source_id`), not by slot `id`.
+
+- **`useSyncMyCalendar` and `useSyncCalendar` serve different purposes — do not conflate them.**
+  `useSyncMyCalendar` calls `POST /busy-slots/sync` and syncs only the current user's own calendar. `useSyncCalendar(uid)` calls `POST /busy-slots/sync/event/{uid}` and is coordinator-only (syncs all participants). The "Refresh" button in the actions panel should use `useSyncMyCalendar`; the coordinator "Sync All" button should use `useSyncCalendar`.
+
+---
+
+## Sprint 5 (Part A) — Busy Slot Rendering on the Grid
+
+- **`getSlotsForCell` uses strict inequality on both boundaries — a slot ending exactly at cell start is not an overlap.**
+  The overlap rule is `slot.start < cellEnd AND slot.end > cellStart`. A slot ending at exactly `10:00` when the cell starts at `10:00` is excluded. This matches the half-open interval `[cellStart, cellEnd)` convention used throughout the grid. Tests for both boundary conditions (`slotEnd === cellStart` and `slotStart === cellEnd`) must assert an empty result, not a match.
+
+- **`getSlotsForCell` takes `Date` objects, not ISO strings — always construct cell boundaries before calling.**
+  The helper signature is `(cellStartUtc: Date, cellEndUtc: Date, slots: SlotLike[])`. Inside the grid loop, construct `cellStartUtc` from the week start date + day offset + hour + half-row offset, then pass it and `cellEndUtc = cellStart + 30 minutes`. Do not pass raw ISO strings — `new Date(isoString) < new Date(isoString)` comparisons work, but the function contract expects `Date` objects.
+
+- **Intensity scaling for busy/preferred cells uses participant count, not a fixed threshold.**
+  The `busyClass` and `preferredClass` helpers scale opacity by how many participants' slots overlap the cell (`busyCount` / `preferredCount`). The thresholds implemented are: `< 3 → /20`, `>= 3 → /40`, `>= 5 → /65`, `>= 7 → /90`. These differ from the sprint plan spec (`1 → /30`, `2 → /55`, `3+ → /80`) — the plan assumed a small fixed participant count; the implementation uses the actual count and spreads the scale wider. Update the sprint plan spec if the visual result is accepted.
+
+- **Conflict cells render as a flex row with two half-width divs — do not use CSS `background: linear-gradient`.**
+  The conflict split (left half red, right half green) is implemented as `<div className="flex w-full h-full"><div className="w-1/2 h-full {busyClass}" /><div className="w-1/2 h-full {preferredClass}" /></div>`. A CSS gradient would not respond to the dynamic intensity classes. The "CONFLICT" label is absolutely positioned and centered over both halves.
+
+- **Busy and conflict cells must be `cursor-default` in all modes, including edit mode.**
+  When edit mode is added in Part C, the pointer style for empty cells will change to `crosshair`. Busy/conflict cells must explicitly stay `cursor-default` (not `cursor-not-allowed` as the spec says) to avoid implying the cell is interactive but blocked. The `not-allowed` cursor is reserved for the drag-over-busy-slot overlay if needed.
+
+- **`lib/api.ts` must handle both 401 and 403 as "unauthenticated" — `HTTPBearer` returns 403 when no Authorization header is sent.**
+  The original `api.ts` only cleared the token and redirected on 401. But FastAPI's `HTTPBearer` returns 403 (not 401) when the `Authorization` header is completely absent. If the token is missing from `localStorage` (e.g. expired session, cleared storage), client-side requests have no header at all — backend returns 403 — and `api.ts` used to treat this as a generic error rather than redirecting to login. Fix: `if (res.status === 401 || res.status === 403)` in the error branch of `lib/api.ts`.
+
+- **Remove `console.log` statements from `AvailabilityGrid` before Part B — they fire on every render.**
+  The grid logs `busySlots received`, `first cell`, and individual slot comparisons on every render cycle. These were left in for debugging during Part A. Remove before wiring real preferred slots in Part B or the console will be flooded.
+
+- **`SlotLike` interface in `gridUtils.ts` must match the shape used by both `busySlots` and `preferredSlots`.**
+  Both slot types share `{ start_time_utc: string, end_time_utc: string, user_id: string }`. The `SlotLike` interface in `gridUtils.ts` is the canonical shape. `EventDetailClient` defines a local `SlotItem` type that is structurally identical — these can be unified by importing `SlotLike` directly from `gridUtils.ts` instead of duplicating the definition.
+
+---
+
+## Sprint 5C — Edit Mode Drag & Resize Fixes
+
+- **Pass `cellStartUtc: Date` through `onCellMouseEnter` — never recompute from rowIndex in the parent.**
+  The `AvailabilityGrid` already has `cellStartUtc` computed correctly for each cell (using `weekOffset` from its internal state). If you instead pass `rowIndex` up and try to reconstruct the date in the parent with `rowIndexToStartDate(dragState.baseDate, dayIndex, rowIndex)`, the parent's `baseDate` does not know about the current `weekOffset`, so dates will be wrong for any week other than week 0. Fix: change `onCellMouseEnter` to accept `cellStartUtc: Date` and use it directly in the drag/resize handlers.
+
+- **`dragState.baseDate` must be derived from `cellStartUtc`, not from `event.earliest_datetime_utc`.**
+  The original `handleCellMouseDown` computed `baseDate` from `event.earliest_datetime_utc` (always week 0's Monday). When the user is viewing a different week, `baseDate` was wrong, making `runMergeCheck`'s `getDayIndex` function return `-1` for all slots. Fix: derive `baseDate` from `cellStartUtc` itself — set hours to 0, then back up to Monday of that cell's week: `baseDate.setDate(baseDate.getDate() - (dayOfWeek + 6) % 7)`.
+
+- **Resize `baseDate` must be derived from `pendingSlot.startUtc`, not `dragState.baseDate`.**
+  During a resize, `dragState` is null (the user is not dragging a new slot — they are resizing an existing one). The original `handleDocumentMouseUp` called `runMergeCheck(..., dragState.baseDate)` which would throw at runtime because `dragState` was null. Fix: in the resize branch of `handleDocumentMouseUp`, derive `baseDate` from `pendingSlot.startUtc` the same way as in `handleCellMouseDown`.
+
+- **`pointer-events: none` on the pending slot overlay is required so mouse events fall through to cells during drag.**
+  When the pending slot renders as an absolute overlay div on top of a preferred-count cell, that overlay div must have `pointer-events-none`. Without it, `onMouseEnter` on the underlying cell div fires once (when the mouse first enters the cell), but subsequent movements within the cell are absorbed by the overlay, preventing drag extension from working on cells already covered by the pending slot. This applies to any decorative overlay added on top of a cell that needs to remain draggable.
+
+- **`e.stopPropagation()` on resize handle `onMouseDown` is required to prevent triggering cell drag.**
+  Resize handles (top/bottom edge of the pending slot) are child elements inside the cell div. The cell div also has `onMouseDown` to start a drag. Without `e.stopPropagation()` on the handle's `onMouseDown`, both the handle and the cell fire — the cell's handler runs first in bubble phase and sets `dragState`, which immediately clobbers `resizeState` and starts a new drag instead of a resize. `stopPropagation` on the handle prevents this.
+
+- **Add `onMouseEnter` to resize handle divs in addition to the cell itself.**
+  The cell's `onMouseEnter` fires when the mouse first enters the cell element. If the mouse enters a resize handle div (a child) without having been over the cell first, the cell's `onMouseEnter` does not re-fire. Since the handle is positioned at the very top or bottom edge, fast cursor movement can land directly on the handle. Wiring `onMouseEnter` on the handle div itself (in addition to the cell) ensures every entry point triggers the drag/resize extension logic.
+
+## Sprint 5C — Conflict/Busy/Preferred Overlay Rendering
+
+- **Busy and preferred overlays must be clipped to their non-conflict segments before rendering.**
+  Rendering full-bounds busy/preferred divs underneath a z-20 conflict overlay causes two problems: (1) the busy/preferred background color bleeds into the conflict zone visually (the conflict block's visual boundary is muddied by the color underneath it), and (2) the label centers relative to the full original div height, landing at the midpoint of the full span rather than the visible non-conflict portion. Fix: use `subtractConflicts(overlay, conflicts)` to split each overlay into its visible non-conflict segments. Render one independent div per segment, each with its own geometry, rounded corners, overflow-hidden, and label centered to its own height. The conflict overlay renders separately as before (z-20, split block, no changes).
+
+- **The `overlayStyle` helper adds a 2px vertical gap (top + 2, height − 4) to every slot overlay.**
+  Adjacent slots that touch at their boundaries (e.g. preferred ending at 09:30, conflict starting at 09:30) would otherwise render as flat edges against each other with no visual separation. The 2px gap keeps rounded corners fully visible and ensures adjacent blocks never visually merge. The gap applies to all slot types (busy, preferred, conflict, pending) via `overlayStyle`.
+
+- **Show the time label for any segment ≥ 30 minutes, not ≥ 60 minutes.**
+  The initial label-visibility threshold was 60 minutes (2 rows). A 30-minute segment (1 row) is a common real-world case (e.g. a preferred slot outside the conflict zone) and is tall enough to display its time range. Threshold is `seg.endUtc - seg.startUtc >= 30 * 60 * 1000`.
+
+---
+
+## Sprint 5D — Preferred Slot Deletion (Click to Remove)
+
+- **Render the display overlay and the click overlay as two separate layers — do not conflate them.**
+  The preferred slot display overlays are merged across all users' slots (using `mergeSlots`) so intensity scales with participant count. Click handling requires knowing the individual DB slot ID, which is lost after merging. Fix: keep the merged display overlays for visual rendering (pointer-events: none), then render a second set of transparent, full-geometry click overlays for only the current user's own slots (z-index: 25, pointer-events: auto) on top. Two layers, two concerns.
+
+- **The click overlay must span the full slot geometry — not be clipped to non-conflict segments.**
+  Clipping the clickable overlay with `subtractConflicts` means the user cannot click the portion of their preferred slot that overlaps a conflict block. Since the conflict overlay is z-20 and the click overlay is z-25, the click overlay can sit safely above the conflict block and still register clicks across the full slot height.
+
+- **In edit mode, clicking an own preferred slot must add it to `slotsToDelete` and remove it from `displayedPreferredSlots` — but only after confirmation.**
+  The initial implementation immediately removed the slot on click without asking. The correct flow matches view mode: show the "Remove this slot?" confirmation popover first. On confirm, add to `slotsToDelete` and filter it out of `displayedPreferredSlots` (optimistic removal). The slot is physically deleted from the DB only when the user later clicks Done (same `handleDone` flow that processes all pending deletions).
+
+- **Slots already in `slotsToDelete` must be excluded from the clickable overlay.**
+  Once a slot is marked for deletion (via either the click-to-delete flow or the merge flow), its overlay is no longer visible in `displayedPreferredSlots`. The own-slot click overlay filter must also exclude them — `!(isEditMode && slotsToDelete.includes(s.id))` — to prevent a ghost clickable region over a slot that visually no longer exists.
+
+- **`deletingSlotId` state and the Escape key handler live in the main component, not in `AvailabilityGrid`.**
+  The confirmation logic (`deletingSlotId`, `onSlotClick`, `onSlotDeleteConfirm`, `onSlotDeleteCancel`) is driven by the parent `EventDetailClient`. `AvailabilityGrid` receives these as props and renders the confirmation UI inline on the overlay div. Keeping the state in the parent ensures cancel/confirm can trigger parent-level actions (e.g. `setSlotsToDelete`, `deletePreferredSlot`) without callback threading through multiple grid levels.
+
+- **Clicking elsewhere on the grid column must dismiss the confirmation — add `onClick` to the column div.**
+  The column div (`<div key={di} className="flex flex-col relative ...">`) receives an `onClick` that calls `onSlotDeleteCancel()` when `deletingSlotId` is set. The confirmation div itself calls `e.stopPropagation()` so clicks within the popover do not dismiss it. Combined with the Escape key handler in the parent, this covers both pointer and keyboard dismissal.
+
+---
+
+## Sprint 6A — Slot Rendering
+
+- **Slot overlays must be clipped to the grid's visible time bounds before computing geometry and labels.**
+  Slots from the DB may span outside the event window (e.g. an all-day Google Calendar event or a busy slot starting at 08:00 on a 09:00–17:00 grid). Always clip `startUtc`/`endUtc` to `colDayStart`/`colDayEnd` per column before calling `overlayStyle()` and before rendering time labels. If the clipped end ≤ clipped start, skip rendering entirely. The clipped times are used only for rendering — do not mutate the original slot data. The pending slot is built from grid cell coordinates so it is always in bounds and needs no clipping.
+
+## Sprint 5E — Preferred Slot Edit Mode Hardening
+
+- **Pass only the current user's own slots to `runMergeCheck` — never all participants' slots.**
+  `computeMerge` determines which existing preferred slots overlap the pending drag slot and marks them for deletion. If all participants' slots are passed in, foreign users' slot IDs end up in `slotsToDelete` and the `handleDone` call tries to DELETE them, hitting a 403. Fix: filter to `ownSlots = preferredSlots.filter(s => s.user_id === user?.id)` at both `handleDocumentMouseUp` call sites (drag branch and resize branch) before calling `runMergeCheck`.
+
+- **Re-append foreign slots to `displayedPreferredSlots` inside `runMergeCheck` after every merge.**
+  `computeMerge` only returns `remainingSlots` from the set it was given (own slots). If you set `displayedPreferredSlots` to `result.remainingSlots` directly, foreign users' slots disappear from the grid mid-drag. Fix: derive `foreignSlots` from the full `preferredSlots` list (filtering to `user_id !== user?.id`) and spread them in: `setDisplayedPreferredSlots([...result.remainingSlots, ...foreignSlots])`.
+
+- **Use `Promise.allSettled` instead of `Promise.all` for batched preferred slot deletes in `handleDone`.**
+  `Promise.all` short-circuits and throws on the first rejection. If a 403 arrives (e.g. a foreign slot id slipped into `slotsToDelete`), the entire batch is aborted and the UI is left in a broken state. `Promise.allSettled` collects all outcomes; check `.filter(r => r.status === 'rejected').length` and surface a single error message if any failed. This is the defensive fallback — the root cause (foreign ids) is fixed by the own-slot filter above, but `allSettled` prevents silent partial failures.
+
+- **Gate the own-slot interactive (click-to-delete) overlay on `isEditMode`.**
+  In view mode the click overlay should not exist — clicking a preferred slot should do nothing. The overlay render block for own slots must be wrapped in `{isEditMode && ...}`. In view mode, the separate click overlay that handles deletion (Part D) is still active; only the edit-mode overlay (which adds to `slotsToDelete` rather than calling the API directly) should be gated.
+
+- **`computeMerge` overlap condition must use `<=`/`>=` so touching boundaries merge.**
+  Original: `startUtc < slotEnd && endUtc > slotStart` (strict). This excluded slots that touch at exactly one boundary point — a preferred slot ending at 10:00 and a pending slot starting at 10:00 were not merged, leaving a 0-width gap between them. Fix: `startUtc <= slotEnd && endUtc >= slotStart`. Adjacent slots that share a single boundary instant are now merged into one continuous block. Update the corresponding test case: "merges adjacent slots that touch at a boundary" now expects `slotsToDelete` to have length 1 (not 0).
+
+- **Dot indicators for own preferred slots must be rendered per original DB slot, not per merged display segment.**
+  The first attempt rendered a dot inside each merged `preferredOverlays` segment and checked whether the current user's slot overlapped it. This failed for partial overlaps — the dot was skipped when the own slot only covered part of the segment. Fix: render a completely separate set of dot divs, one per own preferred slot, each using `clipToGridBounds(s.start_time_utc, s.end_time_utc, ...)` for geometry. These divs are `pointer-events: none` so they never interfere with drag or click handlers.
+
+- **Preferred slot color density must reflect per-region participant count, not the whole merged block's max count.**
+  The initial implementation used `mergeSlots(colPreferred)` which collapsed all overlapping slots into one merged block and assigned the max participant count to the entire span. This made a 1-participant region that happened to be adjacent to a 4-participant region render at 4-participant intensity. Fix: replace with `buildCountedSegments(colPreferred)` which splits slots at every boundary point, counts coverage per segment, then re-merges adjacent segments that fall in the same density bucket (1–2, 3–4, 5–6, 7+). Only crossing a bucket boundary creates a visual split.
+
+- **`buildCountedSegments` merge condition must use `preferredIntensityClass` equality, not raw count equality.**
+  If two adjacent segments have counts 1 and 2 (both in the 1–2 bucket), they should render as one block at the same color — splitting them creates a visible seam at the same intensity. Using `preferredIntensityClass(raw[i].count) === preferredIntensityClass(last.count)` as the merge key collapses same-bucket adjacent segments correctly. When merging, keep the higher count: `if (raw[i].count > last.count) last.count = raw[i].count` — this ensures `preferredIntensityClass` computed from the merged segment's stored count still maps to the correct bucket.
+
+---
+
+## Sprint 6A — Scheduling Algorithm & Proposals
+
+- **Patch `service_client` in both the router module AND the service module.**
+  When `proposal_service.py` does `from app.utils.supabase import service_client`, Python binds that name locally in `proposal_service`'s namespace. Patching `app.routers.proposals.service_client` does NOT affect the service module's binding — both must be patched separately. Use two `@patch` decorators: `@patch("app.routers.proposals.service_client")` and `@patch("app.services.proposal_service.service_client")`. The same principle applies to any module that imports `service_client` at the top level.
+
+- **`db.table.side_effect` creates a fresh `MagicMock()` every invocation — you cannot introspect a specific table mock via `db.table("name")` after the test.**
+  Using `db.table.side_effect = lambda name: MagicMock()` means calling `db.table("proposed_times")` after the test creates a brand-new mock that was never called, so `call_args` is always `None`. Fix: create the mock before `make_table`, reference it inside the lambda, and inspect THAT variable directly post-test:
+  ```python
+  proposed_times_mock = MagicMock()
+  def make_table(name):
+      if name == "proposed_times": return proposed_times_mock
+      ...
+  db.table.side_effect = make_table
+  # after generate_proposals():
+  inserted = proposed_times_mock.insert.call_args[0][0]
+  ```
+
+- **`useProposals` uses a POST request, not GET.**
+  The proposals endpoint (`POST /events/{uid}/proposals`) accepts filter params via the request body (future extensibility). The hook calls `api.post(...)`. In tests, mock `api.post`, not `api.get`.
+
+- **Lazy-loading proposals with an `enabled` boolean prevents unnecessary backend calls.**
+  Rather than fetching proposals on page load (slow, expensive), the `useProposals(uid, enabled)` hook only fires when `enabled=true`. The "View Proposed Times" button flips `proposalsEnabled` state — on first click the query runs, on subsequent views the cache is reused. This also prevents generating proposals before the user asks for them.
+
+---
+
+## Sprint 6B — Event Finalization
+
+### Backend
+
+- **Three `@patch` decorators required for finalize tests: service, dep, and GCal.**
+  `finalize_service.py` imports `service_client` at load time AND imports `build` from `googleapiclient.discovery`. All three must be patched at their import site in the service module:
+  ```python
+  @patch("app.services.finalize_service.build")
+  @patch("app.services.finalize_service.service_client")
+  @patch("app.dependencies.service_client")
+  ```
+  Patching `googleapiclient.discovery.build` directly does NOT affect the already-bound name in `finalize_service`.
+
+- **`calendar_sources` write-cal filter is Python-side, not SQL.**
+  `finalize_service.py` queries `calendar_sources` with only `.eq("is_write_calendar", True)` (no user_id filter in SQL), then loops through results to find the row whose `calendar_accounts.user_id` matches `current_user.id`. The mock chain for `calendar_sources` is therefore `.select().eq().execute()` — just one `.eq()` call.
+
+- **DB update is intentionally deferred until after successful GCal API call.**
+  The service calls `events().insert(...).execute()` first, then writes the event update and notifications. If `HttpError` is raised, the except block raises 502 without touching the DB. Tests for the 502 case should verify `mock_svc_svc.table("events").update` was never called.
+
+- **`HttpError` requires a mock response with `.status` and `.reason` attributes.**
+  `googleapiclient.errors.HttpError.__init__` reads `resp.status` and `resp.reason` synchronously. Use a plain `Mock()` (not `MagicMock()`) with those attributes set explicitly:
+  ```python
+  mock_resp = Mock()
+  mock_resp.status = 403
+  mock_resp.reason = "Forbidden"
+  HttpError(resp=mock_resp, content=b"error")
+  ```
+
+- **`calendar_accounts` credentials query uses two `.eq()` calls.**
+  The query filters by both `user_id` and `provider="google"`. Mock chain depth: `.select().eq().eq().maybe_single().execute()`. If only one `.eq()` is mocked, the second call returns a fresh `MagicMock()` whose `.maybe_single().execute().data` will not be the expected dict.
+
+### Frontend
+
+- **`act()` wrapper is required when triggering mutations in `renderHook` tests.**
+  Calling `result.current.mutate(...)` inside `renderHook` without `act()` causes React state update warnings and flaky assertions. Always wrap the mutation call:
+  ```typescript
+  await act(async () => {
+    result.current.mutate({ proposed_time_id: 'pt-uuid-1', note: 'See you there!' })
+  })
+  await waitFor(() => expect(result.current.isSuccess).toBe(true))
+  ```
+
+- **Supabase real-time subscription for events UPDATE must filter on the DB row `id`, not the public `uid`.**
+  The `events` table has both `id` (integer PK / UUID) and `uid` (public slug). Supabase real-time `filter` expressions use the actual column name. Use `id=eq.${event.id}` (the internal DB id) so the filter matches the row that Supabase sends in the change payload.
+
+- **`event_finalized` notification messages should render the finalized time in the user's local timezone, not the raw `n.message` string.**
+  The backend sets `n.message = "The event time has been confirmed."` (generic). The actual time is in `n.metadata.finalized_start_time_utc` / `finalized_end_time_utc`. `NotificationList` checks `n.notification_type === 'event_finalized'` and calls `getFinalizedMessage(n)` which formats the UTC times into a local-timezone string (e.g. "Mon, Apr 10 at 12:00 PM – 1:00 PM"). Always check `n.metadata` for richer display data before falling back to `n.message`.
+
+
+
+---
+
+## Sprint 6C — Finalize Event Card
+
+### Backend
+
+- **`event_participants` table is queried twice in `finalize_event` — once for accepted participants, once for the coordinator.**
+  Build separate mock branches by call count (`_ep_call_count`). The first call returns the full accepted list; the second returns only the coordinator row via `maybe_single()`. Both chains (`.select().eq().eq().execute()` and `.select().eq().eq().maybe_single().execute()`) must be configured on each mock.
+
+- **Coordinator is always added to attendees, even if not in `event_participants`.**
+  The service has a two-step fallback: first look up coordinator in `event_participants`; if absent (e.g. coordinator never RSVPed), fall back to `profiles` table. Tests must exercise both paths.
+
+- **`location` key is omitted from the GCal `event_body` when empty, not set to `None`.**
+  The code does `if location: event_body["location"] = location`. This means a missing `location` key is different from `location=None`. Tests that verify GCal body shape must use `assertIn`/`assertNotIn` on the key, not assert the value is None.
+
+- **`name` update in DB is conditional on whether name changed.**
+  `update_payload["name"]` is only added when `name != event["name"]`. When they are the same, the `name` key is absent from the payload entirely — not set to the same value. Tests that cover this must assert `.update.call_args` includes or excludes the `"name"` key accordingly.
+
+### Frontend
+
+- **Remove dead FinalizeModal rather than leaving it.** Once FinalizeCard replaced FinalizeModal, the old inline function was deleted to avoid a stale `useFinalize` import. Keeping unused components with hook calls causes lint/TS warnings and can confuse future sessions.
+
+- **Coordinator checkbox in FinalizeCard is always locked checked.** The coordinator is always invited to their own event and cannot be excluded. The `disabled` checkbox prevents toggling, backed by a guard `!isCoord && toggleParticipant(...)` in the onChange handler.
+
+---
+
+## Bug Fixes (Pre-Modularization)
+
+### Frontend
+
+- **`router.refresh()` must be called before `router.push()` to bust the Next.js RSC cache after a mutation.**
+  After deleting an event (or any mutation that changes server state), calling only `router.push('/dashboard')` navigates to the dashboard but the page is served from the RSC cache — the deleted event still appears. Calling `router.refresh()` first invalidates the Next.js server-side cache so the next navigation fetches fresh data. The correct pattern is always `router.refresh(); router.push('/dashboard')` when navigating away after a destructive mutation.
+
+- **Tailwind dynamic class names are purged at build time — always use a static mapping object, never string interpolation.**
+  Writing `className={\`bg-${color}-100 text-${color}-700\`}` produces class strings that Tailwind's build step never sees, so the styles are absent in production. The fix is a static `Record<string, string>` mapping each possible value to the full class string (e.g. `meeting: 'bg-blue-100 text-blue-700'`). Tailwind can only include classes that appear as literal strings in the source. Any time badge/chip colors are driven by a runtime value, use a lookup object.
+
+### Backend
+
+- **Supabase RLS blocks `anon_client` (the authed user client) from reading other users' `profiles` rows — use `service_client` for cross-user profile lookups.**
+  When fetching event participants, the single-query join `event_participants(..., profiles(full_name, avatar_url, email_address))` worked only for the calling user's own profile because RLS on the `profiles` table restricts reads to `id = auth.uid()`. Other participants' profile rows were silently omitted, causing avatar initials to fall back to `?`. The fix is a two-query pattern: fetch `event_participants` with `get_authed_client` (respects RLS correctly for that table), then fetch `profiles` separately using `service_client` (bypasses RLS). Backend tests for this pattern must also patch `app.services.event_service.service_client` and return flat ep rows without a nested `profiles` key.
+
+- **FinalizeBody must include all 7 fields in tests.** After expanding the hook body type, tests that only pass `{ proposed_time_id, note }` will now fail TypeScript (object literal with missing required fields). Update test fixtures to always include the full `baseFinalizeBody` spread + overrides.
+
+---
+
+## Sprint 7 — Bug Fixes (Invitation Accept Redirect & Gmail Normalization)
+
+### Backend
+
+- **`PUT /api/invitations/{id}/respond` should return the event uid on accept, not 204.**
+  The original endpoint returned HTTP 204 (no body). The frontend had no way to know which event to redirect to after accepting. The fix: change `respond_to_invitation` to return the event `uid` (string) on accept, `None` on decline. The router endpoint now returns `InvitationRespondResponse(event_uid=...)` with a 200 status. The `InvitationRespondResponse` Pydantic model has a single nullable field `event_uid: str | None = None`.
+
+- **`respond_to_invitation` must select `uid` from the events row, not just `coordinator_id` and `name`.**
+  The coordinator notification query was `select('coordinator_id, name')`. To also return the event uid, update it to `select('coordinator_id, name, uid')` and `return event.get('uid')` before the function falls through to `return None`.
+
+- **Gmail dot normalization: strip dots from local part for `@gmail.com` only.**
+  Gmail treats dots in the local part as insignificant (`john.doe@gmail.com` = `johndoe@gmail.com`). Add a `normalize_email(email: str) -> str` helper in `app/utils/email.py`: partition on `@`, strip dots from `local` only when `domain.lower() == 'gmail.com'`. Apply in `auth_service._upsert_profile` (profile creation) and `invitation_service.invite_by_email` (first line). Non-Gmail addresses are returned unchanged.
+
+- **Apply `normalize_email` in `auth_service` at two call sites: profile upsert AND pending invitation processing.**
+  `_upsert_profile` writes the email to `profiles.email_address`. `exchange_code_and_upsert_user` later calls `_process_pending_invitations(profile["id"], email)`. Both must use `normalize_email(user_info["email"])` so that a pending invitation for `johndoe@gmail.com` is matched when the user signs in with `john.doe@gmail.com`.
+
+### Frontend
+
+- **Accept button in `NotificationList` must call `useRespondToInvitation` directly — not `useTakeAction`.**
+  The old flow: accept button → `POST /notifications/{id}/action` → backend internally calls `respond_to_invitation` → notification service re-fetches notification with join → extracts `event_uid`. This had two failure points: (1) the update response from Supabase has no `events` join, so `event_uid` was null after the update; (2) even after the re-fetch fix the indirection added complexity. The new flow: accept button → `PUT /api/invitations/{id}/respond` → backend returns `{ event_uid }` directly → frontend redirects. The `invitation_id` lives in `n.metadata.invitation_id`.
+
+- **The decline button in `NotificationList` must also switch to `useRespondToInvitation` (same hook).**
+  Both accept and decline now call `respondToInvitation({ invitationId, action })`. Guard with `if (!invitationId) return` since `metadata.invitation_id` could theoretically be absent. Decline continues to not redirect.
+
+- **`useTakeAction` is no longer needed by `NotificationList` — remove the import to avoid dead code.**
+  After switching to `useRespondToInvitation`, `useTakeAction` had no callers in `NotificationList.tsx`. Remove the import from both the component and check if `useTakeAction` is still exported from `useNotifications.ts` for any other consumer. If not used anywhere, remove the export too.
+
+- **`useRespondToInvitation` return type must be `{ event_uid: string | null }`, not `void`.**
+  The hook was originally typed `api.put<void>(...)`. After the backend change, update it to `api.put<{ event_uid: string | null }>(...)`. The `onSuccess` callback receives `data` and constructs the redirect URL: `data?.event_uid ? \`/events/${data.event_uid}\` : '/dashboard'`.
+
+- **Invalidate `['participants']` in `useRespondToInvitation.onSuccess` — the user just joined the event.**
+  The hook previously only invalidated `['notifications']` and `['events']`. After accepting, the user is added to `event_participants`. Any cached participants list for that event is now stale. Add `queryClient.invalidateQueries({ queryKey: ['participants'] })` to `onSuccess`.
+
+---
+
+## Sprint 8 — Sync Service: Stale Deletion Fix
+
+### Backend
+
+- **Build `fetched_event_ids` from `all_items` directly, not from `slots_to_upsert`.**
+  The stale deletion set was built as `{s["provider_event_id"] for s in slots_to_upsert}`. This meant events that were filtered out during slot construction (missing datetimes, all-day events) were absent from `fetched_event_ids` — those DB rows would incorrectly be treated as stale and deleted. More critically, it meant the set was computed from the already-filtered list rather than from the raw Google API response. The fix: collect `fetched_event_ids` in the item loop itself, before the slot-construction filters.
+
+- **Cancelled Google Calendar event instances (`status == "cancelled"`) must be excluded from `fetched_event_ids` — not just from `slots_to_upsert`.**
+  Google returns cancelled event instances in some responses (e.g. recurring events with deleted occurrences). If a cancelled item's `id` is added to `fetched_event_ids`, the corresponding DB row is never treated as stale and is never deleted. The correct behavior: skip cancelled items at the top of the loop — add neither to `slots_to_upsert` nor to `fetched_event_ids`. Any existing DB row for the cancelled event id is then identified as stale and deleted.
+
+- **The stale deletion delete call must be skipped entirely when `stale_event_ids` is empty.**
+  The implementation gates the delete behind `if stale_event_ids:` — this is intentional and must be preserved. Running `.delete().eq(...).in_("provider_event_id", [])` against Supabase with an empty list produces undefined behavior (may delete all rows for the source). Tests must assert `mock_svc.table.return_value.delete.assert_not_called()` when no stale slots exist.

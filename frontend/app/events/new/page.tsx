@@ -42,12 +42,25 @@ const step1Schema = z.object({
 const step2Schema = z.object({
   earliest_date: z.string().min(1, 'Start date required'),
   latest_date: z.string().min(1, 'End date required'),
+  start_time: z.string().min(1, 'Start time required'),
+  end_time: z.string().min(1, 'End time required'),
   duration_minutes: z.number().min(15),
   participant_emails: z.array(z.string().email()),
 })
 
 type Step1Values = z.infer<typeof step1Schema>
 type Step2Values = z.infer<typeof step2Schema>
+
+/** Pure validator for Step 2 date/time ordering. Returns an error message or null. */
+export function validateStep2Times(data: Pick<Step2Values, 'earliest_date' | 'latest_date' | 'start_time' | 'end_time'>): { field: 'latest_date' | 'end_time'; message: string } | null {
+  if (data.latest_date < data.earliest_date) {
+    return { field: 'latest_date', message: 'End date must be on or after start date' }
+  }
+  if (data.latest_date === data.earliest_date && data.end_time <= data.start_time) {
+    return { field: 'end_time', message: 'End time must be after start time on the same day' }
+  }
+  return null
+}
 
 // ─── Combined wizard state ───────────────────────────────────────────────────
 
@@ -275,6 +288,8 @@ function Step2({
   const initialDefaults: Partial<Step2Values> = {
     earliest_date: today,
     latest_date: sevenDaysFromNow,
+    start_time: '09:00',
+    end_time: '17:00',
     duration_minutes: 60,
     participant_emails: [],
   }
@@ -318,8 +333,9 @@ function Step2({
   }
 
   function onSubmit(data: Step2Values) {
-    if (data.latest_date < data.earliest_date) {
-      setError('latest_date', { message: 'End date must be on or after start date' })
+    const validationError = validateStep2Times(data)
+    if (validationError) {
+      setError(validationError.field, { message: validationError.message })
       return
     }
     clearErrors()
@@ -361,6 +377,39 @@ function Step2({
           {(errors.earliest_date || errors.latest_date) && (
             <p className="text-sm text-error">{errors.earliest_date?.message ?? errors.latest_date?.message}</p>
           )}
+        </div>
+
+        {/* Time of day range */}
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Time of Day</label>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 space-y-1">
+              <label className="text-[10px] font-semibold text-on-surface-variant uppercase tracking-wider">Start Time</label>
+              <div className="flex items-center bg-surface-container-lowest px-5 py-4 rounded-full border border-outline-variant/20 focus-within:ring-2 focus-within:ring-primary-fixed/50 transition-all gap-3">
+                <Clock className="w-4 h-4 text-primary shrink-0" />
+                <input
+                  {...register('start_time')}
+                  type="time"
+                  className="bg-transparent focus:outline-none w-full text-on-surface font-medium"
+                />
+              </div>
+              {errors.start_time && <p className="text-sm text-error">{errors.start_time.message}</p>}
+            </div>
+            <ArrowRight className="w-4 h-4 text-outline shrink-0 mt-5" />
+            <div className="flex-1 space-y-1">
+              <label className="text-[10px] font-semibold text-on-surface-variant uppercase tracking-wider">End Time</label>
+              <div className="flex items-center bg-surface-container-lowest px-5 py-4 rounded-full border border-outline-variant/20 focus-within:ring-2 focus-within:ring-primary-fixed/50 transition-all gap-3">
+                <Clock className="w-4 h-4 text-primary shrink-0" />
+                <input
+                  {...register('end_time')}
+                  type="time"
+                  className="bg-transparent focus:outline-none w-full text-on-surface font-medium"
+                />
+              </div>
+              {errors.end_time && <p className="text-sm text-error">{errors.end_time.message}</p>}
+            </div>
+          </div>
+          <p className="text-xs text-on-surface-variant/70 pt-0.5">Times shown in your local timezone.</p>
         </div>
 
         {/* Duration */}
@@ -606,8 +655,8 @@ export default function NewEventPage() {
 
   async function handleSubmit() {
     const { step1, step2 } = wizardData as WizardData
-    const earliest = new Date(`${step2.earliest_date}T00:00:00.000Z`)
-    const latest = new Date(`${step2.latest_date}T23:59:59.000Z`)
+    const earliest = new Date(`${step2.earliest_date}T${step2.start_time}:00`)
+    const latest = new Date(`${step2.latest_date}T${step2.end_time}:00`)
 
     createEvent(
       {

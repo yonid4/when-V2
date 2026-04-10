@@ -13,9 +13,12 @@ from app.routers import (
     calendar_accounts,
     calendar_sources,
     events,
+    finalize,
     invitations,
     notifications,
     participants,
+    preferred_slots,
+    proposals,
 )
 from app.scheduler.jobs import sync_all_users_job
 
@@ -57,3 +60,6 @@ app.include_router(notifications.router)
 app.include_router(calendar_accounts.router)
 app.include_router(calendar_sources.router)
 app.include_router(busy_slots.router)
+app.include_router(preferred_slots.router)
+app.include_router(proposals.router)
+app.include_router(finalize.router)
