@@ -100,8 +100,8 @@ def _mock_db():
     return db
 
 
-def _participant_with_profile(**overrides):
-    """Participant row as returned by Supabase join (with nested profiles)."""
+def _make_ep_row(**overrides):
+    """Flat event_participant row (no profile data — fetched separately via service_client)."""
     base = _make_participant_row(**overrides)
     return {
         "event_id": base["event_id"],
@@ -110,22 +110,41 @@ def _participant_with_profile(**overrides):
         "rsvp_status": base["rsvp_status"],
         "can_invite": base["can_invite"],
         "joined_at": base["joined_at"],
-        "profiles": {
-            "full_name": base["full_name"],
-            "avatar_url": base["avatar_url"],
-            "email_address": base["email_address"],
-        },
     }
+
+
+def _make_profile_row(**overrides):
+    """Profile row as returned by service_client profiles lookup."""
+    base = _make_participant_row(**overrides)
+    return {
+        "id": base["user_id"],
+        "full_name": base["full_name"],
+        "avatar_url": base["avatar_url"],
+        "email_address": base["email_address"],
+    }
+
+
+def _mock_service_client_profiles(profile_rows: list[dict]):
+    """Return a mock service_client that returns the given profile rows."""
+    mock_sc = MagicMock()
+    profiles_chain = _make_chain()
+    profiles_chain.execute.return_value = MagicMock(data=profile_rows)
+    mock_sc.table.return_value.select.return_value = profiles_chain
+    return mock_sc
 
 
 # ─── 1. create_event — happy path ────────────────────────────────────────────
 
+@patch("app.services.event_service.service_client")
 @patch("app.services.event_service.get_authed_client")
 @patch("app.services.event_service.generate_uid", return_value="abc123def456")
-def test_create_event_happy_path(mock_uid, mock_get_client):
+def test_create_event_happy_path(mock_uid, mock_get_client, mock_sc):
     user = _make_user()
     db = _mock_db()
     mock_get_client.return_value = db
+    mock_sc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[_make_profile_row()]
+    )
 
     event_row = _make_event_row()
 
@@ -135,7 +154,7 @@ def test_create_event_happy_path(mock_uid, mock_get_client):
     ep_table = db.table("event_participants")
     ep_table.insert.return_value.execute.return_value = MagicMock(data=[])
     ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(
-        data=[_participant_with_profile()]
+        data=[_make_ep_row()]
     )
 
     data = EventCreate(
@@ -214,11 +233,15 @@ def test_get_events_for_user(mock_get_client):
 
 # ─── 4. get_event_by_uid — happy path ────────────────────────────────────────
 
+@patch("app.services.event_service.service_client")
 @patch("app.services.event_service.get_authed_client")
-def test_get_event_by_uid_happy_path(mock_get_client):
+def test_get_event_by_uid_happy_path(mock_get_client, mock_sc):
     user = _make_user()
     db = _mock_db()
     mock_get_client.return_value = db
+    mock_sc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[_make_profile_row()]
+    )
 
     event_row = _make_event_row()
 
@@ -227,7 +250,7 @@ def test_get_event_by_uid_happy_path(mock_get_client):
 
     ep_table = db.table("event_participants")
     ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(
-        data=[_participant_with_profile()]
+        data=[_make_ep_row()]
     )
 
     result = event_service.get_event_by_uid("abc123def456", user)
@@ -256,11 +279,15 @@ def test_get_event_by_uid_not_found(mock_get_client):
 
 # ─── 6. get_event_by_uid — 403 when not coordinator or participant ───────────
 
+@patch("app.services.event_service.service_client")
 @patch("app.services.event_service.get_authed_client")
-def test_get_event_by_uid_access_denied(mock_get_client):
+def test_get_event_by_uid_access_denied(mock_get_client, mock_sc):
     other_user = _make_user(id="user-other")
     db = _mock_db()
     mock_get_client.return_value = db
+    mock_sc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[_make_profile_row()]
+    )
 
     event_row = _make_event_row(coordinator_id="user-1")
 
@@ -269,7 +296,7 @@ def test_get_event_by_uid_access_denied(mock_get_client):
 
     ep_table = db.table("event_participants")
     ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(
-        data=[_participant_with_profile()]  # only user-1 is participant
+        data=[_make_ep_row()]  # only user-1 is participant
     )
 
     with pytest.raises(HTTPException) as exc_info:

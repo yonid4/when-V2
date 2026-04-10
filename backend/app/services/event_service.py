@@ -48,16 +48,37 @@ def _row_to_event_response(row: dict, participants: list[dict]) -> EventResponse
 
 
 def _fetch_participants(event_id: str, db) -> list[dict]:
-    result = (
+    # Fetch participant rows with authed client (respects RLS for event_participants)
+    ep_result = (
         db.table('event_participants')
-        .select('event_id, user_id, status, rsvp_status, can_invite, joined_at, profiles(full_name, avatar_url, email_address)')
+        .select('event_id, user_id, status, rsvp_status, can_invite, joined_at')
         .eq('event_id', event_id)
         .execute()
     )
+    participants = ep_result.data or []
+    if not participants:
+        return []
+
+    # Fetch profile data via service_client to bypass RLS on profiles table
+    user_ids = [p['user_id'] for p in participants]
+    profile_result = (
+        service_client.table('profiles')
+        .select('id, full_name, avatar_url, email_address')
+        .in_('id', user_ids)
+        .execute()
+    )
+    profile_map = {p['id']: p for p in (profile_result.data or [])}
+
     rows = []
-    for p in (result.data or []):
-        profile = p.pop('profiles') or {}
-        rows.append({**p, **profile})
+    for p in participants:
+        profile = profile_map.get(p['user_id'], {})
+        row = {
+            **p,
+            'full_name': profile.get('full_name'),
+            'avatar_url': profile.get('avatar_url'),
+            'email_address': profile.get('email_address'),
+        }
+        rows.append(row)
     return rows
 
 
