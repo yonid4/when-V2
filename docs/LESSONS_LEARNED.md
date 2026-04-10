@@ -407,4 +407,56 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **Coordinator checkbox in FinalizeCard is always locked checked.** The coordinator is always invited to their own event and cannot be excluded. The `disabled` checkbox prevents toggling, backed by a guard `!isCoord && toggleParticipant(...)` in the onChange handler.
 
+---
+
+## Bug Fixes (Pre-Modularization)
+
+### Frontend
+
+- **`router.refresh()` must be called before `router.push()` to bust the Next.js RSC cache after a mutation.**
+  After deleting an event (or any mutation that changes server state), calling only `router.push('/dashboard')` navigates to the dashboard but the page is served from the RSC cache — the deleted event still appears. Calling `router.refresh()` first invalidates the Next.js server-side cache so the next navigation fetches fresh data. The correct pattern is always `router.refresh(); router.push('/dashboard')` when navigating away after a destructive mutation.
+
+- **Tailwind dynamic class names are purged at build time — always use a static mapping object, never string interpolation.**
+  Writing `className={\`bg-${color}-100 text-${color}-700\`}` produces class strings that Tailwind's build step never sees, so the styles are absent in production. The fix is a static `Record<string, string>` mapping each possible value to the full class string (e.g. `meeting: 'bg-blue-100 text-blue-700'`). Tailwind can only include classes that appear as literal strings in the source. Any time badge/chip colors are driven by a runtime value, use a lookup object.
+
+### Backend
+
+- **Supabase RLS blocks `anon_client` (the authed user client) from reading other users' `profiles` rows — use `service_client` for cross-user profile lookups.**
+  When fetching event participants, the single-query join `event_participants(..., profiles(full_name, avatar_url, email_address))` worked only for the calling user's own profile because RLS on the `profiles` table restricts reads to `id = auth.uid()`. Other participants' profile rows were silently omitted, causing avatar initials to fall back to `?`. The fix is a two-query pattern: fetch `event_participants` with `get_authed_client` (respects RLS correctly for that table), then fetch `profiles` separately using `service_client` (bypasses RLS). Backend tests for this pattern must also patch `app.services.event_service.service_client` and return flat ep rows without a nested `profiles` key.
+
 - **FinalizeBody must include all 7 fields in tests.** After expanding the hook body type, tests that only pass `{ proposed_time_id, note }` will now fail TypeScript (object literal with missing required fields). Update test fixtures to always include the full `baseFinalizeBody` spread + overrides.
+
+---
+
+## Sprint 7 — Bug Fixes (Invitation Accept Redirect & Gmail Normalization)
+
+### Backend
+
+- **`PUT /api/invitations/{id}/respond` should return the event uid on accept, not 204.**
+  The original endpoint returned HTTP 204 (no body). The frontend had no way to know which event to redirect to after accepting. The fix: change `respond_to_invitation` to return the event `uid` (string) on accept, `None` on decline. The router endpoint now returns `InvitationRespondResponse(event_uid=...)` with a 200 status. The `InvitationRespondResponse` Pydantic model has a single nullable field `event_uid: str | None = None`.
+
+- **`respond_to_invitation` must select `uid` from the events row, not just `coordinator_id` and `name`.**
+  The coordinator notification query was `select('coordinator_id, name')`. To also return the event uid, update it to `select('coordinator_id, name, uid')` and `return event.get('uid')` before the function falls through to `return None`.
+
+- **Gmail dot normalization: strip dots from local part for `@gmail.com` only.**
+  Gmail treats dots in the local part as insignificant (`john.doe@gmail.com` = `johndoe@gmail.com`). Add a `normalize_email(email: str) -> str` helper in `app/utils/email.py`: partition on `@`, strip dots from `local` only when `domain.lower() == 'gmail.com'`. Apply in `auth_service._upsert_profile` (profile creation) and `invitation_service.invite_by_email` (first line). Non-Gmail addresses are returned unchanged.
+
+- **Apply `normalize_email` in `auth_service` at two call sites: profile upsert AND pending invitation processing.**
+  `_upsert_profile` writes the email to `profiles.email_address`. `exchange_code_and_upsert_user` later calls `_process_pending_invitations(profile["id"], email)`. Both must use `normalize_email(user_info["email"])` so that a pending invitation for `johndoe@gmail.com` is matched when the user signs in with `john.doe@gmail.com`.
+
+### Frontend
+
+- **Accept button in `NotificationList` must call `useRespondToInvitation` directly — not `useTakeAction`.**
+  The old flow: accept button → `POST /notifications/{id}/action` → backend internally calls `respond_to_invitation` → notification service re-fetches notification with join → extracts `event_uid`. This had two failure points: (1) the update response from Supabase has no `events` join, so `event_uid` was null after the update; (2) even after the re-fetch fix the indirection added complexity. The new flow: accept button → `PUT /api/invitations/{id}/respond` → backend returns `{ event_uid }` directly → frontend redirects. The `invitation_id` lives in `n.metadata.invitation_id`.
+
+- **The decline button in `NotificationList` must also switch to `useRespondToInvitation` (same hook).**
+  Both accept and decline now call `respondToInvitation({ invitationId, action })`. Guard with `if (!invitationId) return` since `metadata.invitation_id` could theoretically be absent. Decline continues to not redirect.
+
+- **`useTakeAction` is no longer needed by `NotificationList` — remove the import to avoid dead code.**
+  After switching to `useRespondToInvitation`, `useTakeAction` had no callers in `NotificationList.tsx`. Remove the import from both the component and check if `useTakeAction` is still exported from `useNotifications.ts` for any other consumer. If not used anywhere, remove the export too.
+
+- **`useRespondToInvitation` return type must be `{ event_uid: string | null }`, not `void`.**
+  The hook was originally typed `api.put<void>(...)`. After the backend change, update it to `api.put<{ event_uid: string | null }>(...)`. The `onSuccess` callback receives `data` and constructs the redirect URL: `data?.event_uid ? \`/events/${data.event_uid}\` : '/dashboard'`.
+
+- **Invalidate `['participants']` in `useRespondToInvitation.onSuccess` — the user just joined the event.**
+  The hook previously only invalidated `['notifications']` and `['events']`. After accepting, the user is added to `event_participants`. Any cached participants list for that event is now stale. Add `queryClient.invalidateQueries({ queryKey: ['participants'] })` to `onSuccess`.

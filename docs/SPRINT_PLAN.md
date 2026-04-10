@@ -464,6 +464,15 @@ all participants in real-time.
 
 ---
 
+### Part 0 — Bug fixes ✅ DONE
+
+- [x] **Accept invitation redirect** — `PUT /api/invitations/{id}/respond` now returns `{ event_uid }` on accept; frontend calls this endpoint directly from the notification accept button and redirects to `/events/{event_uid}`. Previously the notification action endpoint returned `event_uid: null` because the Supabase update response has no `events` join.
+- [x] **Gmail dot normalization** — Added `normalize_email()` in `app/utils/email.py`; strips dots from the local part for `@gmail.com` only. Applied in `auth_service._upsert_profile` and `invitation_service.invite_by_email` so `john.doe@gmail.com` and `johndoe@gmail.com` are treated as the same address throughout.
+
+> Tests: `backend/tests/test_email_normalization.py` (7 tests), `frontend/__tests__/sprint7/useNotifications.test.ts` (2 tests)
+
+---
+
 ### Part A — Real-time completion
 
 - [ ] Wire remaining Supabase subscriptions: `busy_slots` changes → invalidate grid, participant joins → refresh participant list, `events.status` changes → all participants see confirmed state

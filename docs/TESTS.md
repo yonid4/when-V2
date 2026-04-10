@@ -1242,3 +1242,89 @@ assert _pick_attendee_email(participant) == "google@account.com"
 3. **`location` is omitted from GCal body when empty.** Only added to `event_body` when truthy: `if location: event_body["location"] = location`. Tests verify presence/absence appropriately.
 
 4. **`name` DB update is conditional.** `update_payload` only includes `"name"` key when `name != event["name"]`. The new test verifies the key appears in `.update()` args only when they differ.
+
+---
+
+## Sprint 7 — Bug Fixes: Notification Redirect & Gmail Normalization
+
+**Completed:** 2026-04-09
+**Result:** 7/7 new backend tests passing, 2/2 new frontend tests passing. Total: 120 backend, 157 frontend (no regressions).
+
+### Files Written
+
+| File | Tests | What it covers |
+|---|---|---|
+| `backend/tests/test_email_normalization.py` | 7 | `normalize_email` unit tests + invite normalization integration tests |
+| `frontend/__tests__/sprint7/useNotifications.test.ts` | 2 | `useTakeAction` query invalidation verification |
+
+### Files Modified
+
+| File | Change |
+|---|---|
+| `frontend/hooks/useNotifications.ts` | `useTakeAction.onSuccess` now also invalidates `['participants']` query |
+| `backend/app/utils/email.py` | New file — `normalize_email(email)` helper |
+| `backend/app/services/auth_service.py` | `_upsert_profile` normalizes email before storing in `profiles.email_address`; `_process_pending_invitations` called with normalized email |
+| `backend/app/services/invitation_service.py` | `invite_by_email` normalizes the invited email at entry before any lookup or storage |
+
+### Coverage
+
+#### Backend — `test_email_normalization.py` (7 tests)
+
+**`normalize_email` unit tests (5 tests):**
+- Gmail address with dots → dots stripped from local part (`john.doe@gmail.com` → `johndoe@gmail.com`)
+- Gmail address with multiple dots → all stripped (`j.o.h.n@gmail.com` → `john@gmail.com`)
+- Gmail address with no dots → unchanged (`johndoe@gmail.com` → `johndoe@gmail.com`)
+- Non-Gmail domain → returned unchanged, dots preserved (`john.doe@company.com` unchanged)
+- Other non-Gmail domain → returned unchanged (`j.o.h.n@outlook.com` unchanged)
+
+**Invite normalization integration tests (2 tests):**
+- `test_invite_dotted_gmail_is_normalized` — `POST .../invite` with `john.doe@gmail.com` → profiles lookup uses `johndoe@gmail.com`; invitation insert stores `johndoe@gmail.com`
+- `test_invite_non_gmail_preserved` — `POST .../invite` with `john.doe@company.com` → dots preserved in profiles lookup
+
+#### Frontend — `useNotifications.test.ts` (2 tests)
+
+- `useTakeAction` invalidates `['notifications']`, `['participants']`, and `['events']` query keys on mutation success
+- `useTakeAction` calls `api.post('/notifications/{id}/action', { action })` with correct arguments
+
+### Mock Patterns
+
+#### Backend — capturing `eq()` argument to assert normalization
+```python
+# Intercept the eq() call on the profiles table mock to capture the value passed:
+captured_profile_eq = []
+eq_mock = MagicMock()
+eq_mock.maybe_single.return_value.execute.return_value = MagicMock(data=invitee_profile)
+tbl.select.return_value.eq = lambda col, val: (captured_profile_eq.append(val), eq_mock)[1]
+
+# After the route call, assert the normalized email was used:
+assert "johndoe@gmail.com" in captured_profile_eq
+```
+
+#### Backend — capturing `insert()` data to assert normalization
+```python
+captured_insert_data = []
+def capture_insert(data):
+    captured_insert_data.append(data)
+    m = MagicMock()
+    m.execute.return_value = MagicMock(data=[invite_row])
+    return m
+tbl.insert = capture_insert
+```
+
+#### Frontend — `invalidateQueries` spy on fresh QueryClient
+```typescript
+const { queryClient, wrapper } = makeWrapper()
+const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+// ... run mutation ...
+const invalidatedKeys = invalidateSpy.mock.calls.map(
+  (call) => (call[0] as { queryKey: unknown[] }).queryKey,
+)
+expect(invalidatedKeys).toContainEqual(['participants'])
+```
+
+### Gotchas
+
+- **`useTakeAction` was missing `['participants']` invalidation.** After accepting an invitation, the user is added to `event_participants` on the backend. Without invalidating `['participants']`, the event page's participant list would show stale data after the redirect. Fix: add `queryClient.invalidateQueries({ queryKey: ['participants'] })` to `onSuccess`.
+- **The `NotificationList` redirect was already implemented** — `router.push(n.event_uid ? \`/events/${n.event_uid}\` : '/dashboard')` was wired up in a prior sprint. The bug was purely the missing `['participants']` invalidation in the hook.
+- **Lambda `side_effect` on `tbl.select.return_value.eq` breaks multi-call chains.** When the service calls `.eq()` more than once (e.g., `eq("id", ...).eq("status", ...)` chained), replacing `eq` with a lambda that always returns the same mock works only for single-`eq` chains. For deeper chains, capture only the first `eq` call or restructure with a counter.
+- **`normalize_email` must be imported at both call sites independently.** `auth_service` and `invitation_service` each import `normalize_email` from `app.utils.email` at module load time. Patching one does not affect the other — tests targeting one service do not need to patch the other's binding.
