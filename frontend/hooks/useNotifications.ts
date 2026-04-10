@@ -42,6 +42,7 @@ export function useTakeAction() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY })
       queryClient.invalidateQueries({ queryKey: ['events'] })
+      queryClient.invalidateQueries({ queryKey: ['participants'] })
     },
   })
 }

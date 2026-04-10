@@ -2,7 +2,8 @@
 
 import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
-import { useNotifications, useMarkRead, useTakeAction } from '@/hooks/useNotifications'
+import { useNotifications, useMarkRead } from '@/hooks/useNotifications'
+import { useRespondToInvitation } from '@/hooks/useInvitations'
 import type { Notification } from '@/types'
 
 function formatLocalTimeRange(startUtc: string, endUtc: string): string {
@@ -33,7 +34,7 @@ export function NotificationList() {
   const router = useRouter()
   const { data: notifications, isLoading } = useNotifications()
   const { mutate: markRead } = useMarkRead()
-  const { mutate: takeAction, isPending: isActing } = useTakeAction()
+  const { mutate: respondToInvitation, isPending: isResponding } = useRespondToInvitation()
 
   if (isLoading) {
     return <div className="p-4 text-sm text-on-surface-variant">Loading…</div>
@@ -72,28 +73,36 @@ export function NotificationList() {
           {n.notification_type === 'event_invitation' && !n.action_taken && (
             <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
               <button
-                onClick={() => takeAction(
-                  { notificationId: n.id, action: 'accept' },
-                  {
-                    onSuccess: () => {
-                      const dest = n.event_uid ? `/events/${n.event_uid}` : '/dashboard'
-                      router.push(dest)
-                    },
-                    onError: (err) => {
-                      if (err.message === 'calendar_required') {
-                        router.push('/settings?connect_calendar=true')
-                      }
-                    },
-                  }
-                )}
-                disabled={isActing}
+                onClick={() => {
+                  const invitationId = n.metadata?.invitation_id as string | undefined
+                  if (!invitationId) return
+                  respondToInvitation(
+                    { invitationId, action: 'accept' },
+                    {
+                      onSuccess: (data) => {
+                        const dest = data?.event_uid ? `/events/${data.event_uid}` : '/dashboard'
+                        router.push(dest)
+                      },
+                      onError: (err: Error) => {
+                        if (err.message === 'calendar_required') {
+                          router.push('/settings?connect_calendar=true')
+                        }
+                      },
+                    }
+                  )
+                }}
+                disabled={isResponding}
                 className="flex-1 py-1.5 rounded-lg bg-gradient-to-br from-primary to-primary-container text-on-primary text-xs font-bold disabled:opacity-60 transition-opacity"
               >
                 Accept
               </button>
               <button
-                onClick={() => takeAction({ notificationId: n.id, action: 'decline' })}
-                disabled={isActing}
+                onClick={() => {
+                  const invitationId = n.metadata?.invitation_id as string | undefined
+                  if (!invitationId) return
+                  respondToInvitation({ invitationId, action: 'decline' })
+                }}
+                disabled={isResponding}
                 className="flex-1 py-1.5 rounded-lg bg-surface-container-high text-on-surface-variant text-xs font-bold disabled:opacity-60 transition-opacity hover:bg-surface-container-highest"
               >
                 Decline

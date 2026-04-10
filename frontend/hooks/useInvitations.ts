@@ -19,10 +19,11 @@ export function useRespondToInvitation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ invitationId, action }: { invitationId: string; action: 'accept' | 'decline' }) =>
-      api.put<void>(`/invitations/${invitationId}/respond`, { action }),
+      api.put<{ event_uid: string | null }>(`/invitations/${invitationId}/respond`, { action }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notifications'] })
       queryClient.invalidateQueries({ queryKey: ['events'] })
+      queryClient.invalidateQueries({ queryKey: ['participants'] })
     },
   })
 }
