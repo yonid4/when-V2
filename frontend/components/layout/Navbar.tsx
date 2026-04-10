@@ -9,8 +9,6 @@ import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 
 export function Navbar() {
@@ -49,25 +47,25 @@ export function Navbar() {
               <DropdownMenuTrigger className="rounded-full focus:outline-none">
                 {avatarElement}
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuItem
-                  className="text-on-surface hover:bg-surface-container cursor-pointer"
+              <DropdownMenuContent align="end" className="min-w-44 p-1">
+                <div
+                  className="flex items-center gap-2 px-3 py-2 rounded-sm text-sm cursor-pointer hover:bg-gray-100 w-full"
                   onClick={() => router.push('/settings')}
                 >
-                  <Settings className="mr-2 h-4 w-4" />
+                  <Settings className="h-4 w-4" />
                   Settings
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="text-on-surface hover:bg-surface-container cursor-pointer"
+                </div>
+                <div className="h-px bg-gray-200 my-1" />
+                <div
+                  className="flex items-center gap-2 px-3 py-2 rounded-sm text-sm cursor-pointer hover:bg-gray-100 w-full"
                   onClick={() => {
                     clearAuth()
                     router.push('/')
                   }}
                 >
-                  <LogOut className="mr-2 h-4 w-4" />
+                  <LogOut className="h-4 w-4" />
                   Log out
-                </DropdownMenuItem>
+                </div>
               </DropdownMenuContent>
             </DropdownMenu>
           )}

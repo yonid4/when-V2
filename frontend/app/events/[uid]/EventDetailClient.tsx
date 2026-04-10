@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -255,7 +255,10 @@ function DeleteModal({
 
   function handleDelete() {
     deleteEvent(event.uid, {
-      onSuccess: () => router.push('/dashboard'),
+      onSuccess: () => {
+        router.refresh()
+        router.push('/dashboard')
+      },
     })
   }
 
@@ -551,22 +554,11 @@ function AvailabilityGrid({
         <span className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">{monthLabel}</span>
 
         <div className="flex items-center gap-2">
-          {isEditMode ? (
+          {isEditMode && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-primary/30 bg-primary/5">
               <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
               <span className="text-xs font-bold text-primary">Editing…</span>
             </div>
-          ) : (
-            <button
-              data-testid="edit-availability-btn"
-              onClick={() => {
-                // Signal handled by parent via onCellMouseDown dummy; edit toggle is in parent
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-outline-variant text-on-surface-variant text-xs font-bold hover:bg-surface-container transition-colors"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              Edit Availability
-            </button>
           )}
           <button
             onClick={() => setWeekOffset((o) => o + 1)}
@@ -763,8 +755,8 @@ function AvailabilityGrid({
                       })
                     }
 
-                    {/* Own preferred slot click/delete overlays — only in edit mode */}
-                    {isEditMode && colPreferred
+                    {/* Own preferred slot click/delete overlays — only in edit mode and not confirmed */}
+                    {isEditMode && event.status !== 'confirmed' && colPreferred
                       .filter((slot) => {
                         const s = slot as PreferredSlot
                         return s.user_id === currentUserId && !slotsToDelete.includes(s.id)
@@ -917,8 +909,10 @@ export default function EventDetailClient({
   const { mutateAsync: deletePreferredSlot } = useDeletePreferredSlot(event.uid)
 
   // Keep displayed preferred slots in sync with fetched data (when not in edit mode)
+  const preferredSlotsRef = useRef<PreferredSlot[]>([])
   useEffect(() => {
-    if (!isEditMode) {
+    if (!isEditMode && preferredSlots !== preferredSlotsRef.current) {
+      preferredSlotsRef.current = preferredSlots as PreferredSlot[]
       setDisplayedPreferredSlots(preferredSlots as PreferredSlot[])
     }
   }, [preferredSlots, isEditMode])
@@ -1116,6 +1110,7 @@ export default function EventDetailClient({
   // ── Enter / cancel / done ────────────────────────────────────────────────
 
   function enterEditMode() {
+    if (event.status === 'confirmed') return
     setIsEditMode(true)
     setPendingSlot(null)
     setDragState(null)
@@ -1331,7 +1326,7 @@ export default function EventDetailClient({
           {/* ── Section 1: Event Header card ── */}
           <div className="bg-surface-container-lowest p-6 rounded-lg relative shadow-sm">
 
-            {isCoordinator && (
+            {isCoordinator && event.status !== 'confirmed' && (
               <button
                 onClick={() => setShowEdit(true)}
                 className="absolute top-4 right-4 p-2 hover:bg-surface-container-high rounded-full transition-colors text-outline"
@@ -1372,76 +1367,78 @@ export default function EventDetailClient({
           </div>
 
           {/* ── Section 2: Actions ── */}
-          <div className="space-y-4">
-            <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em] px-1">
-              Actions
-            </label>
-
-            <button
-              onClick={() => setProposalsEnabled(true)}
-              className="w-full py-4 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-xl font-bold shadow-[0_15px_30px_-10px_rgba(155,68,40,0.3)] flex items-center justify-center gap-2 transform hover:-translate-y-0.5 transition-all duration-300"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74z" />
-              </svg>
-              View Proposed Times
-            </button>
-
-            <div className="grid grid-cols-2 gap-3">
+          {event.status !== 'confirmed' && (
+            <div className="space-y-4">
+              <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em] px-1">
+                Actions
+              </label>
 
               <button
-                onClick={() => syncCalendar()}
-                disabled={isSyncing}
-                className="p-3 bg-surface-container-lowest border-2 border-outline-variant/30 text-on-surface-variant rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-white transition-colors disabled:opacity-60"
+                onClick={() => setProposalsEnabled(true)}
+                className="w-full py-4 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-xl font-bold shadow-[0_15px_30px_-10px_rgba(155,68,40,0.3)] flex items-center justify-center gap-2 transform hover:-translate-y-0.5 transition-all duration-300"
               >
-                <RefreshCw className={`w-[18px] h-[18px] flex-shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
-                {isSyncing ? 'Syncing…' : 'Refresh'}
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74z" />
+                </svg>
+                View Proposed Times
               </button>
 
-              {canInvite ? (
-                <button
-                  onClick={() => setShowInvite((v) => !v)}
-                  className="p-3 bg-surface-container-lowest border-2 border-outline-variant/30 text-on-surface-variant rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-white transition-colors"
-                >
-                  <UserPlus className="w-[18px] h-[18px] flex-shrink-0" />
-                  Invite
-                </button>
-              ) : null}
+              <div className="grid grid-cols-2 gap-3">
 
-              <button
-                onClick={handleCopyLink}
-                className="p-3 bg-surface-container-lowest border-2 border-outline-variant/30 text-on-surface-variant rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-white transition-colors"
-              >
-                <Link2 className="w-[18px] h-[18px] flex-shrink-0" />
-                {copyLabel}
-              </button>
-
-              {isCoordinator ? (
                 <button
-                  onClick={() => syncAll()}
-                  disabled={isSyncingAll}
+                  onClick={() => syncCalendar()}
+                  disabled={isSyncing}
                   className="p-3 bg-surface-container-lowest border-2 border-outline-variant/30 text-on-surface-variant rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-white transition-colors disabled:opacity-60"
                 >
-                  <RefreshCcw className={`w-[18px] h-[18px] flex-shrink-0 ${isSyncingAll ? 'animate-spin' : ''}`} />
-                  {isSyncingAll ? 'Syncing…' : 'Sync All'}
+                  <RefreshCw className={`w-[18px] h-[18px] flex-shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
+                  {isSyncing ? 'Syncing…' : 'Refresh'}
                 </button>
-              ) : null}
-            </div>
 
-            {showInvite && (
-              <InviteInput
-                uid={event.uid}
-                coordinatorId={event.coordinator_id}
-                currentUserId={currentUserId}
-              />
-            )}
-          </div>
+                {canInvite ? (
+                  <button
+                    onClick={() => setShowInvite((v) => !v)}
+                    className="p-3 bg-surface-container-lowest border-2 border-outline-variant/30 text-on-surface-variant rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-white transition-colors"
+                  >
+                    <UserPlus className="w-[18px] h-[18px] flex-shrink-0" />
+                    Invite
+                  </button>
+                ) : null}
+
+                <button
+                  onClick={handleCopyLink}
+                  className="p-3 bg-surface-container-lowest border-2 border-outline-variant/30 text-on-surface-variant rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-white transition-colors"
+                >
+                  <Link2 className="w-[18px] h-[18px] flex-shrink-0" />
+                  {copyLabel}
+                </button>
+
+                {isCoordinator ? (
+                  <button
+                    onClick={() => syncAll()}
+                    disabled={isSyncingAll}
+                    className="p-3 bg-surface-container-lowest border-2 border-outline-variant/30 text-on-surface-variant rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-white transition-colors disabled:opacity-60"
+                  >
+                    <RefreshCcw className={`w-[18px] h-[18px] flex-shrink-0 ${isSyncingAll ? 'animate-spin' : ''}`} />
+                    {isSyncingAll ? 'Syncing…' : 'Sync All'}
+                  </button>
+                ) : null}
+              </div>
+
+              {showInvite && (
+                <InviteInput
+                  uid={event.uid}
+                  coordinatorId={event.coordinator_id}
+                  currentUserId={currentUserId}
+                />
+              )}
+            </div>
+          )}
 
           {/* RSVP selector */}
           <RsvpSelector uid={event.uid} coordinatorId={event.coordinator_id} currentUserId={currentUserId} />
 
           {/* ── Section 3: Top Proposals ── */}
-          {proposalsEnabled && (
+          {proposalsEnabled && event.status !== 'confirmed' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between px-1">
                 <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em]">
