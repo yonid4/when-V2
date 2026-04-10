@@ -381,3 +381,30 @@ Implementation details discovered while writing tests that aren't captured elsew
 - **`event_finalized` notification messages should render the finalized time in the user's local timezone, not the raw `n.message` string.**
   The backend sets `n.message = "The event time has been confirmed."` (generic). The actual time is in `n.metadata.finalized_start_time_utc` / `finalized_end_time_utc`. `NotificationList` checks `n.notification_type === 'event_finalized'` and calls `getFinalizedMessage(n)` which formats the UTC times into a local-timezone string (e.g. "Mon, Apr 10 at 12:00 PM – 1:00 PM"). Always check `n.metadata` for richer display data before falling back to `n.message`.
 
+
+
+---
+
+## Sprint 6C — Finalize Event Card
+
+### Backend
+
+- **`event_participants` table is queried twice in `finalize_event` — once for accepted participants, once for the coordinator.**
+  Build separate mock branches by call count (`_ep_call_count`). The first call returns the full accepted list; the second returns only the coordinator row via `maybe_single()`. Both chains (`.select().eq().eq().execute()` and `.select().eq().eq().maybe_single().execute()`) must be configured on each mock.
+
+- **Coordinator is always added to attendees, even if not in `event_participants`.**
+  The service has a two-step fallback: first look up coordinator in `event_participants`; if absent (e.g. coordinator never RSVPed), fall back to `profiles` table. Tests must exercise both paths.
+
+- **`location` key is omitted from the GCal `event_body` when empty, not set to `None`.**
+  The code does `if location: event_body["location"] = location`. This means a missing `location` key is different from `location=None`. Tests that verify GCal body shape must use `assertIn`/`assertNotIn` on the key, not assert the value is None.
+
+- **`name` update in DB is conditional on whether name changed.**
+  `update_payload["name"]` is only added when `name != event["name"]`. When they are the same, the `name` key is absent from the payload entirely — not set to the same value. Tests that cover this must assert `.update.call_args` includes or excludes the `"name"` key accordingly.
+
+### Frontend
+
+- **Remove dead FinalizeModal rather than leaving it.** Once FinalizeCard replaced FinalizeModal, the old inline function was deleted to avoid a stale `useFinalize` import. Keeping unused components with hook calls causes lint/TS warnings and can confuse future sessions.
+
+- **Coordinator checkbox in FinalizeCard is always locked checked.** The coordinator is always invited to their own event and cannot be excluded. The `disabled` checkbox prevents toggling, backed by a guard `!isCoord && toggleParticipant(...)` in the onChange handler.
+
+- **FinalizeBody must include all 7 fields in tests.** After expanding the hook body type, tests that only pass `{ proposed_time_id, note }` will now fail TypeScript (object literal with missing required fields). Update test fixtures to always include the full `baseFinalizeBody` spread + overrides.

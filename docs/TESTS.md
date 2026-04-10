@@ -1176,3 +1176,69 @@ await waitFor(() => expect(result.current.isSuccess).toBe(true))
 3. **DB never updated if GCal call fails.** The update to `events` + notifications insert happen only after a successful `events().insert().execute()` call. The 502 test verifies `update` is never called on the mock.
 
 4. **`calendar_accounts` credentials query uses two `.eq()` calls.** Chain depth: `.select().eq("user_id", ...).eq("provider", "google").maybe_single().execute()` — the mock must match exactly.
+
+---
+
+## Sprint 6C — Finalize Event Card
+
+**Completed:** 2026-04-09
+**Result:** 18/18 backend tests, 5/5 frontend tests passing
+
+### Files Written
+
+| File | Tests | What it covers |
+|---|---|---|
+| `backend/tests/test_finalize.py` | 18 | Finalize service with full FinalizeRequest (rewritten) |
+| `frontend/__tests__/sprint6/useFinalize.test.ts` | 5 | useFinalize with full FinalizeBody (updated + 2 new) |
+
+### Backend test coverage (new tests added to `test_finalize.py`)
+
+- `test_pick_attendee_email_*` (5 tests) — `_pick_attendee_email` helper: prefers Google provider_email, falls back to profile email, handles missing keys, skips non-Google accounts, returns None when no emails
+- `test_finalize_success` — (updated) passes `name` in body; GCal event summary uses name; coordinator is always included in attendees
+- `test_finalize_excluded_user_ids_removed_from_attendees` — accepted participant in `excluded_user_ids` is NOT in the GCal attendees list
+- `test_finalize_extra_emails_added_to_attendees` — extra email (non-When. user) appears in GCal attendees list
+- `test_finalize_location_in_gcal_body` — location string appears in GCal event body
+- `test_finalize_video_call_link_in_description` — video_call_link appears in description as `"Video call: <url>"`
+- `test_finalize_note_and_video_call_link_combined` — note and video call link are joined with `"\n\n"` in description
+- `test_finalize_name_differs_updates_event_name` — when `name != event["name"]`, the DB update payload includes `"name"` key
+
+### Frontend test coverage (new tests in `useFinalize.test.ts`)
+
+- `POSTs to the correct finalize endpoint with full FinalizeBody` — (updated) mutation body now includes all 7 fields
+- `sends excluded_user_ids in the POST body` — excluded_user_ids array passes through to api.post
+- `sends extra_emails in the POST body` — extra_emails array passes through to api.post
+
+### Key mock patterns
+
+**Backend — `event_participants` queried twice; use call counter:**
+```python
+_ep_call_count = 0
+def make_event_participants():
+    nonlocal _ep_call_count
+    tbl = MagicMock()
+    if _ep_call_count == 0:
+        # First call: .select().eq(event_id).eq(status=accepted).execute()
+        tbl.select.return_value...execute.return_value.data = participants_list
+    else:
+        # Second call: coordinator lookup .select().eq(event_id).eq(user_id).maybe_single().execute()
+        tbl.select.return_value...execute.return_value.data = coordinator_participant
+    _ep_call_count += 1
+    return tbl
+```
+
+**Backend — `_pick_attendee_email` tested in isolation** (no DB or router involved):
+```python
+from app.services.finalize_service import _pick_attendee_email
+participant = {"profiles": {"email_address": "a@b.com", "calendar_accounts": [...]}}
+assert _pick_attendee_email(participant) == "google@account.com"
+```
+
+### Gotchas
+
+1. **Coordinator is always included in attendees even if not in `event_participants`.** Two-step lookup: first check `event_participants` for coordinator row; if absent, fall back to `profiles` table. Tests must set up both paths.
+
+2. **`event_participants` is queried twice** — once for accepted participants, once for the coordinator row. The mock helper uses a call counter (`_ep_call_count`) gated via `nonlocal` to return different data on each call.
+
+3. **`location` is omitted from GCal body when empty.** Only added to `event_body` when truthy: `if location: event_body["location"] = location`. Tests verify presence/absence appropriately.
+
+4. **`name` DB update is conditional.** `update_payload` only includes `"name"` key when `name != event["name"]`. The new test verifies the key appears in `.update()` args only when they differ.

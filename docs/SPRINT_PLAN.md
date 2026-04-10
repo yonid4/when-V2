@@ -398,6 +398,64 @@ Coordinator selects a proposal, confirms in the modal, Google Calendar event app
 
 ---
 
+### Part C — Finalize event card (full form)
+
+**Goal:** Replace the minimal confirm modal with a full finalization card. Coordinator 
+fills in all event details before creating the Google Calendar event.
+
+#### Backend
+- [x] Add `location: str | None`, `video_call_link: str | None`, `excluded_user_ids: 
+      list[str]`, and `extra_emails: list[str]` to `FinalizeRequest` Pydantic model
+- [x] Pass all new fields into `finalize_event()` function signature
+- [x] Build attendees list: accepted participants minus excluded_user_ids + extra_emails 
+      + coordinator (all by email)
+- [x] Update `events.name` in DB if name differs from current event name
+- [x] Include `location` in Google Calendar event body (dedicated field, omit if empty)
+- [x] Build description: note + "\n\nVideo call: {video_call_link}" — omit video call 
+      line if link is empty
+- [x] Add `location` and `video_call_link` to `events.update(...)` payload
+- [x] Add `location: str | None` and `video_call_link: str | None` columns to events 
+      table if missing — check schema.sql and run migration
+
+#### Frontend
+- [x] Update `useFinalize` mutation body type to include all new fields
+- [x] Update `FinalizeStatus` and `Event` types in `types/index.ts` to include 
+      `location` and `video_call_link`
+- [x] Remove per-proposal "Select" button from ProposalPanel — replace with single 
+      "Finalize Event" button (coordinator only, hidden when event is confirmed)
+- [x] Replace `FinalizeModal` with full-screen overlay `FinalizeCard` component:
+  - **Event name** — text input, pre-filled from event.name, required; updates 
+    both When. event and Google Calendar event title on submit
+  - **Attendees** — checklist of accepted participants (display name + email), all 
+    checked by default; coordinator can uncheck to exclude; plus an email input 
+    field to add extra non-When. invitees (calendar only, no participant record); 
+    at least one attendee must remain
+  - **Proposed time** — radio card list of all proposals from useProposals; none 
+    pre-selected; required
+  - **Note** — textarea, optional; becomes Google Calendar description
+  - **Location** — text input, optional; maps to GCal location field
+  - **Video call link** — URL text input, optional; appended to GCal description 
+    as "Video call: {link}"
+  - "Confirm & Add to Calendar" — disabled until time selected + name non-empty; 
+    loading spinner while pending
+  - "Cancel" — closes card, no API call
+  - Error states: 502 → "Could not create calendar event — check your calendar 
+    connection"; 422 → "No write calendar configured — go to Settings to set one"
+- [x] On success: close card, show confirmed state (finalized time banner, grid 
+      read-only, Finalize Event button hidden)
+
+#### Done when
+Coordinator opens finalize card, sees all proposals as radio options, fills in 
+name + optional fields, adds/removes attendees, picks a time, submits. Google 
+Calendar event created with location and description. All included attendees 
+(When. participants + extra emails) added as invitees. Confirmed state shown to 
+all participants in real-time.
+
+> Tests: update `backend/tests/test_finalize.py` and 
+  `frontend/__tests__/sprint6/useFinalize.test.ts`
+
+---
+
 ## Sprint 7 — Polish, Performance & Real-time Completion
 
 **Goal:** App feels fast. All real-time updates work. No rough edges.
