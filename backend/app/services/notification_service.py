@@ -88,10 +88,15 @@ def take_action(notification_id: str, current_user: User, action: str) -> Notifi
             from app.services.invitation_service import respond_to_invitation
             respond_to_invitation(invitation_id, current_user, action)
 
-    updated = (
-        service_client.table('notifications')
-        .update({'action_taken': True, 'action_type': action, 'action_at': now})
+    service_client.table('notifications').update(
+        {'action_taken': True, 'action_type': action, 'action_at': now}
+    ).eq('id', notification_id).execute()
+
+    refreshed = (
+        db.table('notifications')
+        .select('*, events(uid)')
         .eq('id', notification_id)
+        .limit(1)
         .execute()
     )
-    return _row_to_response(updated.data[0])
+    return _row_to_response(refreshed.data[0])

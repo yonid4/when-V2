@@ -11,6 +11,7 @@ from jose import jwt
 
 from app.config import settings
 from app.models.user import User
+from app.utils.email import normalize_email
 from app.utils.supabase import service_client
 
 SCOPES = [
@@ -66,7 +67,7 @@ def exchange_code_and_upsert_user(code: str) -> str:
     user_info = _fetch_google_user_info(credentials)
 
     profile = _upsert_profile(user_info, credentials)
-    _process_pending_invitations(profile["id"], user_info["email"])
+    _process_pending_invitations(profile["id"], normalize_email(user_info["email"]))
 
     return _create_jwt(user_id=profile["id"], email=user_info["email"])
 
@@ -113,7 +114,7 @@ def _upsert_profile(user_info: dict, credentials: Credentials) -> dict:
 
     profile_data = {
         "id": profile_id,
-        "email_address": user_info["email"],
+        "email_address": normalize_email(user_info["email"]),
         "full_name": user_info.get("name"),
         "avatar_url": user_info.get("picture"),
         "updated_at": datetime.now(timezone.utc).isoformat(),

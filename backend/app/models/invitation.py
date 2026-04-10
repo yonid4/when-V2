@@ -20,3 +20,7 @@ class InvitationResponse(BaseModel):
 
 class InvitationRespondRequest(BaseModel):
     action: Literal['accept', 'decline']
+
+
+class InvitationRespondResponse(BaseModel):
+    event_uid: str | None = None

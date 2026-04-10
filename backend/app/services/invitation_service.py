@@ -4,6 +4,7 @@ from fastapi import HTTPException
 
 from app.models.invitation import InvitationResponse
 from app.models.user import User
+from app.utils.email import normalize_email
 from app.utils.supabase import get_authed_client, service_client
 
 
@@ -28,6 +29,7 @@ def _get_event_by_uid(uid: str, db) -> dict:
 
 
 def invite_by_email(uid: str, current_user: User, email: str) -> InvitationResponse:
+    email = normalize_email(email)
     db = get_authed_client(current_user.token)
     event = _get_event_by_uid(uid, db)
     event_id = event['id']
@@ -177,8 +179,8 @@ def respond_to_invitation(invitation_id: str, current_user: User, action: str) -
         # Update invitation status
         service_client.table('event_invitations').update({'status': 'accepted'}).eq('id', invitation_id).execute()
 
-        # Notify coordinator
-        event_result = db.table('events').select('coordinator_id, name').eq('id', invite['event_id']).maybe_single().execute()
+        # Notify coordinator and return event uid
+        event_result = db.table('events').select('coordinator_id, name, uid').eq('id', invite['event_id']).maybe_single().execute()
         if event_result and event_result.data:
             event = event_result.data
             coordinator_id = event['coordinator_id']
@@ -191,6 +193,9 @@ def respond_to_invitation(invitation_id: str, current_user: User, action: str) -
                     'message': f'{current_user.full_name or current_user.email_address} accepted the invitation to {event["name"]}.',
                     'metadata': {'invitee_id': current_user.id, 'invitation_id': invitation_id},
                 }).execute()
+            return event.get('uid')
 
     elif action == 'decline':
         service_client.table('event_invitations').update({'status': 'declined'}).eq('id', invitation_id).execute()
+
+    return None
