@@ -116,7 +116,7 @@ def _make_db_for_proposals(
 
 # ─── POST /api/events/{uid}/proposals ────────────────────────────────────────
 
-@patch("app.routers.proposals.service_client")
+@patch("app.services.proposal_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_proposals_returns_cached_when_fresh(mock_dep_svc, mock_router_svc):
     """Returns cached proposals when proposals_needs_regeneration is False and rows exist."""
@@ -155,9 +155,8 @@ def test_get_proposals_returns_cached_when_fresh(mock_dep_svc, mock_router_svc):
 
 
 @patch("app.services.proposal_service.service_client")
-@patch("app.routers.proposals.service_client")
 @patch("app.dependencies.service_client")
-def test_get_proposals_regenerates_when_stale(mock_dep_svc, mock_router_svc, mock_svc_svc):
+def test_get_proposals_regenerates_when_stale(mock_dep_svc, mock_svc_svc):
     """Calls generate_proposals when proposals_needs_regeneration is True."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -165,14 +164,6 @@ def test_get_proposals_regenerates_when_stale(mock_dep_svc, mock_router_svc, moc
 
     event_row = _make_event_row(proposals_needs_regeneration=True)
     proposal_row = _make_proposal_row()
-
-    def make_router_table(name):
-        tbl = MagicMock()
-        if name == "events":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
-                data=event_row
-            )
-        return tbl
 
     def make_svc_table(name):
         tbl = MagicMock()
@@ -194,7 +185,6 @@ def test_get_proposals_regenerates_when_stale(mock_dep_svc, mock_router_svc, moc
             tbl.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(data=[])
         return tbl
 
-    mock_router_svc.table.side_effect = make_router_table
     mock_svc_svc.table.side_effect = make_svc_table
 
     response = client.post(
@@ -204,7 +194,7 @@ def test_get_proposals_regenerates_when_stale(mock_dep_svc, mock_router_svc, moc
     assert response.status_code == 200
 
 
-@patch("app.routers.proposals.service_client")
+@patch("app.services.proposal_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_proposals_404_event_not_found(mock_dep_svc, mock_router_svc):
     """Returns 404 when event does not exist."""
@@ -229,7 +219,7 @@ def test_get_proposals_404_event_not_found(mock_dep_svc, mock_router_svc):
     assert response.status_code == 404
 
 
-@patch("app.routers.proposals.service_client")
+@patch("app.services.proposal_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_proposals_403_not_participant(mock_dep_svc, mock_router_svc):
     """Returns 403 when user is not coordinator or accepted participant."""
@@ -260,7 +250,7 @@ def test_get_proposals_403_not_participant(mock_dep_svc, mock_router_svc):
     assert response.status_code == 403
 
 
-@patch("app.routers.proposals.service_client")
+@patch("app.services.proposal_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_proposals_accepted_participant_can_access(mock_dep_svc, mock_router_svc):
     """Accepted participant (not coordinator) can fetch proposals."""
@@ -298,7 +288,7 @@ def test_get_proposals_accepted_participant_can_access(mock_dep_svc, mock_router
 
 # ─── POST /api/events/{uid}/proposals/refresh ────────────────────────────────
 
-@patch("app.routers.proposals.service_client")
+@patch("app.services.proposal_service.service_client")
 @patch("app.dependencies.service_client")
 def test_refresh_proposals_coordinator_only(mock_dep_svc, mock_router_svc):
     """Non-coordinator gets 403 on refresh endpoint."""
@@ -326,9 +316,8 @@ def test_refresh_proposals_coordinator_only(mock_dep_svc, mock_router_svc):
 
 
 @patch("app.services.proposal_service.service_client")
-@patch("app.routers.proposals.service_client")
 @patch("app.dependencies.service_client")
-def test_refresh_proposals_success(mock_dep_svc, mock_router_svc, mock_svc_svc):
+def test_refresh_proposals_success(mock_dep_svc, mock_svc_svc):
     """Coordinator can force-refresh proposals."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -336,14 +325,6 @@ def test_refresh_proposals_success(mock_dep_svc, mock_router_svc, mock_svc_svc):
 
     event_row = _make_event_row()
     proposal_row = _make_proposal_row()
-
-    def make_router_table(name):
-        tbl = MagicMock()
-        if name == "events":
-            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
-                data=event_row
-            )
-        return tbl
 
     def make_svc_table(name):
         tbl = MagicMock()
@@ -365,7 +346,6 @@ def test_refresh_proposals_success(mock_dep_svc, mock_router_svc, mock_svc_svc):
             tbl.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(data=[])
         return tbl
 
-    mock_router_svc.table.side_effect = make_router_table
     mock_svc_svc.table.side_effect = make_svc_table
 
     response = client.post(

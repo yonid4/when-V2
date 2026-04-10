@@ -55,7 +55,7 @@ def _make_slot_row(**overrides) -> dict:
 
 # ─── POST tests ───────────────────────────────────────────────────────────────
 
-@patch("app.routers.preferred_slots.service_client")
+@patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
 def test_create_preferred_slot_success(mock_dep_svc, mock_router_svc):
     """POST /api/events/{uid}/preferred-slots → 201, returns created slot."""
@@ -96,7 +96,7 @@ def test_create_preferred_slot_success(mock_dep_svc, mock_router_svc):
     assert data["start_time_utc"] == "2026-04-10T10:00:00+00:00"
 
 
-@patch("app.routers.preferred_slots.service_client")
+@patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
 def test_create_preferred_slot_sets_regeneration_flag(mock_dep_svc, mock_router_svc):
     """POST should set proposals_needs_regeneration=true on the event."""
@@ -134,7 +134,7 @@ def test_create_preferred_slot_sets_regeneration_flag(mock_dep_svc, mock_router_
     events_mock.update.assert_called_once_with({"proposals_needs_regeneration": True})
 
 
-@patch("app.routers.preferred_slots.service_client")
+@patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
 def test_create_preferred_slot_403_not_participant(mock_dep_svc, mock_router_svc):
     """POST → 403 when user is neither coordinator nor participant."""
@@ -167,7 +167,7 @@ def test_create_preferred_slot_403_not_participant(mock_dep_svc, mock_router_svc
 
 # ─── GET tests ────────────────────────────────────────────────────────────────
 
-@patch("app.routers.preferred_slots.service_client")
+@patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_preferred_slots_success(mock_dep_svc, mock_router_svc):
     """GET /api/events/{uid}/preferred-slots → 200, returns all participants' slots."""
@@ -199,7 +199,7 @@ def test_get_preferred_slots_success(mock_dep_svc, mock_router_svc):
     assert data[0]["id"] == "slot-uuid-1"
 
 
-@patch("app.routers.preferred_slots.service_client")
+@patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_preferred_slots_returns_all_participants(mock_dep_svc, mock_router_svc):
     """GET returns slots from multiple participants, not just the requesting user."""
@@ -236,7 +236,7 @@ def test_get_preferred_slots_returns_all_participants(mock_dep_svc, mock_router_
     assert "bob-uuid" in user_ids
 
 
-@patch("app.routers.preferred_slots.service_client")
+@patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_preferred_slots_403_not_participant(mock_dep_svc, mock_router_svc):
     """GET → 403 when user is not a participant or coordinator."""
@@ -267,7 +267,7 @@ def test_get_preferred_slots_403_not_participant(mock_dep_svc, mock_router_svc):
 
 # ─── DELETE tests ─────────────────────────────────────────────────────────────
 
-@patch("app.routers.preferred_slots.service_client")
+@patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
 def test_delete_preferred_slot_success(mock_dep_svc, mock_router_svc):
     """DELETE /api/events/{uid}/preferred-slots/{slot_id} → 204."""
@@ -293,7 +293,7 @@ def test_delete_preferred_slot_success(mock_dep_svc, mock_router_svc):
     assert response.status_code == 204
 
 
-@patch("app.routers.preferred_slots.service_client")
+@patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
 def test_delete_preferred_slot_403_not_owner(mock_dep_svc, mock_router_svc):
     """DELETE → 403 when slot belongs to a different user."""

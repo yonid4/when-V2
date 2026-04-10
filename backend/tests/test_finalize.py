@@ -755,7 +755,7 @@ def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc, mo
 
 # ─── GET /api/events/{uid}/finalize/status ────────────────────────────────────
 
-@patch("app.routers.finalize.service_client")
+@patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_finalize_status_coordinator(mock_dep_svc, mock_router_svc):
     """Coordinator can fetch finalize status."""
@@ -791,7 +791,7 @@ def test_get_finalize_status_coordinator(mock_dep_svc, mock_router_svc):
     assert data["google_calendar_event_id"] == "gcal-123"
 
 
-@patch("app.routers.finalize.service_client")
+@patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
 def test_get_finalize_status_403_outsider(mock_dep_svc, mock_router_svc):
     """Non-participant gets 403 on finalize/status."""
