@@ -36,8 +36,13 @@ def _pick_attendee_email(participant: dict) -> str | None:
 def finalize_event(
     uid: str,
     proposed_time_id: str,
-    note: str,
+    name: str,
     current_user: User,
+    excluded_user_ids: list[str] | None = None,
+    extra_emails: list[str] | None = None,
+    note: str = "",
+    location: str = "",
+    video_call_link: str = "",
     db=None,
 ) -> dict:
     """Finalize an event by creating a Google Calendar event and marking it confirmed.
@@ -99,6 +104,10 @@ def finalize_event(
     )
     participants = participants_result.data or []
 
+    # Resolve excluded_user_ids / extra_emails defaults
+    _excluded = set(excluded_user_ids or [])
+    _extra = list(extra_emails or [])
+
     # 4. Fetch coordinator's write calendar source
     write_cal_result = (
         client.table("calendar_sources")
@@ -138,17 +147,67 @@ def finalize_event(
         client_secret=settings.google_client_secret,
     )
 
-    # 6. Build Google Calendar event body.
-    # Use provider_email (Google account) when available; fall back to profile email.
+    # 6. Build attendees list.
+    # Start with accepted participants minus excluded ones.
+    # Always include coordinator (even if not in event_participants).
+    # Append extra_emails.
+    seen_emails: set[str] = set()
     attendees = []
+
     for p in participants:
+        if p["user_id"] in _excluded:
+            continue
         email = _pick_attendee_email(p)
-        if email:
+        if email and email not in seen_emails:
+            seen_emails.add(email)
             attendees.append({"email": email})
 
+    # Ensure coordinator is always included
+    coordinator_result = (
+        client.table("event_participants")
+        .select(
+            "user_id, "
+            "profiles(email_address, full_name, calendar_accounts(provider, provider_email))"
+        )
+        .eq("event_id", event["id"])
+        .eq("user_id", current_user.id)
+        .maybe_single()
+        .execute()
+    )
+    if coordinator_result and coordinator_result.data:
+        coord_email = _pick_attendee_email(coordinator_result.data)
+    else:
+        # Fall back to fetching directly from profiles
+        coord_profile_result = (
+            client.table("profiles")
+            .select("email_address")
+            .eq("id", current_user.id)
+            .maybe_single()
+            .execute()
+        )
+        coord_email = (coord_profile_result.data or {}).get("email_address") if coord_profile_result else None
+
+    if coord_email and coord_email not in seen_emails:
+        seen_emails.add(coord_email)
+        attendees.append({"email": coord_email})
+
+    # Add extra (non-When.) invitees
+    for email in _extra:
+        if email and email not in seen_emails:
+            seen_emails.add(email)
+            attendees.append({"email": email})
+
+    # Build description: note + video call link
+    description_parts = []
+    if note:
+        description_parts.append(note)
+    if video_call_link:
+        description_parts.append(f"Video call: {video_call_link}")
+    description = "\n\n".join(description_parts)
+
     event_body = {
-        "summary": event["name"],
-        "description": note,
+        "summary": name,
+        "description": description,
         "start": {
             "dateTime": proposed_time["start_time_utc"],
             "timeZone": "UTC",
@@ -159,6 +218,8 @@ def finalize_event(
         },
         "attendees": attendees,
     }
+    if location:
+        event_body["location"] = location
 
     # 7. Create Google Calendar event — DO NOT update DB if this fails
     try:
@@ -177,14 +238,20 @@ def finalize_event(
         raise HTTPException(status_code=502, detail="calendar_create_failed")
 
     # 8. Atomically update DB (only after successful calendar creation)
+    update_payload: dict = {
+        "status": "confirmed",
+        "finalized_start_time_utc": proposed_time["start_time_utc"],
+        "finalized_end_time_utc": proposed_time["end_time_utc"],
+        "google_calendar_event_id": google_event_id,
+        "location": location or None,
+        "video_call_link": video_call_link or None,
+    }
+    if name != event["name"]:
+        update_payload["name"] = name
+
     updated_event_result = (
         client.table("events")
-        .update({
-            "status": "confirmed",
-            "finalized_start_time_utc": proposed_time["start_time_utc"],
-            "finalized_end_time_utc": proposed_time["end_time_utc"],
-            "google_calendar_event_id": google_event_id,
-        })
+        .update(update_payload)
         .eq("id", event["id"])
         .execute()
     )

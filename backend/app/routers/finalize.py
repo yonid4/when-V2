@@ -13,7 +13,12 @@ router = APIRouter(tags=["finalize"])
 
 class FinalizeRequest(BaseModel):
     proposed_time_id: str
+    name: str
+    excluded_user_ids: list[str] = []
+    extra_emails: list[str] = []
     note: str = ""
+    location: str = ""
+    video_call_link: str = ""
 
 
 class FinalizeStatusResponse(BaseModel):
@@ -58,7 +63,12 @@ def post_finalize(
         updated_event = finalize_event(
             uid=uid,
             proposed_time_id=body.proposed_time_id,
+            name=body.name,
+            excluded_user_ids=body.excluded_user_ids,
+            extra_emails=body.extra_emails,
             note=body.note,
+            location=body.location,
+            video_call_link=body.video_call_link,
             current_user=current_user,
         )
     except HTTPException as exc:
