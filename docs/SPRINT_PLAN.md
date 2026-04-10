@@ -118,7 +118,7 @@ Full event lifecycle works. Dashboard shows events. Event detail page renders wi
 - [x] `GET /api/calendar-accounts/connect` + `GET /api/calendar-accounts/callback` — Google OAuth flow (state carries user_id)
 - [x] `DELETE /api/calendar-accounts/{id}` — disconnect, cascade delete sources + busy slots
 - [x] `PATCH /api/calendar-sources/{id}` — toggle is_enabled, toggle is_write_calendar (exclusive per user via RPC)
-- [x] Sync service — fetch events from Google Calendar API, upsert busy_slots (dedup on provider_event_id + calendar_source_id); delete stale slots whose provider_event_id no longer appears in Google's response (scoped to `calendar_source_id`, upper-bounded by `end_time_utc < time_max_iso`)
+- [x] Sync service — fetch events from Google Calendar API, upsert busy_slots (dedup on provider_event_id + calendar_source_id); delete stale slots whose provider_event_id no longer appears in Google's response or is returned as `status=cancelled` (scoped to `calendar_source_id`, upper-bounded by `end_time_utc < time_max_iso`)
 - [x] `POST /api/busy-slots/sync` — manual sync for current user
 - [x] `POST /api/busy-slots/sync/event/{uid}` — coordinator-only participant sync
 - [x] `GET /api/busy-slots` — current user's busy slots
@@ -456,20 +456,95 @@ all participants in real-time.
 
 ---
 
-## Sprint 7 — Polish, Performance & Real-time Completion
+## Sprint 7 — Bug Fixes ✅ DONE
+
+**Goal:** Fix critical bugs discovered during manual testing.
+
+---
+
+### Part A — Bug fixes ✅ DONE
+
+- [x] **Accept invitation redirect** — `PUT /api/invitations/{id}/respond` now returns `{ event_uid }` on accept; frontend calls this endpoint directly from the notification accept button and redirects to `/events/{event_uid}`. Previously the notification action endpoint returned `event_uid: null` because the Supabase update response has no `events` join.
+- [x] **Gmail dot normalization** — Added `normalize_email()` in `app/utils/email.py`; strips dots from the local part for `@gmail.com` only. Applied in `auth_service._upsert_profile` and `invitation_service.invite_by_email` so `john.doe@gmail.com` and `johndoe@gmail.com` are treated as the same address throughout.
+- [x] **Stale busy slot deletion** — Fixed `_sync_source` in `sync_service.py`: `fetched_event_ids` is now collected from `all_items` in the same loop (not from `slots_to_upsert`), and events with `status == "cancelled"` are explicitly excluded from both `fetched_event_ids` and `slots_to_upsert` so cancelled slots in the DB are treated as stale and deleted.
+
+> Tests: `backend/tests/test_email_normalization.py` (7 tests), `frontend/__tests__/sprint7/useNotifications.test.ts` (2 tests), `backend/tests/test_sync_service.py` (3 new stale-deletion tests, 13 total)
+
+---
+
+## Sprint 8 — Code Modularization
+
+**Goal:** Audit the entire codebase for layering violations, oversized files, mixed responsibilities, and missing service abstractions. Produce a structured audit report (`docs/MODULARIZATION_AUDIT.md`), then refactor based on its findings.
+
+> This is a reporting + refactor sprint. Part A produces the audit document only — no code changes. Parts B–D implement the fixes.
+
+---
+
+### Part A — Codebase audit (reporting only)
+
+**Scope:**
+- Backend: `routers/`, `services/`, `models/`, `utils/`, `scheduler/`
+- Frontend: `hooks/`, `components/`, `app/`, `lib/`, `stores/`
+
+**For each file, report:**
+- Line count
+- Stated vs. actual responsibility
+- Layer violations (e.g. `HTTPException` in a service, `service_client` outside authorized files, direct Supabase calls in a router)
+- Oversized files (>150 lines flagged)
+- Duplication or logic that belongs in a different layer
+- Missing service files (routers calling another service's table directly)
+
+**Output:** `docs/MODULARIZATION_AUDIT.md` with:
+- Per-file subsections organized by directory
+- Summary table (file, lines, violations, severity: LOW / MEDIUM / HIGH / CRITICAL)
+- Top-10 priority refactor list with justification
+
+#### Done when
+`docs/MODULARIZATION_AUDIT.md` exists and covers every file in the listed directories.
+
+---
+
+### Part B — Backend service layer cleanup
+
+Based on audit findings:
+- [ ] Extract `HTTPException` raises out of service files into router-level error translation
+- [ ] Move unauthorized `service_client` usages to approved files or replace with `anon_client`
+- [ ] Split oversized service files into focused modules
+- [ ] Create missing service files for logic currently living in routers
+
+#### Done when
+No service file raises `HTTPException`. `service_client` only in authorized files. No service file exceeds 150 lines without clear justification.
+
+---
+
+### Part C — Frontend hook and component cleanup
+
+Based on audit findings:
+- [ ] Split oversized hook files
+- [ ] Move inline API calls from components into hooks
+- [ ] Consolidate duplicated fetch logic across hooks
+
+#### Done when
+No component calls `api.*` directly. No hook file mixes multiple unrelated domains.
+
+---
+
+### Part D — Dead code and import cleanup
+
+- [ ] Remove all unused imports (backend + frontend)
+- [ ] Remove dead utility functions and types
+- [ ] Remove legacy columns from Pydantic models if already removed from schema
+
+#### Done when
+No unused imports. No dead functions. Codebase matches current schema.
+
+---
+
+## Sprint 9 — Polish, Performance & Real-time Completion
 
 **Goal:** App feels fast. All real-time updates work. No rough edges.
 
 > Complete parts in order.
-
----
-
-### Part 0 — Bug fixes ✅ DONE
-
-- [x] **Accept invitation redirect** — `PUT /api/invitations/{id}/respond` now returns `{ event_uid }` on accept; frontend calls this endpoint directly from the notification accept button and redirects to `/events/{event_uid}`. Previously the notification action endpoint returned `event_uid: null` because the Supabase update response has no `events` join.
-- [x] **Gmail dot normalization** — Added `normalize_email()` in `app/utils/email.py`; strips dots from the local part for `@gmail.com` only. Applied in `auth_service._upsert_profile` and `invitation_service.invite_by_email` so `john.doe@gmail.com` and `johndoe@gmail.com` are treated as the same address throughout.
-
-> Tests: `backend/tests/test_email_normalization.py` (7 tests), `frontend/__tests__/sprint7/useNotifications.test.ts` (2 tests)
 
 ---
 

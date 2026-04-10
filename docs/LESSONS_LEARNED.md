@@ -460,3 +460,18 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **Invalidate `['participants']` in `useRespondToInvitation.onSuccess` — the user just joined the event.**
   The hook previously only invalidated `['notifications']` and `['events']`. After accepting, the user is added to `event_participants`. Any cached participants list for that event is now stale. Add `queryClient.invalidateQueries({ queryKey: ['participants'] })` to `onSuccess`.
+
+---
+
+## Sprint 8 — Sync Service: Stale Deletion Fix
+
+### Backend
+
+- **Build `fetched_event_ids` from `all_items` directly, not from `slots_to_upsert`.**
+  The stale deletion set was built as `{s["provider_event_id"] for s in slots_to_upsert}`. This meant events that were filtered out during slot construction (missing datetimes, all-day events) were absent from `fetched_event_ids` — those DB rows would incorrectly be treated as stale and deleted. More critically, it meant the set was computed from the already-filtered list rather than from the raw Google API response. The fix: collect `fetched_event_ids` in the item loop itself, before the slot-construction filters.
+
+- **Cancelled Google Calendar event instances (`status == "cancelled"`) must be excluded from `fetched_event_ids` — not just from `slots_to_upsert`.**
+  Google returns cancelled event instances in some responses (e.g. recurring events with deleted occurrences). If a cancelled item's `id` is added to `fetched_event_ids`, the corresponding DB row is never treated as stale and is never deleted. The correct behavior: skip cancelled items at the top of the loop — add neither to `slots_to_upsert` nor to `fetched_event_ids`. Any existing DB row for the cancelled event id is then identified as stale and deleted.
+
+- **The stale deletion delete call must be skipped entirely when `stale_event_ids` is empty.**
+  The implementation gates the delete behind `if stale_event_ids:` — this is intentional and must be preserved. Running `.delete().eq(...).in_("provider_event_id", [])` against Supabase with an empty list produces undefined behavior (may delete all rows for the source). Tests must assert `mock_svc.table.return_value.delete.assert_not_called()` when no stale slots exist.

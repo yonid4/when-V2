@@ -1328,3 +1328,97 @@ expect(invalidatedKeys).toContainEqual(['participants'])
 - **The `NotificationList` redirect was already implemented** — `router.push(n.event_uid ? \`/events/${n.event_uid}\` : '/dashboard')` was wired up in a prior sprint. The bug was purely the missing `['participants']` invalidation in the hook.
 - **Lambda `side_effect` on `tbl.select.return_value.eq` breaks multi-call chains.** When the service calls `.eq()` more than once (e.g., `eq("id", ...).eq("status", ...)` chained), replacing `eq` with a lambda that always returns the same mock works only for single-`eq` chains. For deeper chains, capture only the first `eq` call or restructure with a counter.
 - **`normalize_email` must be imported at both call sites independently.** `auth_service` and `invitation_service` each import `normalize_email` from `app.utils.email` at module load time. Patching one does not affect the other — tests targeting one service do not need to patch the other's binding.
+
+---
+
+## Sprint 8 — Busy Slot Architecture Fixes
+
+**Completed:** 2026-04-09
+**Result:** 21 new tests passing; 7 existing `test_sync.py` tests updated and passing
+
+### Files Written
+
+| File | Domain | Tests |
+|------|--------|-------|
+| `backend/tests/test_busy_slots.py` | Busy slots router (all 4 endpoints) | 11 |
+| `backend/tests/test_sync_service.py` | sync_service unit tests (time range, pagination, scoped sync, UTC normalization) | 10 |
+
+### Files Updated
+
+| File | Change |
+|------|--------|
+| `backend/tests/test_sync.py` | Updated 5 tests to patch `app.services.busy_slots_service.service_client` instead of `app.routers.busy_slots.service_client` (which no longer holds `service_client` after the router refactor) |
+
+### Coverage
+
+**test_busy_slots.py**
+
+| Test | What it covers |
+|------|----------------|
+| `test_get_my_busy_slots_returns_list` | GET /api/busy-slots → 200, list returned |
+| `test_get_my_busy_slots_requires_auth` | GET /api/busy-slots without token → 403 |
+| `test_get_event_busy_slots_coordinator_sees_slots` | Coordinator can view event slots |
+| `test_get_event_busy_slots_non_participant_gets_403` | Outsider (not coordinator, not participant) → 403 |
+| `test_get_event_busy_slots_accepted_participant_allowed` | Accepted participant → 200 |
+| `test_get_event_busy_slots_declined_participant_excluded` | Declined participants' slots not returned (DB filter via `neq`) |
+| `test_get_event_busy_slots_missing_event_returns_404` | `maybe_single()` returning None → 404 (not 500) |
+| `test_sync_my_slots_returns_synced_count` | POST /api/busy-slots/sync → 200, synced count |
+| `test_sync_event_slots_missing_event_returns_404` | POST /api/busy-slots/sync/event/{uid} missing event → 404 |
+| `test_sync_event_slots_non_coordinator_gets_403` | Non-coordinator sync attempt → 403 |
+| `test_sync_event_slots_coordinator_triggers_scoped_sync` | Coordinator triggers scoped sync, total returned |
+
+**test_sync_service.py**
+
+| Test | What it covers |
+|------|----------------|
+| `test_sync_busy_slots_uses_90_day_window` | `sync_busy_slots` does not crash and queries calendar_accounts |
+| `test_sync_source_time_range_is_90_days` | `_sync_source` passes timeMin=now, timeMax=now+90d to Google API |
+| `test_sync_source_follows_page_token` | Pagination loop: second call uses `pageToken`, both pages' events counted |
+| `test_stale_deletion_uses_query_time_max` | Stale deletion uses `lt(end_time_utc, time_max)` not a hard-coded future year |
+| `test_sync_event_participants_scoped_uses_event_window` | Scoped sync passes event's datetime bounds, not global 90-day window |
+| `test_sync_event_participants_scoped_includes_coordinator` | Coordinator synced even when absent from `event_participants` |
+| `test_sync_event_participants_scoped_deduplicates_coordinator` | Coordinator not synced twice if already in `event_participants` |
+| `test_to_utc_converts_offset_to_utc` | PDT (-07:00) string → correct UTC hour |
+| `test_to_utc_preserves_utc_time` | UTC string → same UTC hour unchanged |
+| `test_sync_source_normalizes_timestamps_to_utc` | `_sync_source` stores UTC-normalized start/end times in upserted rows |
+
+### Mock Patterns
+
+#### Per-table routing with double `.eq()` chains
+The event-busy-slots service issues two separate `event_participants` queries at different chain depths:
+1. Auth check: `.eq(event_id).eq(user_id).in_(...).maybe_single().execute()`
+2. Non-declined list: `.eq(event_id).neq("status", "declined").execute()`
+
+Routing by `table.side_effect` is not enough — both queries hit the same table. Fix: model the first `.eq()` call returning an object that branches on whether the next call is `.eq()` (auth path) or `.neq()` (list path):
+```python
+first_eq = MagicMock()
+first_eq.eq.return_value = second_eq          # auth path
+first_eq.neq.return_value = list_chain        # list path
+tbl.select.return_value.eq.return_value = first_eq
+```
+
+#### Capturing `lt(column, value)` side_effect
+`lt` is called as `lt("end_time_utc", value)` — the side_effect function must accept two positional arguments:
+```python
+def capture_lt(column, value):
+    lt_calls.append(value)
+    ...
+```
+
+#### Patching the service, not the router
+After the router refactor (Fix 1), `service_client` is no longer imported in `app.routers.busy_slots`. All patches must target `app.services.busy_slots_service.service_client`.
+
+#### Scoped sync datetime bounds verification
+After calling `sync_event_participants_scoped`, verify `_sync_user` received the event's time bounds (not the global 90-day window) by inspecting positional args:
+```python
+for call_args in mock_sync_user.call_args_list:
+    _, passed_min, passed_max = call_args.args
+    assert abs((passed_min - event_min).total_seconds()) < 2
+```
+
+### Gotchas
+
+- **`git stash` confirmed**: the 3 pre-existing failures in `test_invitations.py` and `test_notifications.py` (`test_respond_accept`, `test_respond_decline`, `test_take_action_accept`) were already failing before Sprint 8. None of the Sprint 8 changes caused them.
+- **`maybe_single()` vs `.single()` mock chains**: old `test_sync.py` tests used `.single.return_value.execute.return_value` for the events query. After the fix, the service uses `.maybe_single()`. Updated tests use `.maybe_single.return_value.execute.return_value`.
+- **`capture_lt` must accept `(column, value)` not just `(value)`.** The Supabase Python client calls `lt(column, value)` with two positional arguments. A one-argument side_effect raises `TypeError`.
+- **Router no longer holds `service_client`**: patching `app.routers.busy_slots.service_client` raises `AttributeError` because the import was removed as part of Fix 1. Always patch at the module that owns the import.
