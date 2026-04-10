@@ -30,7 +30,7 @@ import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
 import { Navbar } from '@/components/layout/Navbar'
 import { useAuthStore } from '@/stores/authStore'
-import type { BusySlot, EventWithParticipants, EventType, PreferredSlot, ProposalResponse, Participant } from '@/types'
+import type { BusySlot, EventWithParticipants, EventType, PreferredSlot, ProposalResponse, Participant, SlotOverlay, ConflictOverlay } from '@/types'
 import type { SlotLike } from '@/lib/gridUtils'
 import { computeMerge } from '@/lib/editModeUtils'
 import type { PendingSlot } from '@/lib/editModeUtils'
@@ -321,19 +321,6 @@ function formatSlotTime(utcString: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-interface SlotOverlay {
-  startUtc: Date
-  endUtc: Date
-  /** unique participants involved (for intensity) */
-  count: number
-}
-
-interface ConflictOverlay {
-  startUtc: Date
-  endUtc: Date
-  busyCount: number
-  preferredCount: number
-}
 
 /** Group continuous/overlapping slots of the same type into merged overlay blocks. */
 function mergeSlots(slots: SlotLike[]): SlotOverlay[] {

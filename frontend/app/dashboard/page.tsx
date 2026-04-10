@@ -1,43 +1,17 @@
-import { cookies } from 'next/headers'
-import { redirect } from 'next/navigation'
+'use client'
+
 import Link from 'next/link'
 import { Plus, Calendar, CalendarCheck, ExternalLink } from 'lucide-react'
 
-import type { EventWithParticipants } from '@/types'
+import { useEvents } from '@/hooks/useEvent'
+import { useCalendarAccounts } from '@/hooks/useCalendarAccounts'
 import EventCard from '@/components/dashboard/EventCard'
 import { Navbar } from '@/components/layout/Navbar'
 
-async function getEvents(token: string): Promise<EventWithParticipants[]> {
-  const res = await fetch(`${process.env.API_URL}/api/events`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  })
-  if (!res.ok) return []
-  return res.json()
-}
-
-async function hasCalendarConnected(token: string): Promise<boolean> {
-  const res = await fetch(`${process.env.API_URL}/api/calendar-accounts`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  })
-  if (!res.ok) return false
-  const accounts = await res.json()
-  return Array.isArray(accounts) && accounts.length > 0
-}
-
-export default async function DashboardPage() {
-  const cookieStore = await cookies()
-  const token = cookieStore.get('token')?.value
-
-  if (!token) {
-    redirect('/')
-  }
-
-  const [events, calendarConnected] = await Promise.all([
-    getEvents(token),
-    hasCalendarConnected(token),
-  ])
+export default function DashboardPage() {
+  const { data: events = [] } = useEvents()
+  const { data: calendarAccounts = [] } = useCalendarAccounts()
+  const calendarConnected = calendarAccounts.length > 0
 
   return (
     <div className="min-h-screen bg-surface">
