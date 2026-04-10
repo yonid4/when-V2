@@ -4,10 +4,20 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import type { FinalizeStatus } from '@/types'
 
+interface FinalizeBody {
+  proposed_time_id: string
+  name: string
+  excluded_user_ids: string[]
+  extra_emails: string[]
+  note: string
+  location: string
+  video_call_link: string
+}
+
 export function useFinalize(uid: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: { proposed_time_id: string; note: string }) =>
+    mutationFn: (body: FinalizeBody) =>
       api.post(`/events/${uid}/finalize`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['event', uid] })

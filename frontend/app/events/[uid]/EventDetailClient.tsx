@@ -23,7 +23,7 @@ import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
 import { useEventBusySlots, useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
 import { usePreferredSlots, useSavePreferredSlot, useDeletePreferredSlot } from '@/hooks/usePreferredSlots'
 import { useProposals, useRefreshProposals } from '@/hooks/useProposals'
-import { useFinalize } from '@/hooks/useFinalize'
+import { FinalizeCard } from './FinalizeCard'
 import { supabase } from '@/lib/supabase'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
@@ -289,141 +289,6 @@ function DeleteModal({
             >
               <Trash2 className="w-4 h-4" />
               {isPending ? 'Deleting…' : 'Delete Event'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Finalize modal ───────────────────────────────────────────────────────────
-
-function FinalizeModal({
-  uid,
-  proposal,
-  acceptedParticipants,
-  onClose,
-  onSuccess,
-}: {
-  uid: string
-  proposal: ProposalResponse
-  acceptedParticipants: Participant[]
-  onClose: () => void
-  onSuccess: () => void
-}) {
-  const [note, setNote] = useState('')
-  const [apiError, setApiError] = useState<string | null>(null)
-  const { mutate: finalize, isPending } = useFinalize(uid)
-
-  const start = new Date(proposal.start_time_utc)
-  const end = new Date(proposal.end_time_utc)
-  const dayLabel = start.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  })
-  const timeRange = `${start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} – ${end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-
-  function handleConfirm() {
-    setApiError(null)
-    finalize(
-      { proposed_time_id: proposal.id, note },
-      {
-        onSuccess: () => {
-          onSuccess()
-          onClose()
-        },
-        onError: (err: unknown) => {
-          const detail = (err as { detail?: string })?.detail
-          if (detail === 'calendar_create_failed') {
-            setApiError(
-              'Could not create calendar event — check your calendar connection and try again'
-            )
-          } else if (detail === 'no_write_calendar') {
-            setApiError(
-              'No write calendar configured — go to Settings to set one'
-            )
-          } else {
-            setApiError('Something went wrong — please try again')
-          }
-        },
-      }
-    )
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-surface-container-lowest rounded-2xl w-full max-w-md shadow-warm-md">
-        <div className="flex items-center justify-between p-6 border-b border-outline-variant/20">
-          <h2 className="text-xl font-bold text-on-surface">Confirm Time</h2>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-surface-container transition-colors">
-            <X className="w-5 h-5 text-on-surface-variant" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-5">
-          {/* Selected time */}
-          <div className="bg-surface-container-low rounded-xl p-4 space-y-1">
-            <p className="text-sm font-bold text-on-surface">{dayLabel}</p>
-            <p className="text-sm text-on-surface-variant">{timeRange}</p>
-          </div>
-
-          {/* Attendees */}
-          {acceptedParticipants.length > 0 && (
-            <div className="space-y-2">
-              <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em]">
-                Attendees ({acceptedParticipants.length})
-              </label>
-              <div className="space-y-1">
-                {acceptedParticipants.map((p) => (
-                  <div key={p.user_id} className="flex items-center gap-2 text-sm text-on-surface-variant">
-                    <div className="w-6 h-6 rounded-full bg-surface-container flex items-center justify-center text-[10px] font-bold text-on-surface-variant shrink-0">
-                      {(p.full_name ?? p.email_address ?? '?').charAt(0).toUpperCase()}
-                    </div>
-                    <span>{p.full_name ?? p.email_address ?? 'Unknown'}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Note field */}
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-extrabold text-outline uppercase tracking-[0.2em]">
-              Note
-            </label>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={3}
-              placeholder="Add a note to the calendar invite (optional)"
-              className="w-full bg-surface-container-low rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-fixed focus:bg-surface-container-lowest transition-all resize-none placeholder:text-outline/50 text-sm"
-            />
-          </div>
-
-          {/* Error */}
-          {apiError && (
-            <p className="text-sm text-error font-medium">{apiError}</p>
-          )}
-
-          {/* Actions */}
-          <div className="flex gap-3 pt-1">
-            <button
-              onClick={onClose}
-              className="flex-1 py-3 rounded-xl border border-outline-variant text-on-surface-variant font-semibold hover:bg-surface-container transition-colors text-sm"
-            >
-              Back
-            </button>
-            <button
-              onClick={handleConfirm}
-              disabled={isPending}
-              className="flex-1 py-3 rounded-xl bg-primary text-on-primary font-bold flex items-center justify-center gap-2 disabled:opacity-60 hover:-translate-y-0.5 transition-all duration-300 text-sm"
-            >
-              <CalendarCheck className="w-4 h-4" />
-              {isPending ? 'Confirming…' : 'Confirm & Add to Calendar'}
             </button>
           </div>
         </div>
@@ -1033,7 +898,7 @@ export default function EventDetailClient({
   // ── Proposals state ──────────────────────────────────────────────────────
   const [proposalsEnabled, setProposalsEnabled] = useState(false)
   const [proposalsStale, setProposalsStale] = useState(false)
-  const [selectedProposal, setSelectedProposal] = useState<ProposalResponse | null>(null)
+  const [showFinalizeCard, setShowFinalizeCard] = useState(false)
 
   function handleSave(result: EditSaveResult) {
     if (result.infoChanged || result.timeRangeChanged) {
@@ -1594,6 +1459,16 @@ export default function EventDetailClient({
                 )}
               </div>
 
+              {isCoordinator && event.status !== 'confirmed' && (
+                <button
+                  onClick={() => setShowFinalizeCard(true)}
+                  className="w-full py-2.5 rounded-xl bg-primary text-on-primary text-sm font-bold flex items-center justify-center gap-2 hover:-translate-y-0.5 transition-all duration-300"
+                >
+                  <CalendarCheck className="w-4 h-4" />
+                  Finalize Event
+                </button>
+              )}
+
               {/* Stale banner */}
               {(proposalsStale || event.proposals_needs_regeneration) && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-tertiary-container/40 border border-tertiary/20">
@@ -1643,14 +1518,6 @@ export default function EventDetailClient({
                           </span>
                         </div>
                         <p className="text-xs text-on-surface-variant">{proposal.reasoning}</p>
-                        {isCoordinator && event.status !== 'confirmed' && (
-                          <button
-                            onClick={() => setSelectedProposal(proposal)}
-                            className="w-full py-2 rounded-lg bg-secondary-container text-on-secondary-container text-xs font-bold hover:bg-secondary-container/70 transition-colors"
-                          >
-                            Select
-                          </button>
-                        )}
                       </div>
                     )
                   })}
@@ -1673,6 +1540,23 @@ export default function EventDetailClient({
                   {' – '}
                   {new Date(event.finalized_end_time_utc).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                 </p>
+                {event.location && (
+                  <p className="text-xs font-medium text-on-surface-variant flex items-center gap-1 pt-0.5">
+                    <MapPin className="w-3 h-3 shrink-0" />
+                    {event.location}
+                  </p>
+                )}
+                {event.video_call_link && (
+                  <a
+                    href={event.video_call_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium text-primary flex items-center gap-1 pt-0.5 hover:underline"
+                  >
+                    <Link2 className="w-3 h-3 shrink-0" />
+                    Join video call
+                  </a>
+                )}
                 {event.google_calendar_event_id && (
                   <p className="text-[10px] font-medium text-primary/70 flex items-center gap-1 pt-0.5">
                     <Calendar className="w-3 h-3" />
@@ -1716,14 +1600,14 @@ export default function EventDetailClient({
       {/* Modals */}
       {showEdit && <EditModal event={event} onClose={() => setShowEdit(false)} onSave={handleSave} />}
       {showDelete && <DeleteModal event={event} onClose={() => setShowDelete(false)} />}
-      {selectedProposal && (
-        <FinalizeModal
-          uid={event.uid}
-          proposal={selectedProposal}
+      {showFinalizeCard && (
+        <FinalizeCard
+          event={event}
+          proposals={proposals ?? []}
           acceptedParticipants={acceptedParticipants}
-          onClose={() => setSelectedProposal(null)}
+          onClose={() => setShowFinalizeCard(false)}
           onSuccess={() => {
-            setSelectedProposal(null)
+            setShowFinalizeCard(false)
             queryClient.invalidateQueries({ queryKey: ['event', event.uid] })
           }}
         />

@@ -180,4 +180,6 @@ export interface FinalizeStatus {
   finalized_start_time_utc: string | null
   finalized_end_time_utc: string | null
   google_calendar_event_id: string | null
+  location: string | null
+  video_call_link: string | null
 }
