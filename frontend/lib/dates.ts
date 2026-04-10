@@ -63,6 +63,30 @@ export function formatLocalTimeRange(startUtc: string, endUtc: string): string {
 }
 
 /**
+ * Format a UTC timestamp as a short weekday+date label.
+ * e.g. "2024-06-15T14:00:00Z" → "Sat, Jun 15"
+ */
+export function formatDayLabel(utcString: string): string {
+  return new Date(utcString).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+/**
+ * Format a UTC timestamp as a time string in the user's local timezone.
+ * e.g. "2024-06-15T14:30:00Z" → "2:30 PM"
+ */
+export function formatTime(utcString: string): string {
+  return new Date(utcString).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
+/**
+ * Format a UTC timestamp as a long date string.
+ * e.g. "2024-06-15T14:00:00Z" → "Saturday, June 15"
+ */
+export function formatLongDate(utcString: string): string {
+  return new Date(utcString).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+}
+
+/**
  * Build the confirmation message for a finalized-event notification.
  * Falls back to the raw notification message if metadata is missing.
  */
