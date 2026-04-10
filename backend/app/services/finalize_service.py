@@ -14,6 +14,43 @@ from app.utils.supabase import service_client
 logger = logging.getLogger(__name__)
 
 
+def get_event_by_uid(uid: str) -> dict:
+    """Look up event by uid. Raises 404 if not found."""
+    result = (
+        service_client.table("events")
+        .select(
+            "id, uid, coordinator_id, status, finalized_start_time_utc, "
+            "finalized_end_time_utc, google_calendar_event_id"
+        )
+        .eq("uid", uid)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return result.data
+
+
+def get_finalize_status(uid: str, user_id: str) -> dict:
+    """Return finalization status for an event. Accessible by coordinator or accepted participant."""
+    event = get_event_by_uid(uid)
+
+    if event["coordinator_id"] != user_id:
+        participant_result = (
+            service_client.table("event_participants")
+            .select("user_id")
+            .eq("event_id", event["id"])
+            .eq("user_id", user_id)
+            .eq("status", "accepted")
+            .maybe_single()
+            .execute()
+        )
+        if not participant_result or not participant_result.data:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    return event
+
+
 def _pick_attendee_email(participant: dict) -> str | None:
     """Return the best email to use for a Google Calendar invite.
 

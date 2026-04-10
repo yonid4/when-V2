@@ -1,0 +1,43 @@
+from pydantic import BaseModel
+
+
+class PreferredSlotCreate(BaseModel):
+    start_time_utc: str
+    end_time_utc: str
+
+
+class PreferredSlotResponse(BaseModel):
+    id: str
+    event_id: str
+    user_id: str
+    start_time_utc: str
+    end_time_utc: str
+    created_at: str
+
+
+class ProposalResponse(BaseModel):
+    id: str
+    event_id: str
+    start_time_utc: str
+    end_time_utc: str
+    conflict_count: int
+    preferred_count: int
+    reasoning: str
+    rank: int
+
+
+class FinalizeRequest(BaseModel):
+    proposed_time_id: str
+    name: str
+    excluded_user_ids: list[str] = []
+    extra_emails: list[str] = []
+    note: str = ""
+    location: str = ""
+    video_call_link: str = ""
+
+
+class FinalizeStatusResponse(BaseModel):
+    status: str
+    finalized_start_time_utc: str | None
+    finalized_end_time_utc: str | None
+    google_calendar_event_id: str | None
