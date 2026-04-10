@@ -1,4 +1,8 @@
-"""Sprint 4 — Busy slot sync + retrieval tests."""
+"""Sprint 4 — Busy slot sync + retrieval tests.
+
+Updated in Sprint 8: router no longer touches service_client directly;
+patches now target app.services.busy_slots_service.service_client.
+"""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -43,14 +47,14 @@ def _make_busy_slot(**overrides) -> dict:
 
 # ─── 1. test_get_my_busy_slots ────────────────────────────────────────────────
 
-@patch("app.routers.busy_slots.service_client")
+@patch("app.services.busy_slots_service.service_client")
 @patch("app.dependencies.service_client")
-def test_get_my_busy_slots(mock_dep_svc, mock_router_svc):
+def test_get_my_busy_slots(mock_dep_svc, mock_service_svc):
     """GET /api/busy-slots → 200 with list of busy slots for current user."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
 
     slot = _make_busy_slot()
-    mock_router_svc.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(data=[slot])
+    mock_service_svc.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = MagicMock(data=[slot])
 
     response = client.get("/api/busy-slots", headers=_auth_headers())
 
@@ -70,36 +74,44 @@ def _event_window():
     }
 
 
-@patch("app.routers.busy_slots.service_client")
+@patch("app.services.busy_slots_service.service_client")
 @patch("app.dependencies.service_client")
-def test_get_event_busy_slots(mock_dep_svc, mock_router_svc):
-    """GET /api/busy-slots/event/{uid} → 200 with slots overlapping the event window."""
-    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+def test_get_event_busy_slots(mock_dep_svc, mock_service_svc):
+    """GET /api/busy-slots/event/{uid} → 200 with slots overlapping the event window.
+    Current user is the coordinator so no participant auth check is done."""
+    coordinator_id = "user-uuid-1"
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile(coordinator_id)
+    )
 
     window = _event_window()
 
     def make_table(table_name):
         tbl = MagicMock()
         if table_name == "events":
-            tbl.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
                 data={
                     "id": "event-db-id-1",
+                    "coordinator_id": coordinator_id,
                     "earliest_datetime_utc": window["earliest"].isoformat(),
                     "latest_datetime_utc": window["latest"].isoformat(),
                 }
             )
         elif table_name == "event_participants":
-            tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(
-                data=[{"user_id": "user-uuid-1"}]
+            # Non-declined list query: .eq(event_id).neq("status","declined").execute()
+            first_eq = MagicMock()
+            first_eq.neq.return_value.execute.return_value = MagicMock(
+                data=[{"user_id": coordinator_id}]
             )
+            tbl.select.return_value.eq.return_value = first_eq
         elif table_name == "busy_slots":
             slot = _make_busy_slot()
             tbl.select.return_value.in_.return_value.lt.return_value.gt.return_value.order.return_value.execute.return_value = MagicMock(data=[slot])
         return tbl
 
-    mock_router_svc.table.side_effect = make_table
+    mock_service_svc.table.side_effect = make_table
 
-    response = client.get("/api/busy-slots/event/test-uid-1", headers=_auth_headers())
+    response = client.get("/api/busy-slots/event/test-uid-1", headers=_auth_headers(coordinator_id))
 
     assert response.status_code == 200
     data = response.json()
@@ -108,48 +120,54 @@ def test_get_event_busy_slots(mock_dep_svc, mock_router_svc):
     assert data[0]["id"] == "slot-uuid-1"
 
 
-@patch("app.routers.busy_slots.service_client")
+@patch("app.services.busy_slots_service.service_client")
 @patch("app.dependencies.service_client")
-def test_get_event_busy_slots_filters_outside_window(mock_dep_svc, mock_router_svc):
+def test_get_event_busy_slots_filters_outside_window(mock_dep_svc, mock_service_svc):
     """GET /api/busy-slots/event/{uid} → slots outside the event window are excluded."""
-    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+    coordinator_id = "user-uuid-1"
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile(coordinator_id)
+    )
 
     window = _event_window()
 
     def make_table(table_name):
         tbl = MagicMock()
         if table_name == "events":
-            tbl.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
                 data={
                     "id": "event-db-id-1",
+                    "coordinator_id": coordinator_id,
                     "earliest_datetime_utc": window["earliest"].isoformat(),
                     "latest_datetime_utc": window["latest"].isoformat(),
                 }
             )
         elif table_name == "event_participants":
-            tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(
-                data=[{"user_id": "user-uuid-1"}]
+            first_eq = MagicMock()
+            first_eq.neq.return_value.execute.return_value = MagicMock(
+                data=[{"user_id": coordinator_id}]
             )
+            tbl.select.return_value.eq.return_value = first_eq
         elif table_name == "busy_slots":
             # Supabase applies the filters server-side; mock returns empty (slot is outside window)
             tbl.select.return_value.in_.return_value.lt.return_value.gt.return_value.order.return_value.execute.return_value = MagicMock(data=[])
         return tbl
 
-    mock_router_svc.table.side_effect = make_table
+    mock_service_svc.table.side_effect = make_table
 
-    response = client.get("/api/busy-slots/event/test-uid-1", headers=_auth_headers())
+    response = client.get("/api/busy-slots/event/test-uid-1", headers=_auth_headers(coordinator_id))
 
     assert response.status_code == 200
     assert response.json() == []
 
 
-@patch("app.routers.busy_slots.service_client")
+@patch("app.services.busy_slots_service.service_client")
 @patch("app.dependencies.service_client")
-def test_get_event_busy_slots_not_found(mock_dep_svc, mock_router_svc):
+def test_get_event_busy_slots_not_found(mock_dep_svc, mock_service_svc):
     """GET /api/busy-slots/event/{uid} → 404 when event does not exist."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
 
-    mock_router_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=None)
+    mock_service_svc.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=None)
 
     response = client.get("/api/busy-slots/event/nonexistent-uid", headers=_auth_headers())
 
@@ -175,15 +193,17 @@ def test_sync_my_slots(mock_dep_svc, mock_sync_svc):
 
 # ─── 4. test_sync_event_slots_coordinator_only ───────────────────────────────
 
-@patch("app.routers.busy_slots.service_client")
+@patch("app.services.busy_slots_service.service_client")
 @patch("app.dependencies.service_client")
-def test_sync_event_slots_coordinator_only(mock_dep_svc, mock_router_svc):
+def test_sync_event_slots_coordinator_only(mock_dep_svc, mock_service_svc):
     """POST /api/busy-slots/sync/event/{uid} → 403 for non-coordinator."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
 
     # Event coordinator is someone else
-    mock_router_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"id": "event-db-id-1", "coordinator_id": "other-user"}
+    mock_service_svc.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+        data={"id": "event-db-id-1", "coordinator_id": "other-user",
+              "earliest_datetime_utc": "2026-04-10T00:00:00+00:00",
+              "latest_datetime_utc": "2026-04-11T00:00:00+00:00"}
     )
 
     response = client.post("/api/busy-slots/sync/event/test-uid-1", headers=_auth_headers())
