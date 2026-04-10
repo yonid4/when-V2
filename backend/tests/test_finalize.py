@@ -1,4 +1,4 @@
-"""Sprint 6B — Event finalization tests.
+"""Sprint 6B/6C — Event finalization tests.
 
 Tests the finalize router and finalize_service with mocked Supabase service_client
 and mocked Google Calendar API.
@@ -61,6 +61,7 @@ def _make_finalize_db(
     event_row: dict,
     proposed_time_row: dict | None = None,
     participants: list[dict] | None = None,
+    coordinator_participant: dict | None = None,
     write_cal_rows: list[dict] | None = None,
     creds_row: dict | None = None,
     updated_event: dict | None = None,
@@ -77,6 +78,20 @@ def _make_finalize_db(
     }
     updated_event = updated_event or {**event_row, "status": "confirmed", "google_calendar_event_id": "gcal-id-1"}
 
+    # Default coordinator participant (for coordinator lookup)
+    _coordinator_participant = coordinator_participant or {
+        "user_id": "coordinator-uuid-1",
+        "profiles": {
+            "email_address": "alice@example.com",
+            "full_name": "Alice",
+            "calendar_accounts": [],
+        },
+    }
+
+    # Track how many times event_participants is queried so the second call
+    # (coordinator lookup) returns the coordinator row.
+    _ep_call_count = [0]
+
     def make_table(name):
         tbl = MagicMock()
         if name == "events":
@@ -91,9 +106,32 @@ def _make_finalize_db(
                 data=proposed_time_row
             )
         elif name == "event_participants":
-            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
-                data=participants
-            )
+            # First call: accepted participants list (no maybe_single, returns list)
+            # Second call: coordinator lookup (maybe_single, returns single row)
+            # We route by presence of maybe_single in the chain depth.
+            # The accepted-participants query ends in .execute() without .maybe_single()
+            # The coordinator query ends in .maybe_single().execute()
+            # We can distinguish by returning different mocks for chained .eq calls.
+            # Simplest: first call is .eq.eq.execute; second is .eq.eq.maybe_single.execute
+            # We use side_effect on select to count calls.
+            _ep_call_count[0] += 1
+            call_num = _ep_call_count[0]
+            if call_num == 1:
+                # Accepted participants: .select().eq(event_id).eq(status).execute()
+                tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+                    data=participants
+                )
+                tbl.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                    data=_coordinator_participant
+                )
+            else:
+                # Coordinator lookup: .select().eq(event_id).eq(user_id).maybe_single().execute()
+                tbl.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                    data=_coordinator_participant
+                )
+                tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+                    data=participants
+                )
         elif name == "calendar_sources":
             tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(
                 data=write_cal_rows
@@ -118,6 +156,20 @@ def _make_write_cal_row(**overrides) -> dict:
         "calendar_accounts": {"user_id": "coordinator-uuid-1"},
     }
     return {**defaults, **overrides}
+
+
+def _make_participant(user_id: str, email: str, google_email: str | None = None) -> dict:
+    cal_accounts = []
+    if google_email:
+        cal_accounts = [{"provider": "google", "provider_email": google_email}]
+    return {
+        "user_id": user_id,
+        "profiles": {
+            "email_address": email,
+            "full_name": user_id.split("-")[0].capitalize(),
+            "calendar_accounts": cal_accounts,
+        },
+    }
 
 
 # ─── _pick_attendee_email unit tests ─────────────────────────────────────────
@@ -200,14 +252,7 @@ def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_build):
     mock_svc_svc.table.side_effect = _make_finalize_db(
         event_row=event_row,
         proposed_time_row=proposed_time,
-        participants=[{
-            "user_id": "bob-uuid",
-            "profiles": {
-                "email_address": "bob@example.com",
-                "full_name": "Bob",
-                "calendar_accounts": [{"provider": "google", "provider_email": "bob@gmail.com"}],
-            },
-        }],
+        participants=[_make_participant("bob-uuid", "bob@example.com", "bob@gmail.com")],
         write_cal_rows=[write_cal],
     ).table.side_effect
 
@@ -218,7 +263,15 @@ def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_build):
 
     response = client.post(
         "/api/events/event-uid-1/finalize",
-        json={"proposed_time_id": "pt-uuid-1", "note": "Looking forward to it!"},
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "Looking forward to it!",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "",
+        },
         headers=_auth_headers(),
     )
     assert response.status_code == 200
@@ -246,7 +299,15 @@ def test_finalize_404_event_not_found(mock_dep_svc, mock_svc_svc, mock_build):
 
     response = client.post(
         "/api/events/nonexistent-uid/finalize",
-        json={"proposed_time_id": "pt-uuid-1", "note": ""},
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Event",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "",
+        },
         headers=_auth_headers(),
     )
     assert response.status_code == 404
@@ -275,7 +336,15 @@ def test_finalize_403_not_coordinator(mock_dep_svc, mock_svc_svc, mock_build):
 
     response = client.post(
         "/api/events/event-uid-1/finalize",
-        json={"proposed_time_id": "pt-uuid-1", "note": ""},
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Event",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "",
+        },
         headers=_auth_headers("other-user-uuid"),
     )
     assert response.status_code == 403
@@ -301,7 +370,15 @@ def test_finalize_422_no_write_calendar(mock_dep_svc, mock_svc_svc, mock_build):
 
     response = client.post(
         "/api/events/event-uid-1/finalize",
-        json={"proposed_time_id": "pt-uuid-1", "note": ""},
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "",
+        },
         headers=_auth_headers(),
     )
     assert response.status_code == 422
@@ -343,11 +420,337 @@ def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc, mock_build)
 
     response = client.post(
         "/api/events/event-uid-1/finalize",
-        json={"proposed_time_id": "pt-uuid-1", "note": ""},
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "",
+        },
         headers=_auth_headers(),
     )
     assert response.status_code == 502
     assert response.json()["detail"] == "calendar_create_failed"
+
+
+# ─── Sprint 6C: new attendee / field tests ───────────────────────────────────
+
+@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_svc_svc, mock_build):
+    """Participants listed in excluded_user_ids are not added as attendees."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row()
+    proposed_time = _make_proposed_time_row()
+    write_cal = _make_write_cal_row()
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=event_row,
+        proposed_time_row=proposed_time,
+        participants=[
+            _make_participant("bob-uuid", "bob@example.com"),
+            _make_participant("carol-uuid", "carol@example.com"),
+        ],
+        write_cal_rows=[write_cal],
+    ).table.side_effect
+
+    mock_cal_service = MagicMock()
+    inserted_body = {}
+
+    def capture_insert(calendarId, body):
+        inserted_body.update(body)
+        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+
+    mock_cal_service.events.return_value.insert.side_effect = capture_insert
+    mock_build.return_value = mock_cal_service
+
+    response = client.post(
+        "/api/events/event-uid-1/finalize",
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "",
+            "excluded_user_ids": ["carol-uuid"],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "",
+        },
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    attendee_emails = [a["email"] for a in inserted_body.get("attendees", [])]
+    assert "bob@example.com" in attendee_emails
+    assert "carol@example.com" not in attendee_emails
+
+
+@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_extra_emails_added_to_attendees(mock_dep_svc, mock_svc_svc, mock_build):
+    """Emails in extra_emails are appended to the attendees list."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row()
+    proposed_time = _make_proposed_time_row()
+    write_cal = _make_write_cal_row()
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=event_row,
+        proposed_time_row=proposed_time,
+        participants=[_make_participant("bob-uuid", "bob@example.com")],
+        write_cal_rows=[write_cal],
+    ).table.side_effect
+
+    mock_cal_service = MagicMock()
+    inserted_body = {}
+
+    def capture_insert(calendarId, body):
+        inserted_body.update(body)
+        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+
+    mock_cal_service.events.return_value.insert.side_effect = capture_insert
+    mock_build.return_value = mock_cal_service
+
+    response = client.post(
+        "/api/events/event-uid-1/finalize",
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": ["external@partner.com"],
+            "location": "",
+            "video_call_link": "",
+        },
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    attendee_emails = [a["email"] for a in inserted_body.get("attendees", [])]
+    assert "bob@example.com" in attendee_emails
+    assert "external@partner.com" in attendee_emails
+
+
+@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_location_in_gcal_body(mock_dep_svc, mock_svc_svc, mock_build):
+    """location field appears in Google Calendar event body."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row()
+    proposed_time = _make_proposed_time_row()
+    write_cal = _make_write_cal_row()
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=event_row,
+        proposed_time_row=proposed_time,
+        write_cal_rows=[write_cal],
+    ).table.side_effect
+
+    mock_cal_service = MagicMock()
+    inserted_body = {}
+
+    def capture_insert(calendarId, body):
+        inserted_body.update(body)
+        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+
+    mock_cal_service.events.return_value.insert.side_effect = capture_insert
+    mock_build.return_value = mock_cal_service
+
+    response = client.post(
+        "/api/events/event-uid-1/finalize",
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "123 Main St",
+            "video_call_link": "",
+        },
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    assert inserted_body.get("location") == "123 Main St"
+
+
+@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_video_call_link_in_description(mock_dep_svc, mock_svc_svc, mock_build):
+    """video_call_link appears in description as 'Video call: {link}'."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row()
+    proposed_time = _make_proposed_time_row()
+    write_cal = _make_write_cal_row()
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=event_row,
+        proposed_time_row=proposed_time,
+        write_cal_rows=[write_cal],
+    ).table.side_effect
+
+    mock_cal_service = MagicMock()
+    inserted_body = {}
+
+    def capture_insert(calendarId, body):
+        inserted_body.update(body)
+        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+
+    mock_cal_service.events.return_value.insert.side_effect = capture_insert
+    mock_build.return_value = mock_cal_service
+
+    response = client.post(
+        "/api/events/event-uid-1/finalize",
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "https://meet.example.com/abc",
+        },
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    assert inserted_body.get("description") == "Video call: https://meet.example.com/abc"
+
+
+@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_note_and_video_call_link_combined(mock_dep_svc, mock_svc_svc, mock_build):
+    """note + video_call_link produces '{note}\n\nVideo call: {link}' description."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row()
+    proposed_time = _make_proposed_time_row()
+    write_cal = _make_write_cal_row()
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=event_row,
+        proposed_time_row=proposed_time,
+        write_cal_rows=[write_cal],
+    ).table.side_effect
+
+    mock_cal_service = MagicMock()
+    inserted_body = {}
+
+    def capture_insert(calendarId, body):
+        inserted_body.update(body)
+        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+
+    mock_cal_service.events.return_value.insert.side_effect = capture_insert
+    mock_build.return_value = mock_cal_service
+
+    response = client.post(
+        "/api/events/event-uid-1/finalize",
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "See you there!",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "https://meet.example.com/xyz",
+        },
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    expected = "See you there!\n\nVideo call: https://meet.example.com/xyz"
+    assert inserted_body.get("description") == expected
+
+
+@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc, mock_build):
+    """When name differs from event.name, the update payload includes name."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row(name="Team Lunch")
+    proposed_time = _make_proposed_time_row()
+    write_cal = _make_write_cal_row()
+
+    captured_update = {}
+
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=event_row
+            )
+
+            def capture_update(payload):
+                captured_update.update(payload)
+                m = MagicMock()
+                m.eq.return_value.execute.return_value = MagicMock(
+                    data=[{**event_row, "status": "confirmed", "name": payload.get("name", event_row["name"])}]
+                )
+                return m
+
+            tbl.update.side_effect = capture_update
+        elif name == "proposed_times":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=proposed_time
+            )
+        elif name == "event_participants":
+            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+            tbl.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data={
+                    "user_id": "coordinator-uuid-1",
+                    "profiles": {"email_address": "alice@example.com", "full_name": "Alice", "calendar_accounts": []},
+                }
+            )
+        elif name == "calendar_sources":
+            tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[write_cal])
+        elif name == "calendar_accounts":
+            tbl.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data={"id": "cal-1", "credentials": {"access_token": "tok", "refresh_token": "rtok"}}
+            )
+        elif name == "notifications":
+            tbl.insert.return_value.execute.return_value = MagicMock(data=[])
+        return tbl
+
+    mock_svc_svc.table.side_effect = make_table
+
+    mock_cal_service = MagicMock()
+    mock_cal_service.events.return_value.insert.return_value.execute.return_value = {"id": "gcal-1"}
+    mock_build.return_value = mock_cal_service
+
+    response = client.post(
+        "/api/events/event-uid-1/finalize",
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Renamed Lunch",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "",
+        },
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    assert captured_update.get("name") == "Renamed Lunch"
 
 
 # ─── GET /api/events/{uid}/finalize/status ────────────────────────────────────
