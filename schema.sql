@@ -237,7 +237,7 @@ create index proposed_times_event_id_idx on proposed_times(event_id);
 create table notifications (
   id                uuid primary key default gen_random_uuid(),
   user_id           uuid not null references profiles(id) on delete cascade,
-  event_id          uuid references events(id) on delete set null,
+  event_id          uuid references events(id) on delete cascade,
   notification_type notification_type_enum not null,
   title             text not null,
   message           text not null,
