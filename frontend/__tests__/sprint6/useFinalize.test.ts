@@ -28,24 +28,68 @@ const mockFinalizeStatus = {
   finalized_start_time_utc: '2026-04-10T12:00:00+00:00',
   finalized_end_time_utc: '2026-04-10T13:00:00+00:00',
   google_calendar_event_id: 'gcal-event-123',
+  location: 'Conference Room A',
+  video_call_link: 'https://meet.google.com/abc-def-ghi',
+}
+
+const baseFinalizeBody = {
+  proposed_time_id: 'pt-uuid-1',
+  name: 'Team Sync',
+  excluded_user_ids: [],
+  extra_emails: [],
+  note: '',
+  location: '',
+  video_call_link: '',
 }
 
 describe('useFinalize', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('POSTs to the correct finalize endpoint with proposed_time_id and note', async () => {
+  it('POSTs to the correct finalize endpoint with full FinalizeBody', async () => {
     vi.mocked(api.post).mockResolvedValue({ status: 'confirmed' })
 
     const { result } = renderHook(() => useFinalize('event-uid-1'), { wrapper: makeWrapper() })
 
     await act(async () => {
-      result.current.mutate({ proposed_time_id: 'pt-uuid-1', note: 'See you there!' })
+      result.current.mutate({ ...baseFinalizeBody, note: 'See you there!' })
     })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(api.post).toHaveBeenCalledWith('/events/event-uid-1/finalize', {
-      proposed_time_id: 'pt-uuid-1',
+      ...baseFinalizeBody,
       note: 'See you there!',
+    })
+  })
+
+  it('sends excluded_user_ids in the POST body', async () => {
+    vi.mocked(api.post).mockResolvedValue({ status: 'confirmed' })
+
+    const { result } = renderHook(() => useFinalize('event-uid-1'), { wrapper: makeWrapper() })
+
+    await act(async () => {
+      result.current.mutate({ ...baseFinalizeBody, excluded_user_ids: ['user-1', 'user-2'] })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(api.post).toHaveBeenCalledWith('/events/event-uid-1/finalize', {
+      ...baseFinalizeBody,
+      excluded_user_ids: ['user-1', 'user-2'],
+    })
+  })
+
+  it('sends extra_emails in the POST body', async () => {
+    vi.mocked(api.post).mockResolvedValue({ status: 'confirmed' })
+
+    const { result } = renderHook(() => useFinalize('event-uid-1'), { wrapper: makeWrapper() })
+
+    await act(async () => {
+      result.current.mutate({ ...baseFinalizeBody, extra_emails: ['guest@example.com'] })
+    })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(api.post).toHaveBeenCalledWith('/events/event-uid-1/finalize', {
+      ...baseFinalizeBody,
+      extra_emails: ['guest@example.com'],
     })
   })
 })
