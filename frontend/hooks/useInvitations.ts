@@ -15,6 +15,13 @@ export function useInvite(uid: string) {
   })
 }
 
+export function useInviteParticipant() {
+  return useMutation({
+    mutationFn: ({ uid, email }: { uid: string; email: string }) =>
+      api.post<Invitation>(`/events/${uid}/invite`, { email }),
+  })
+}
+
 export function useRespondToInvitation() {
   const queryClient = useQueryClient()
   return useMutation({

@@ -173,6 +173,46 @@ export interface ProposalResponse {
   rank: number
 }
 
+// ─── Event creation wizard ────────────────────────────────────────────────────
+
+export interface Step1Values {
+  name: string
+  event_type: 'meeting' | 'social' | 'birthday' | 'other'
+  description?: string
+  location?: string
+  video_call_link?: string
+}
+
+export interface Step2Values {
+  earliest_date: string
+  latest_date: string
+  start_time: string
+  end_time: string
+  duration_minutes: number
+  participant_emails: string[]
+}
+
+export interface WizardData {
+  step1: Step1Values
+  step2: Step2Values
+}
+
+// ─── Availability grid overlays ───────────────────────────────────────────────
+
+export interface SlotOverlay {
+  startUtc: Date
+  endUtc: Date
+  /** unique participants involved (for intensity) */
+  count: number
+}
+
+export interface ConflictOverlay {
+  startUtc: Date
+  endUtc: Date
+  busyCount: number
+  preferredCount: number
+}
+
 // ─── Finalization ─────────────────────────────────────────────────────────────
 
 export interface FinalizeStatus {
