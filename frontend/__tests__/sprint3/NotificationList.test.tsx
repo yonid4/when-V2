@@ -1,19 +1,27 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NotificationList } from '@/components/notifications/NotificationList'
 import type { Notification } from '@/types'
 
 const mockMarkRead = vi.fn()
-const mockTakeAction = vi.fn()
+const mockRespondToInvitation = vi.fn()
 
 vi.mock('@/hooks/useNotifications', () => ({
   useNotifications: vi.fn(),
   useMarkRead: () => ({ mutate: mockMarkRead }),
-  useTakeAction: () => ({ mutate: mockTakeAction, isPending: false }),
+}))
+
+vi.mock('@/hooks/useInvitations', () => ({
+  useRespondToInvitation: () => ({ mutate: mockRespondToInvitation, isPending: false }),
 }))
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}))
+
+vi.mock('date-fns', () => ({
+  formatDistanceToNow: () => '1 minute ago',
 }))
 
 import { useNotifications } from '@/hooks/useNotifications'
@@ -23,6 +31,7 @@ function makeNotification(overrides: Partial<Notification> = {}): Notification {
     id: 'notif-1',
     user_id: 'user-1',
     event_id: 'evt-1',
+    event_uid: null,
     notification_type: 'invite_accepted',
     title: 'Invitation accepted',
     message: 'Bob accepted the invitation.',
@@ -37,6 +46,11 @@ function makeNotification(overrides: Partial<Notification> = {}): Notification {
   }
 }
 
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
+}
+
 describe('NotificationList', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -44,13 +58,13 @@ describe('NotificationList', () => {
 
   it('shows loading state', () => {
     vi.mocked(useNotifications).mockReturnValue({ data: undefined, isLoading: true } as any)
-    render(<NotificationList />)
+    renderWithQuery(<NotificationList />)
     expect(screen.getByText(/loading/i)).toBeInTheDocument()
   })
 
   it('shows empty state when no notifications', () => {
     vi.mocked(useNotifications).mockReturnValue({ data: [], isLoading: false } as any)
-    render(<NotificationList />)
+    renderWithQuery(<NotificationList />)
     expect(screen.getByText(/no notifications yet/i)).toBeInTheDocument()
   })
 
@@ -59,31 +73,31 @@ describe('NotificationList', () => {
       data: [makeNotification({ title: 'You were invited', message: 'Check it out.' })],
       isLoading: false,
     } as any)
-    render(<NotificationList />)
+    renderWithQuery(<NotificationList />)
     expect(screen.getByText('You were invited')).toBeInTheDocument()
     expect(screen.getByText('Check it out.')).toBeInTheDocument()
   })
 
   it('shows Accept/Decline buttons for unactioned event_invitation', () => {
     vi.mocked(useNotifications).mockReturnValue({
-      data: [makeNotification({ notification_type: 'event_invitation', action_taken: false })],
+      data: [makeNotification({ notification_type: 'event_invitation', action_taken: false, metadata: { invitation_id: 'inv-1' } })],
       isLoading: false,
     } as any)
-    render(<NotificationList />)
+    renderWithQuery(<NotificationList />)
     expect(screen.getByText('Accept')).toBeInTheDocument()
     expect(screen.getByText('Decline')).toBeInTheDocument()
   })
 
-  it('calls takeAction with accept when Accept is clicked', () => {
+  it('calls respondToInvitation with accept when Accept is clicked', () => {
     vi.mocked(useNotifications).mockReturnValue({
-      data: [makeNotification({ id: 'notif-1', notification_type: 'event_invitation', action_taken: false })],
+      data: [makeNotification({ id: 'notif-1', notification_type: 'event_invitation', action_taken: false, metadata: { invitation_id: 'inv-1' } })],
       isLoading: false,
     } as any)
-    render(<NotificationList />)
+    renderWithQuery(<NotificationList />)
     fireEvent.click(screen.getByText('Accept'))
-    expect(mockTakeAction).toHaveBeenCalledWith(
-      { notificationId: 'notif-1', action: 'accept' },
-      expect.objectContaining({ onError: expect.any(Function) }),
+    expect(mockRespondToInvitation).toHaveBeenCalledWith(
+      { invitationId: 'inv-1', action: 'accept' },
+      expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
     )
   })
 
@@ -92,7 +106,7 @@ describe('NotificationList', () => {
       data: [makeNotification({ id: 'notif-2', notification_type: 'invite_accepted', is_read: false })],
       isLoading: false,
     } as any)
-    render(<NotificationList />)
+    renderWithQuery(<NotificationList />)
     fireEvent.click(screen.getByText('Invitation accepted'))
     expect(mockMarkRead).toHaveBeenCalledWith('notif-2')
   })
@@ -102,7 +116,7 @@ describe('NotificationList', () => {
       data: [makeNotification({ notification_type: 'event_invitation', action_taken: true, action_type: 'accept' })],
       isLoading: false,
     } as any)
-    render(<NotificationList />)
+    renderWithQuery(<NotificationList />)
     expect(screen.getByText('Accepted')).toBeInTheDocument()
   })
 })

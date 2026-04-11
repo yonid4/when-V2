@@ -2,6 +2,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
+vi.mock('@/lib/supabase', () => ({
+  supabase: { channel: vi.fn(() => ({ on: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn() })) },
+}))
+
 // Mock next/navigation
 const mockPush = vi.fn()
 vi.mock('next/navigation', () => ({

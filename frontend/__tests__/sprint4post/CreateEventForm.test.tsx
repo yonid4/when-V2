@@ -9,14 +9,20 @@
  */
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // ─── vi.mock calls must appear before any imports that reference mocked modules ──
 // Use vi.hoisted so these variables are available inside factory functions
 
-const { mockPush, mockCreateEvent, mockApiPost } = vi.hoisted(() => ({
+const { mockPush, mockCreateEvent, mockApiPost, mockInviteParticipant } = vi.hoisted(() => ({
   mockPush: vi.fn(),
   mockCreateEvent: vi.fn(),
   mockApiPost: vi.fn().mockResolvedValue({}),
+  mockInviteParticipant: vi.fn().mockResolvedValue({}),
+}))
+
+vi.mock('@/lib/supabase', () => ({
+  supabase: { channel: vi.fn(() => ({ on: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn() })) },
 }))
 
 vi.mock('next/navigation', () => ({
@@ -31,11 +37,21 @@ vi.mock('@/lib/api', () => ({
   api: { post: mockApiPost },
 }))
 
+vi.mock('@/hooks/useInvitations', () => ({
+  useInviteParticipant: () => ({ mutateAsync: mockInviteParticipant, isPending: false }),
+  useRespondToInvitation: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
 vi.mock('next/link', () => ({
   default: ({ href, children, ...props }: any) => <a href={href} {...props}>{children}</a>,
 }))
 
 import NewEventPage, { validateStep2Times } from '@/app/events/new/page'
+
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
+}
 
 // ─── Pure function tests ─────────────────────────────────────────────────────
 
@@ -108,7 +124,7 @@ describe('NewEventPage — Step 2 defaults', () => {
   })
 
   async function advanceToStep2() {
-    render(<NewEventPage />)
+    renderWithQuery(<NewEventPage />)
     // Fill in Step 1 and click Next
     fireEvent.change(screen.getByPlaceholderText(/e\.g\., sunday brunch/i), {
       target: { value: 'Test Event' },
@@ -157,7 +173,7 @@ describe('NewEventPage — Step 2 blocks submission on invalid dates/times', () 
   })
 
   async function advanceToStep2() {
-    render(<NewEventPage />)
+    renderWithQuery(<NewEventPage />)
     fireEvent.change(screen.getByPlaceholderText(/e\.g\., sunday brunch/i), {
       target: { value: 'Block Test' },
     })
@@ -206,7 +222,7 @@ describe('NewEventPage — api.post called per participant', () => {
   })
 
   it('calls api.post once per participant email after event creation', async () => {
-    render(<NewEventPage />)
+    renderWithQuery(<NewEventPage />)
 
     // Step 1
     fireEvent.change(screen.getByPlaceholderText(/e\.g\., sunday brunch/i), {
@@ -240,9 +256,9 @@ describe('NewEventPage — api.post called per participant', () => {
     const [, { onSuccess }] = mockCreateEvent.mock.calls[0]
     await onSuccess({ uid: 'evt-uid-123' })
 
-    expect(mockApiPost).toHaveBeenCalledTimes(2)
-    expect(mockApiPost).toHaveBeenCalledWith('/events/evt-uid-123/invite', { email: 'alice@example.com' })
-    expect(mockApiPost).toHaveBeenCalledWith('/events/evt-uid-123/invite', { email: 'bob@example.com' })
+    expect(mockInviteParticipant).toHaveBeenCalledTimes(2)
+    expect(mockInviteParticipant).toHaveBeenCalledWith({ uid: 'evt-uid-123', email: 'alice@example.com' })
+    expect(mockInviteParticipant).toHaveBeenCalledWith({ uid: 'evt-uid-123', email: 'bob@example.com' })
     expect(mockPush).toHaveBeenCalledWith('/events/evt-uid-123')
   })
 })

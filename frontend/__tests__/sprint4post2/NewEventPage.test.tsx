@@ -7,6 +7,7 @@
  */
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // ─── vi.mock calls must appear before any imports that reference mocked modules ──
 // Use vi.hoisted so these variables are available inside factory functions
@@ -15,6 +16,10 @@ const { mockPush, mockCreateEvent, mockApiPost } = vi.hoisted(() => ({
   mockPush: vi.fn(),
   mockCreateEvent: vi.fn(),
   mockApiPost: vi.fn().mockResolvedValue({}),
+}))
+
+vi.mock('@/lib/supabase', () => ({
+  supabase: { channel: vi.fn(() => ({ on: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn() })) },
 }))
 
 vi.mock('next/navigation', () => ({
@@ -29,11 +34,21 @@ vi.mock('@/lib/api', () => ({
   api: { post: mockApiPost },
 }))
 
+vi.mock('@/hooks/useInvitations', () => ({
+  useInviteParticipant: () => ({ mutateAsync: vi.fn().mockResolvedValue({}), isPending: false }),
+  useRespondToInvitation: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
 vi.mock('next/link', () => ({
   default: ({ href, children, ...props }: any) => <a href={href} {...props}>{children}</a>,
 }))
 
 import NewEventPage, { validateStep2Times } from '@/app/events/new/page'
+
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
+}
 
 // ─── validateStep2Times error strings ────────────────────────────────────────
 
@@ -81,7 +96,7 @@ describe('NewEventPage — start_time/end_time in event creation payload', () =>
   })
 
   it('sends earliest_datetime_utc and latest_datetime_utc as ISO strings', async () => {
-    render(<NewEventPage />)
+    renderWithQuery(<NewEventPage />)
 
     // Step 1
     fireEvent.change(screen.getByPlaceholderText(/e\.g\., sunday brunch/i), {

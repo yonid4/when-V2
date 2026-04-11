@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { toDatetimeLocal, computeEditDiff } from '@/app/events/[uid]/editEventUtils'
 import { validateStep2Times } from '@/app/events/new/page'
+
+vi.mock('@/lib/supabase', () => ({
+  supabase: { channel: vi.fn(() => ({ on: vi.fn(), subscribe: vi.fn(), unsubscribe: vi.fn() })) },
+}))
 import type { EventWithParticipants } from '@/types'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
