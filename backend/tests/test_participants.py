@@ -63,7 +63,7 @@ def _make_event_row(**overrides) -> dict:
 
 # ─── 1. test_get_participants_success ─────────────────────────────────────────
 
-@patch("app.services.participant_service.service_client")
+@patch("app.services.event_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
 def test_get_participants_success(mock_dep_svc, mock_get_authed, mock_svc):
@@ -101,7 +101,7 @@ def test_get_participants_success(mock_dep_svc, mock_get_authed, mock_svc):
 
 # ─── 2. test_get_participants_not_member ──────────────────────────────────────
 
-@patch("app.services.participant_service.service_client")
+@patch("app.services.event_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
 def test_get_participants_not_member(mock_dep_svc, mock_get_authed, mock_svc):
@@ -135,7 +135,7 @@ def test_get_participants_not_member(mock_dep_svc, mock_get_authed, mock_svc):
 
 # ─── 3. test_update_rsvp_own_status ──────────────────────────────────────────
 
-@patch("app.services.participant_service.service_client")
+@patch("app.services.event_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
 def test_update_rsvp_own_status(mock_dep_svc, mock_get_authed, mock_svc):
@@ -281,7 +281,7 @@ def test_get_participants_event_not_found(mock_dep_svc, mock_get_authed):
 
 # ─── 9. test_update_permissions_success ──────────────────────────────────────
 
-@patch("app.services.participant_service.service_client")
+@patch("app.services.event_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
 def test_update_permissions_success(mock_dep_svc, mock_get_authed, mock_svc):

@@ -236,10 +236,11 @@ def test_pick_attendee_email_none_when_no_emails():
 
 # ─── POST /api/events/{uid}/finalize ─────────────────────────────────────────
 
+@patch("app.services.notification_service.service_client")
 @patch("app.services.finalize_service.build")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_build, mock_notif_svc):
     """Coordinator can finalize an event — returns confirmed event row."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -437,10 +438,11 @@ def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc, mock_build)
 
 # ─── Sprint 6C: new attendee / field tests ───────────────────────────────────
 
+@patch("app.services.notification_service.service_client")
 @patch("app.services.finalize_service.build")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_svc_svc, mock_build, mock_notif_svc):
     """Participants listed in excluded_user_ids are not added as attendees."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -489,10 +491,11 @@ def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_sv
     assert "carol@example.com" not in attendee_emails
 
 
+@patch("app.services.notification_service.service_client")
 @patch("app.services.finalize_service.build")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_extra_emails_added_to_attendees(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_extra_emails_added_to_attendees(mock_dep_svc, mock_svc_svc, mock_build, mock_notif_svc):
     """Emails in extra_emails are appended to the attendees list."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()

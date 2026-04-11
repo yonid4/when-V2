@@ -209,7 +209,8 @@ def test_respond_accept(mock_dep_svc, mock_get_authed, mock_inv_svc):
         json={"action": "accept"},
         headers=_auth_headers(),
     )
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert "event_uid" in response.json()
 
 
 # ─── 6. test_respond_decline ─────────────────────────────────────────────────
@@ -233,7 +234,8 @@ def test_respond_decline(mock_dep_svc, mock_get_authed, mock_inv_svc):
         json={"action": "decline"},
         headers=_auth_headers(),
     )
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert "event_uid" in response.json()
 
 
 # ─── 7. test_respond_wrong_user ──────────────────────────────────────────────

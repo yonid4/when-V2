@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, patch, call
 import pytest
 from fastapi import HTTPException
 
-from app.models.event import EventCreate, EventUpdate, EventResponse, ParticipantResponse
+from app.models.event import EventCreate, EventUpdate, EventResponse
+from app.models.participant import ParticipantResponse
 from app.models.user import User
 from app.services import event_service
 

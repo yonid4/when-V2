@@ -163,11 +163,17 @@ def test_take_action_accept(mock_dep_svc, mock_notif_authed, mock_notif_svc, moc
         "updated_at": now,
     }
 
+    updated_notif = {**notif, "action_taken": True, "action_type": "accept"}
+
     # Route db calls by table name to avoid chain collision
+    notif_call_count = {"n": 0}
     def make_db_table(table_name):
         tbl = MagicMock()
         if table_name == "notifications":
-            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[notif])
+            # First call: fetch to verify ownership; second call: re-fetch after update
+            notif_call_count["n"] += 1
+            row = notif if notif_call_count["n"] == 1 else updated_notif
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[row])
         elif table_name == "events":
             tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data={"coordinator_id": "other-user", "name": "Team Lunch"})
         elif table_name == "event_participants":
@@ -183,7 +189,6 @@ def test_take_action_accept(mock_dep_svc, mock_notif_authed, mock_notif_svc, moc
     mock_inv_svc.table.return_value.insert.return_value.execute.return_value = MagicMock(data=[{}])
     mock_inv_svc.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
 
-    updated_notif = {**notif, "action_taken": True, "action_type": "accept"}
     mock_notif_svc.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[updated_notif])
 
     response = client.post(
