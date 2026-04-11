@@ -1,55 +1,27 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { Bell } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { NotificationList } from './NotificationList'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { useNotifications, useMarkAllRead } from '@/hooks/useNotifications'
-import { supabase } from '@/lib/supabase'
+import { useNotificationSubscription } from '@/hooks/useNotificationSubscription'
 import { useAuthStore } from '@/stores/authStore'
 
 export function NotificationBell() {
-  const { unreadCount, increment, reset, setCount } = useNotificationStore()
+  const { unreadCount, reset, setCount } = useNotificationStore()
   const user = useAuthStore((s) => s.user)
-  const queryClient = useQueryClient()
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
   const { data: notifications } = useNotifications()
   const { mutate: markAllRead } = useMarkAllRead()
+
+  useNotificationSubscription(user?.id)
 
   useEffect(() => {
     if (!notifications) return
     const count = notifications.filter((n) => !n.is_read).length
     setCount(count)
   }, [notifications, setCount])
-
-  useEffect(() => {
-    if (!user?.id) return
-
-    const channel = supabase
-      .channel(`notifications-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => {
-          increment()
-          queryClient.invalidateQueries({ queryKey: ['notifications'] })
-        }
-      )
-      .subscribe()
-
-    channelRef.current = channel
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [user?.id, increment, queryClient])
 
   return (
     <Popover onOpenChange={(open) => { if (open) { reset(); markAllRead() } }}>

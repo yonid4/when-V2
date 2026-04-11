@@ -1,69 +1,10 @@
 import Link from 'next/link'
 import { Calendar, ArrowRight } from 'lucide-react'
 import { formatDateWindow } from '@/lib/dates'
+import { EventTypeBadge } from './EventTypeBadge'
+import { StatusBadge } from './StatusBadge'
+import { ParticipantAvatars } from './ParticipantAvatars'
 import type { EventWithParticipants } from '@/types'
-
-const EVENT_TYPE_STYLES: Record<string, string> = {
-  meeting: 'bg-blue-100 text-blue-700',
-  social: 'bg-purple-100 text-purple-700',
-  birthday: 'bg-pink-100 text-pink-700',
-  other: 'bg-gray-100 text-gray-600',
-}
-
-function EventTypeBadge({ type }: { type: string }) {
-  const typeStyle = EVENT_TYPE_STYLES[type?.toLowerCase()] ?? 'bg-gray-100 text-gray-600'
-  return (
-    <span className={`text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${typeStyle}`}>
-      {type}
-    </span>
-  )
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    confirmed: 'bg-secondary-container text-on-secondary-container',
-    planning: 'bg-surface-container-high text-on-surface-variant',
-    cancelled: 'bg-error-container text-on-error-container',
-  }
-  return (
-    <span className={`text-xs font-semibold capitalize px-2 py-0.5 rounded-full ${styles[status] ?? styles.planning}`}>
-      {status}
-    </span>
-  )
-}
-
-function ParticipantAvatars({ participants }: { participants: EventWithParticipants['participants'] }) {
-  const visible = participants.slice(0, 4)
-  const overflow = participants.length - visible.length
-
-  return (
-    <div className="flex items-center">
-      <div className="flex -space-x-2">
-        {visible.map((p) => (
-          <div
-            key={p.user_id}
-            className="w-7 h-7 rounded-full ring-2 ring-surface-container-lowest bg-surface-container-high flex items-center justify-center overflow-hidden"
-            title={p.full_name ?? p.email_address ?? ''}
-          >
-            {p.avatar_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={p.avatar_url} alt={p.full_name ?? ''} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-xs font-bold text-on-surface-variant">
-                {(p.full_name ?? p.email_address ?? '?')[0].toUpperCase()}
-              </span>
-            )}
-          </div>
-        ))}
-        {overflow > 0 && (
-          <div className="w-7 h-7 rounded-full ring-2 ring-surface-container-lowest bg-surface-container-highest flex items-center justify-center">
-            <span className="text-xs font-bold text-on-surface-variant">+{overflow}</span>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 export default function EventCard({ event }: { event: EventWithParticipants }) {
   return (
