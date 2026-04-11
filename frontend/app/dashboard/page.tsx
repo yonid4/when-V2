@@ -85,11 +85,11 @@ export default function DashboardPage() {
               {/* Decorative heatmap grid */}
               <div className="grid grid-cols-7 gap-1 shrink-0" aria-hidden="true">
                 {Array.from({ length: 35 }).map((_, i) => {
-                  const intensity = Math.random()
+                  const v = ((i * 2654435761) >>> 0) % 100
                   const cls =
-                    intensity > 0.7
+                    v > 70
                       ? 'bg-primary'
-                      : intensity > 0.4
+                      : v > 40
                       ? 'bg-primary-container opacity-70'
                       : 'bg-surface-container-high'
                   return <div key={i} className={`w-5 h-5 rounded-sm ${cls}`} />
