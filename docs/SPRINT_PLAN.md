@@ -480,7 +480,7 @@ all participants in real-time.
 
 ---
 
-### Part A — Codebase audit (reporting only)
+### Part A — Codebase audit (reporting only) ✅ DONE
 
 **Scope:**
 - Backend: `routers/`, `services/`, `models/`, `utils/`, `scheduler/`
@@ -499,30 +499,38 @@ all participants in real-time.
 - Summary table (file, lines, violations, severity: LOW / MEDIUM / HIGH / CRITICAL)
 - Top-10 priority refactor list with justification
 
-#### Done when
-`docs/MODULARIZATION_AUDIT.md` exists and covers every file in the listed directories.
+> `docs/MODULARIZATION_AUDIT.md` and `docs/MODULARIZATION_PLAN.md` produced. All P1 items tracked in the plan.
 
 ---
 
-### Part B — Backend service layer cleanup
+### Part B — Backend service layer cleanup (P1 complete)
 
-Based on audit findings:
-- [ ] Extract `HTTPException` raises out of service files into router-level error translation
-- [ ] Move unauthorized `service_client` usages to approved files or replace with `anon_client`
-- [ ] Split oversized service files into focused modules
-- [ ] Create missing service files for logic currently living in routers
+Based on audit findings — P1 items done:
+- [x] Fill `backend/app/models/slot.py` with all slot/proposal/finalize Pydantic models
+- [x] Create `backend/app/services/preferred_slots_service.py` with all four CRUD operations
+- [x] Remove inline helpers from `preferred_slots.py`, `proposals.py`, `finalize.py` routers; route through service layer
+- [ ] Create `backend/app/utils/google_auth.py` and deduplicate credentials construction across `sync_service.py`, `finalize_service.py`, `calendar_service.py` (P2)
+- [ ] Add `get_event_or_404()` to `event_service.py` and replace 5 separate implementations (P2)
+- [ ] Consolidate `ParticipantResponse` and `RsvpStatus` duplicates in models (P2)
+- [ ] Extract `HTTPException` raises out of service files into router-level error translation (P3)
 
 #### Done when
 No service file raises `HTTPException`. `service_client` only in authorized files. No service file exceeds 150 lines without clear justification.
 
 ---
 
-### Part C — Frontend hook and component cleanup
+### Part C — Frontend hook and component cleanup (P1 complete)
 
-Based on audit findings:
-- [ ] Split oversized hook files
-- [ ] Move inline API calls from components into hooks
-- [ ] Consolidate duplicated fetch logic across hooks
+Based on audit findings — P1 items done:
+- [x] Create `frontend/lib/dates.ts` with timezone-aware date helpers
+- [x] Move `Step1Values`, `Step2Values`, `WizardData`, `SlotOverlay`, `ConflictOverlay` into `types/index.ts`
+- [x] Extract `StepIndicator`, `Step1`, `Step2`, `Step3` into `components/event/wizard/`
+- [x] Replace direct `api.post()` in `events/new/page.tsx` event handler with hook mutation
+- [x] Remove `console.error()` from production code in `events/new/page.tsx`
+- [x] Fix dashboard to remove direct `fetch()` calls; use `useEvents()` hook
+- [ ] Roll out `lib/dates.ts` to `NotificationList.tsx`, `EventCard.tsx`, `settings/page.tsx` (P2)
+- [ ] Extract `EventDetailClient.tsx` sections into `EditModal`, `DeleteModal`, `AvailabilityGrid`, `FinalizeCard` components (P2)
+- [ ] Extract remaining inline sub-components from `EventCard.tsx` and `settings/page.tsx` (P2)
 
 #### Done when
 No component calls `api.*` directly. No hook file mixes multiple unrelated domains.

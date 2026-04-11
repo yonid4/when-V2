@@ -72,44 +72,44 @@ Each priority group should be fully complete before the next begins — P2 items
 
 ### Backend — Shared Utilities
 
-- [ ] Create `backend/app/utils/google_auth.py` with a shared credentials builder helper (to be used by `sync_service.py` and `finalize_service.py`)
+- [x] Create `backend/app/utils/google_auth.py` with a shared credentials builder helper (to be used by `sync_service.py` and `finalize_service.py`)
 - [ ] Move `build_oauth_flow()` / `_build_calendar_flow()` to `backend/app/utils/google_auth.py` and remove the duplicate from `backend/app/services/calendar_service.py`
 
 ### Backend — Service Deduplication
 
-- [ ] Remove duplicated credentials construction block from `backend/app/services/sync_service.py` and replace with `utils/google_auth.py` call
-- [ ] Remove duplicated credentials construction block from `backend/app/services/finalize_service.py` and replace with `utils/google_auth.py` call
-- [ ] Add `get_event_or_404()` shared utility to `backend/app/services/event_service.py` (currently 5 separate implementations of the same pattern)
-- [ ] Replace `_get_event_by_uid()` / `_get_event()` in `backend/app/services/invitation_service.py` with call to `event_service.get_event_or_404()`
-- [ ] Replace `_fetch_event()` in `backend/app/services/participant_service.py` with call to `event_service.get_event_or_404()`
-- [ ] Replace `get_event_for_coordinator_sync()` event-fetch pattern in `backend/app/services/busy_slots_service.py` with call to `event_service.get_event_or_404()`
-- [ ] Replace `_get_event_and_check_access()` in `backend/app/routers/proposals.py` with call to `event_service.get_event_or_404()` (after service extraction above)
-- [ ] Replace `_get_event_by_uid()` in `backend/app/routers/finalize.py` with call to `event_service.get_event_or_404()` (after service extraction above)
-- [ ] Remove `_fetch_participants()` duplicate from `backend/app/services/event_service.py` and use `participant_service._fetch_participants_raw()` (or a shared export)
-- [ ] Remove `_fetch_participants_raw()` duplicate from `backend/app/services/participant_service.py` and consolidate with the canonical version
-- [ ] Replace direct `service_client` notification insertion in `backend/app/services/event_service.py:delete_event()` with a call to `notification_service.create_notification()`
-- [ ] Replace direct `service_client` notification insertion in `backend/app/services/finalize_service.py` with calls to `notification_service.create_notification()`
-- [ ] Resolve circular import in `backend/app/services/notification_service.py:take_action()` (currently imports `invitation_service.respond_to_invitation` inside function body to avoid load-time cycle)
+- [x] Remove duplicated credentials construction block from `backend/app/services/sync_service.py` and replace with `utils/google_auth.py` call
+- [x] Remove duplicated credentials construction block from `backend/app/services/finalize_service.py` and replace with `utils/google_auth.py` call
+- [x] Add `fetch_event_by_uid()` shared utility to `backend/app/services/event_service.py` (currently 5 separate implementations of the same pattern)
+- [x] Replace `_get_event_by_uid()` / `_get_event()` in `backend/app/services/invitation_service.py` with call to `event_service.fetch_event_by_uid()`
+- [x] Replace `_fetch_event()` in `backend/app/services/participant_service.py` with call to `event_service.fetch_event_by_uid()`
+- [x] Replace `get_event_for_coordinator_sync()` event-fetch pattern in `backend/app/services/busy_slots_service.py` with call to `event_service.fetch_event_by_uid()`
+- [x] Replace `_get_event_and_check_access()` in `backend/app/routers/proposals.py` with call to `event_service.fetch_event_by_uid()` (after service extraction above)
+- [x] Replace `_get_event_by_uid()` in `backend/app/routers/finalize.py` with call to `event_service.fetch_event_by_uid()` (after service extraction above)
+- [x] Remove `_fetch_participants()` duplicate from `backend/app/services/event_service.py` and use `participant_service._fetch_participants_raw()` (or a shared export)
+- [x] Remove `_fetch_participants_raw()` duplicate from `backend/app/services/participant_service.py` and consolidate with the canonical version
+- [x] Replace direct `service_client` notification insertion in `backend/app/services/event_service.py:delete_event()` with a call to `notification_service.create_notifications()`
+- [x] Replace direct `service_client` notification insertion in `backend/app/services/finalize_service.py` with calls to `notification_service.create_notifications()`
+- [x] Resolve circular import in `backend/app/services/notification_service.py:take_action()` (currently imports `invitation_service.respond_to_invitation` inside function body to avoid load-time cycle)
 
 ### Backend — Router Cleanup
 
-- [ ] Remove `_build_calendar_flow()` duplicate from `backend/app/routers/calendar_accounts.py` and use the shared helper from `backend/app/utils/google_auth.py`
-- [ ] Remove duplicate `SCOPES` list from `backend/app/routers/calendar_accounts.py` and import from `auth_service.py` or the shared util
+- [x] Remove `_build_calendar_flow()` duplicate from `backend/app/routers/calendar_accounts.py` and use the shared helper from `backend/app/utils/google_auth.py`
+- [x] Remove duplicate `SCOPES` list from `backend/app/routers/calendar_accounts.py` and import from `auth_service.py` or the shared util
 
 ### Backend — Models
 
-- [ ] Consolidate `ParticipantResponse` into a single definition in `backend/app/models/participant.py` and remove the duplicate from `backend/app/models/event.py`
-- [ ] Consolidate `RsvpStatus` into a single canonical `Literal` definition in `backend/app/models/participant.py` and remove the duplicate from `backend/app/models/event.py`
+- [x] Consolidate `ParticipantResponse` into a single definition in `backend/app/models/participant.py` and remove the duplicate from `backend/app/models/event.py`
+- [x] Consolidate `RsvpStatus` into a single canonical `Literal` definition in `backend/app/models/participant.py` and remove the duplicate from `backend/app/models/event.py`
 
 ### Frontend — `lib/dates.ts` Rollout
 
-- [ ] Extract `formatLocalTimeRange()` helper (lines 9–19) from `components/notifications/NotificationList.tsx` into `lib/dates.ts`
-- [ ] Extract `getFinalizedMessage()` helper (lines 21–31) from `components/notifications/NotificationList.tsx` into `lib/dates.ts`
-- [ ] Replace direct `date-fns` usage in `components/notifications/NotificationList.tsx` with helpers from `lib/dates.ts`
-- [ ] Replace all `new Date()` usages in display code in `components/notifications/NotificationList.tsx` with `lib/dates.ts` helpers
-- [ ] Move `formatDateWindow()` inline helper (lines 5–9) from `components/dashboard/EventCard.tsx` into `lib/dates.ts`
-- [ ] Replace `new Date()` usage in display code in `components/dashboard/EventCard.tsx` (line 7) with `lib/dates.ts` helper
-- [ ] Replace `new Date(...).toLocaleString()` in `app/settings/page.tsx` (line 124) with `lib/dates.ts` helper
+- [x] Extract `formatLocalTimeRange()` helper (lines 9–19) from `components/notifications/NotificationList.tsx` into `lib/dates.ts`
+- [x] Extract `getFinalizedMessage()` helper (lines 21–31) from `components/notifications/NotificationList.tsx` into `lib/dates.ts`
+- [x] Replace direct `date-fns` usage in `components/notifications/NotificationList.tsx` with helpers from `lib/dates.ts`
+- [x] Replace all `new Date()` usages in display code in `components/notifications/NotificationList.tsx` with `lib/dates.ts` helpers
+- [x] Move `formatDateWindow()` inline helper (lines 5–9) from `components/dashboard/EventCard.tsx` into `lib/dates.ts`
+- [x] Replace `new Date()` usage in display code in `components/dashboard/EventCard.tsx` (line 7) with `lib/dates.ts` helper
+- [x] Replace `new Date(...).toLocaleString()` in `app/settings/page.tsx` (line 124) with `lib/dates.ts` helper
 
 ### Frontend — Component Extractions
 

@@ -1422,3 +1422,113 @@ for call_args in mock_sync_user.call_args_list:
 - **`maybe_single()` vs `.single()` mock chains**: old `test_sync.py` tests used `.single.return_value.execute.return_value` for the events query. After the fix, the service uses `.maybe_single()`. Updated tests use `.maybe_single.return_value.execute.return_value`.
 - **`capture_lt` must accept `(column, value)` not just `(value)`.** The Supabase Python client calls `lt(column, value)` with two positional arguments. A one-argument side_effect raises `TypeError`.
 - **Router no longer holds `service_client`**: patching `app.routers.busy_slots.service_client` raises `AttributeError` because the import was removed as part of Fix 1. Always patch at the module that owns the import.
+
+---
+
+## Modularization — Test Fixes (Regression Pass)
+
+**Completed:** 2026-04-10
+**Result:** All 172 frontend tests passing (16 component-level tests remain skipped — jsdom hang, unchanged); 2 test files skipped
+
+The modularization branch extracted inline code from `EventDetailClient.tsx` and `app/events/new/page.tsx` into separate component and utility files. This broke several test files that imported from the old locations or relied on implementation details that changed.
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `frontend/app/events/new/page.tsx` | Added `export { validateStep2Times }` re-exported from `Step2` component (3 test files import it from `page.tsx`) |
+| `frontend/__tests__/sprint3/NotificationList.test.tsx` | Replaced `useTakeAction` mock with `useRespondToInvitation`; added `QueryClientProvider` wrapper; fixed `onSuccess` callback shape |
+| `frontend/__tests__/sprint4post/NotificationList.test.tsx` | Same as sprint3 version — mocked wrong hook; fixed hook, wrapper, and callback shape |
+| `frontend/__tests__/CreateEventForm.test.tsx` | Added `vi.mock('@/lib/supabase', ...)` — import chain crash from `NewEventPage → Navbar → NotificationBell → lib/supabase.ts` |
+| `frontend/__tests__/sprint4/EventDetailClient.test.ts` | Added `vi.mock('@/lib/supabase', ...)` and `vi` import — same import chain crash |
+| `frontend/__tests__/sprint4post/CreateEventForm.test.tsx` | Added `vi.mock('@/lib/supabase', ...)`; added `vi.mock('@/hooks/useInvitations', ...)`; added `QueryClientProvider` wrapper via `renderWithQuery`; updated "api.post per participant" test to assert on `mockInviteParticipant` (hook level) instead of `mockApiPost` (api level) |
+| `frontend/__tests__/sprint4post2/NewEventPage.test.tsx` | Added `vi.mock('@/lib/supabase', ...)`; added `vi.mock('@/hooks/useInvitations', ...)`; added `QueryClientProvider` wrapper via `renderWithQuery` |
+
+### Root Causes Fixed
+
+**1. Wrong hook mocked in NotificationList tests**
+
+The `NotificationList` component uses `useRespondToInvitation` (from `hooks/useInvitations.ts`), which calls `useMutation` which calls `useQueryClient()`. Tests were mocking `useTakeAction` from `hooks/useNotifications.ts` — a completely different hook. This meant the real `useRespondToInvitation` ran unmocked, hit `useQueryClient()`, and crashed with "No QueryClient set".
+
+Fix: mock `@/hooks/useInvitations` with `useRespondToInvitation: () => ({ mutate: mockRespondToInvitation, isPending: false })` and add `QueryClientProvider` wrapper.
+
+**2. `validateStep2Times` not re-exported from `page.tsx`**
+
+After modularization, `validateStep2Times` lives in `components/event/wizard/Step2.tsx`. Three test files import it from `app/events/new/page.tsx`. Fixed by adding `export { validateStep2Times }` after the import in `page.tsx`.
+
+**3. `supabaseUrl is required` crash on module import**
+
+`NewEventPage` imports `Navbar`, which imports `NotificationBell`, which imports `lib/supabase.ts`, which calls `createClient()` requiring `NEXT_PUBLIC_SUPABASE_URL`. This import chain runs at Vite transform time even in pure-function tests that never render a component. Fixed by adding `vi.mock('@/lib/supabase', ...)` to all 4 affected test files.
+
+**4. `useInviteParticipant` requires `QueryClientProvider`**
+
+`NewEventPage` calls `useInviteParticipant()` from `hooks/useInvitations.ts`, which calls `useMutation`, which calls `useQueryClient()`. Three test files rendered `<NewEventPage />` without a `QueryClientProvider` wrapper. Fixed by adding the mock and `renderWithQuery` helper to both `sprint4post/CreateEventForm.test.tsx` and `sprint4post2/NewEventPage.test.tsx`.
+
+**5. "api.post per participant" test assertion mismatch**
+
+After mocking `useInvitations` at the hook level, `api.post` is no longer called — the hook mock intercepts before reaching `lib/api`. The test previously checked `mockApiPost` call args. Updated to assert on `mockInviteParticipant` with `{ uid, email }` shape (the actual `mutateAsync` argument).
+
+### Mock Patterns
+
+#### Mocking `useInvitations` when `useInviteParticipant` is in scope
+```typescript
+// Must appear before the component import
+vi.mock('@/hooks/useInvitations', () => ({
+  useInviteParticipant: () => ({ mutateAsync: mockInviteParticipant, isPending: false }),
+  useRespondToInvitation: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+// mockInviteParticipant must be declared via vi.hoisted():
+const { mockInviteParticipant } = vi.hoisted(() => ({
+  mockInviteParticipant: vi.fn().mockResolvedValue({}),
+}))
+```
+
+#### `renderWithQuery` helper for component tests
+```typescript
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+function renderWithQuery(ui: React.ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
+}
+```
+
+### Gotchas
+
+- **Import chain crashes don't require rendering.** `vi.mock('@/lib/supabase', ...)` is needed even in test files that only test pure functions (no `render()` call), as long as any import in the file's transitive import graph touches `lib/supabase.ts`.
+- **`useInviteParticipant` is called unconditionally at component mount**, not inside a callback. The `useQueryClient()` call inside `useMutation` fires immediately, so the crash happens on `render()` even before any user interaction.
+- **Asserting on the hook's `mutateAsync`, not `api.post`.** When `useInviteParticipant` is mocked at the hook level, `api.post` is never reached. Tests asserting invitation calls must check `mockInviteParticipant({ uid, email })` shape — not `mockApiPost('/events/{uid}/invite', { email })` shape.
+
+---
+
+## Modularization — Backend Test Fixes (Stale Assertions)
+
+**Completed:** 2026-04-10
+**Result:** 144/144 backend tests passing (previously 3 failing)
+
+### Files Modified
+
+| File | Tests Fixed |
+|------|-------------|
+| `backend/tests/test_invitations.py` | `test_respond_accept`, `test_respond_decline` |
+| `backend/tests/test_notifications.py` | `test_take_action_accept` |
+
+### What Was Fixed
+
+#### `test_respond_accept` / `test_respond_decline` — wrong status code assertion
+
+Tests expected `204 No Content`. The router (`routers/invitations.py`) had been updated to return `200` with an `InvitationRespondResponse` body containing `event_uid` (used by the frontend for post-accept redirect). Tests were never updated to match.
+
+**Fix:** Changed assertion from `status_code == 204` to `status_code == 200` and added `assert "event_uid" in response.json()`.
+
+#### `test_take_action_accept` — stale mock returned old notification on re-fetch
+
+`notification_service.take_action()` updates the notification via `service_client`, then re-fetches it via `db` (authed client) to return the updated row. The test's `make_db_table` mock for `"notifications"` always returned the original unmodified row, so `action_taken` was still `False` on the re-fetch.
+
+**Fix:** Added call counter to the mock so the first `notifications` table call (ownership check) returns the original row and the second call (post-update re-fetch) returns `{...notif, "action_taken": True, "action_type": "accept"}`. Removed the now-redundant `updated_notif` assignment that had been placed below the mock setup.
+
+### Gotchas
+
+- **Two-client update pattern requires two-phase mocks.** When a service method writes via `service_client` and re-reads via the authed `db` client, the `db` mock must return different data on successive calls to the same table — not the same row both times.
+- **Router response shape changed during modularization; tests were not updated.** The invitation respond endpoint was changed from `204 No Content` to `200` + `InvitationRespondResponse` to carry back `event_uid`. Always cross-check router `status_code=` and `response_model=` annotations against test assertions after router changes.
