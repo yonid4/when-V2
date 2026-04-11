@@ -113,12 +113,12 @@ Each priority group should be fully complete before the next begins — P2 items
 
 ### Frontend — Component Extractions
 
-- [ ] Extract Supabase real-time subscription from `components/notifications/NotificationBell.tsx` into a `useNotificationSubscription` hook
-- [ ] Extract `EventTypeBadge` inline sub-component (lines 18–25) from `components/dashboard/EventCard.tsx` into a separate component file
-- [ ] Extract `StatusBadge` inline sub-component (lines 27–38) from `components/dashboard/EventCard.tsx` into a separate component file
-- [ ] Extract `ParticipantAvatars` inline sub-component (lines 40–71) from `components/dashboard/EventCard.tsx` into a separate component file
-- [ ] Extract `SourceRow` inline sub-component (lines 142–188) from `app/settings/page.tsx` into `components/`
-- [ ] Remove inline TypeScript interfaces from JSX props in `app/settings/page.tsx` and move to `types/index.ts`
+- [x] Extract Supabase real-time subscription from `components/notifications/NotificationBell.tsx` into a `useNotificationSubscription` hook
+- [x] Extract `EventTypeBadge` inline sub-component (lines 18–25) from `components/dashboard/EventCard.tsx` into a separate component file
+- [x] Extract `StatusBadge` inline sub-component (lines 27–38) from `components/dashboard/EventCard.tsx` into a separate component file
+- [x] Extract `ParticipantAvatars` inline sub-component (lines 40–71) from `components/dashboard/EventCard.tsx` into a separate component file
+- [x] Extract `SourceRow` inline sub-component (lines 142–188) from `app/settings/page.tsx` into `components/`
+- [x] Remove inline TypeScript interfaces from JSX props in `app/settings/page.tsx` and move to `types/index.ts`
 
 ---
 
