@@ -87,6 +87,14 @@ export function formatLongDate(utcString: string): string {
 }
 
 /**
+ * Format a UTC timestamp as a locale-aware date+time string.
+ * e.g. "2024-06-15T14:30:00Z" → "6/15/2024, 2:30:00 PM" (locale-dependent)
+ */
+export function formatDateTime(utcString: string): string {
+  return new Date(utcString).toLocaleString()
+}
+
+/**
  * Build the confirmation message for a finalized-event notification.
  * Falls back to the raw notification message if metadata is missing.
  */

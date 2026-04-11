@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { Calendar, Plus, Trash2, RefreshCw, X } from 'lucide-react'
 import { useState } from 'react'
 import { useCalendarAccounts, useDisconnectCalendarAccount, useUpdateCalendarSource, useConnectCalendarAccount } from '@/hooks/useCalendarAccounts'
+import { formatDateTime } from '@/lib/dates'
 import { Navbar } from '@/components/layout/Navbar'
 import { useSyncMyCalendar } from '@/hooks/useBusySlots'
 import type { CalendarSource } from '@/types'
@@ -121,7 +122,7 @@ export default function SettingsPage() {
           <footer className="mt-4 pt-8 border-t border-outline-variant/10 flex justify-between items-center flex-wrap gap-4">
             <p className="text-sm text-on-surface-variant">
               {accounts[0]?.last_synced_at
-                ? `Last synced ${new Date(accounts[0].last_synced_at).toLocaleString()}`
+                ? `Last synced ${formatDateTime(accounts[0].last_synced_at)}`
                 : 'Not yet synced'}
             </p>
             <button

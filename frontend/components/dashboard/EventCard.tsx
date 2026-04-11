@@ -1,12 +1,7 @@
 import Link from 'next/link'
 import { Calendar, ArrowRight } from 'lucide-react'
+import { formatDateWindow } from '@/lib/dates'
 import type { EventWithParticipants } from '@/types'
-
-function formatDateWindow(earliest: string, latest: string): string {
-  const fmt = (d: string) =>
-    new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  return `${fmt(earliest)} – ${fmt(latest)}`
-}
 
 const EVENT_TYPE_STYLES: Record<string, string> = {
   meeting: 'bg-blue-100 text-blue-700',

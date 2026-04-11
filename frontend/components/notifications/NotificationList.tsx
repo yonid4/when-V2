@@ -4,31 +4,8 @@ import { useRouter } from 'next/navigation'
 import { formatDistanceToNow } from 'date-fns'
 import { useNotifications, useMarkRead } from '@/hooks/useNotifications'
 import { useRespondToInvitation } from '@/hooks/useInvitations'
+import { getFinalizedMessage } from '@/lib/dates'
 import type { Notification } from '@/types'
-
-function formatLocalTimeRange(startUtc: string, endUtc: string): string {
-  const start = new Date(startUtc)
-  const end = new Date(endUtc)
-  const sameDay = start.toDateString() === end.toDateString()
-  const dateStr = start.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-  const startTime = start.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  const endTime = end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  if (sameDay) return `${dateStr} at ${startTime} – ${endTime}`
-  const endDateStr = end.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-  return `${dateStr} at ${startTime} – ${endDateStr} at ${endTime}`
-}
-
-function getFinalizedMessage(n: Notification): string {
-  const meta = n.metadata
-  if (
-    meta &&
-    typeof meta.finalized_start_time_utc === 'string' &&
-    typeof meta.finalized_end_time_utc === 'string'
-  ) {
-    return `The event has been confirmed for ${formatLocalTimeRange(meta.finalized_start_time_utc, meta.finalized_end_time_utc)}`
-  }
-  return n.message
-}
 
 export function NotificationList() {
   const router = useRouter()

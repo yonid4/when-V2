@@ -7,7 +7,8 @@ import { useInviteParticipant } from '@/hooks/useInvitations'
 import type { Step1Values, Step2Values, WizardData } from '@/types'
 import { StepIndicator } from '@/components/event/wizard/StepIndicator'
 import { Step1 } from '@/components/event/wizard/Step1'
-import { Step2 } from '@/components/event/wizard/Step2'
+import { Step2, validateStep2Times } from '@/components/event/wizard/Step2'
+export { validateStep2Times }
 import { Step3 } from '@/components/event/wizard/Step3'
 import { Navbar } from '@/components/layout/Navbar'
 
