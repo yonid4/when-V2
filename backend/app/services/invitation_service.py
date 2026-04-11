@@ -4,6 +4,7 @@ from fastapi import HTTPException
 
 from app.models.invitation import InvitationResponse
 from app.models.user import User
+from app.services.event_service import fetch_event_by_uid
 from app.utils.email import normalize_email
 from app.utils.supabase import get_authed_client, service_client
 
@@ -21,17 +22,10 @@ def _row_to_response(row: dict) -> InvitationResponse:
     )
 
 
-def _get_event_by_uid(uid: str, db) -> dict:
-    result = db.table('events').select('id, coordinator_id, name').eq('uid', uid).maybe_single().execute()
-    if not result or not result.data:
-        raise HTTPException(status_code=404, detail='Event not found')
-    return result.data
-
-
 def invite_by_email(uid: str, current_user: User, email: str) -> InvitationResponse:
     email = normalize_email(email)
     db = get_authed_client(current_user.token)
-    event = _get_event_by_uid(uid, db)
+    event = fetch_event_by_uid(uid, db)
     event_id = event['id']
     event_name = event['name']
 

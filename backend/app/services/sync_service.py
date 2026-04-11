@@ -1,10 +1,9 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from app.config import settings
+from app.utils.google_auth import credentials_from_dict
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -38,13 +37,7 @@ def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
     for account in accounts.data or []:
         creds_data = account.get("credentials") or {}
         original_token = creds_data.get("access_token")
-        credentials = Credentials(
-            token=original_token,
-            refresh_token=creds_data.get("refresh_token"),
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=settings.google_client_id,
-            client_secret=settings.google_client_secret,
-        )
+        credentials = credentials_from_dict(creds_data)
 
         try:
             cal_service = build("calendar", "v3", credentials=credentials)

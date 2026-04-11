@@ -3,7 +3,6 @@ import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import RedirectResponse
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from app.config import settings
@@ -11,33 +10,11 @@ from app.dependencies import get_current_user
 from app.models.calendar import CalendarAccountResponse
 from app.models.user import User
 from app.services import calendar_service
+from app.utils.google_auth import build_calendar_flow
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/calendar-accounts", tags=["calendar-accounts"])
-
-SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/calendar.events",
-]
-
-
-def _build_calendar_flow() -> Flow:
-    client_config = {
-        "web": {
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [settings.google_calendar_redirect_uri],
-        }
-    }
-    flow = Flow.from_client_config(client_config, scopes=SCOPES)
-    flow.redirect_uri = settings.google_calendar_redirect_uri
-    return flow
 
 
 @router.get("", response_model=list[CalendarAccountResponse])
@@ -48,7 +25,7 @@ def list_accounts(current_user: User = Depends(get_current_user)):
 @router.get("/connect-url")
 def connect_google_url(current_user: User = Depends(get_current_user)):
     """Returns the Google OAuth URL as JSON so the frontend can redirect without losing the Authorization header."""
-    flow = _build_calendar_flow()
+    flow = build_calendar_flow()
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
@@ -60,7 +37,7 @@ def connect_google_url(current_user: User = Depends(get_current_user)):
 
 @router.get("/connect")
 def connect_google(current_user: User = Depends(get_current_user)):
-    flow = _build_calendar_flow()
+    flow = build_calendar_flow()
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         prompt="consent",
@@ -72,7 +49,7 @@ def connect_google(current_user: User = Depends(get_current_user)):
 @router.get("/callback")
 def google_calendar_callback(code: str, state: str):
     """Receives the OAuth callback. `state` carries the user_id."""
-    flow = _build_calendar_flow()
+    flow = build_calendar_flow()
     flow._state = state
     try:
         flow.fetch_token(code=code)

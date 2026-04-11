@@ -3,37 +3,21 @@
 import logging
 
 from fastapi import HTTPException
-from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from app.config import settings
 from app.models.user import User
+from app.services.event_service import fetch_event_by_uid
+from app.services.notification_service import create_notifications
+from app.utils.google_auth import credentials_from_dict
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
 
 
-def get_event_by_uid(uid: str) -> dict:
-    """Look up event by uid. Raises 404 if not found."""
-    result = (
-        service_client.table("events")
-        .select(
-            "id, uid, coordinator_id, status, finalized_start_time_utc, "
-            "finalized_end_time_utc, google_calendar_event_id"
-        )
-        .eq("uid", uid)
-        .maybe_single()
-        .execute()
-    )
-    if not result or not result.data:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return result.data
-
-
 def get_finalize_status(uid: str, user_id: str) -> dict:
     """Return finalization status for an event. Accessible by coordinator or accepted participant."""
-    event = get_event_by_uid(uid)
+    event = fetch_event_by_uid(uid, db=service_client)
 
     if event["coordinator_id"] != user_id:
         participant_result = (
@@ -176,13 +160,7 @@ def finalize_event(
         raise HTTPException(status_code=422, detail="no_write_calendar")
 
     creds_data = creds_result.data.get("credentials") or {}
-    credentials = Credentials(
-        token=creds_data.get("access_token"),
-        refresh_token=creds_data.get("refresh_token"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=settings.google_client_id,
-        client_secret=settings.google_client_secret,
-    )
+    credentials = credentials_from_dict(creds_data)
 
     # 6. Build attendees list.
     # Start with accepted participants minus excluded ones.
@@ -312,7 +290,6 @@ def finalize_event(
             },
         })
 
-    if notification_rows:
-        client.table("notifications").insert(notification_rows).execute()
+    create_notifications(notification_rows)
 
     return updated_event

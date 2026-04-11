@@ -6,6 +6,7 @@ moved here so the router can stay free of database concerns.
 
 from fastapi import HTTPException, status
 
+from app.services.event_service import fetch_event_by_uid
 from app.utils.supabase import service_client
 
 
@@ -31,21 +32,11 @@ def get_event_busy_slots(event_uid: str, current_user_id: str) -> list[dict]:
     Returns an empty list (not 404) when the event has no participants yet.
     Raises 404 when the event does not exist.
     """
-    # Fetch the event — use maybe_single so missing rows return None gracefully
-    event = (
-        service_client.table("events")
-        .select("id, coordinator_id, earliest_datetime_utc, latest_datetime_utc")
-        .eq("uid", event_uid)
-        .maybe_single()
-        .execute()
-    )
-    if not event.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-
-    event_id = event.data["id"]
-    coordinator_id = event.data["coordinator_id"]
-    earliest = event.data["earliest_datetime_utc"]
-    latest = event.data["latest_datetime_utc"]
+    event = fetch_event_by_uid(event_uid, db=service_client)
+    event_id = event["id"]
+    coordinator_id = event["coordinator_id"]
+    earliest = event["earliest_datetime_utc"]
+    latest = event["latest_datetime_utc"]
 
     # Authorization check: must be coordinator or accepted/invited participant
     if current_user_id != coordinator_id:
@@ -58,7 +49,7 @@ def get_event_busy_slots(event_uid: str, current_user_id: str) -> list[dict]:
             .maybe_single()
             .execute()
         )
-        if not participant.data:
+        if not participant or not participant.data:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You are not a participant of this event",
@@ -95,20 +86,12 @@ def get_event_for_coordinator_sync(event_uid: str, current_user_id: str) -> dict
     Raises 403 if current_user is not the coordinator.
     Returns the event row dict on success.
     """
-    event = (
-        service_client.table("events")
-        .select("id, coordinator_id, earliest_datetime_utc, latest_datetime_utc")
-        .eq("uid", event_uid)
-        .maybe_single()
-        .execute()
-    )
-    if not event.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    event = fetch_event_by_uid(event_uid, db=service_client)
 
-    if event.data["coordinator_id"] != current_user_id:
+    if event["coordinator_id"] != current_user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the coordinator can sync all participants",
         )
 
-    return event.data
+    return event

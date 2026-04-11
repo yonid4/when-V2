@@ -1,10 +1,58 @@
 from datetime import datetime, timezone
 from fastapi import HTTPException
 
-from app.models.event import EventCreate, EventUpdate, EventResponse, ParticipantResponse
+from app.models.event import EventCreate, EventUpdate, EventResponse
+from app.models.participant import ParticipantResponse
 from app.models.user import User
 from app.utils.supabase import get_authed_client, service_client
 from app.utils.uid import generate_uid
+
+
+def _fetch_participants_raw(event_id: str, db) -> list[dict]:
+    ep_result = (
+        db.table('event_participants')
+        .select('event_id, user_id, status, rsvp_status, can_invite, joined_at')
+        .eq('event_id', event_id)
+        .execute()
+    )
+    participants = ep_result.data or []
+    if not participants:
+        return []
+
+    user_ids = [p['user_id'] for p in participants]
+    profile_result = (
+        service_client.table('profiles')
+        .select('id, full_name, avatar_url, email_address')
+        .in_('id', user_ids)
+        .execute()
+    )
+    profile_map = {p['id']: p for p in (profile_result.data or [])}
+
+    rows = []
+    for p in participants:
+        profile = profile_map.get(p['user_id'], {})
+        rows.append({
+            **p,
+            'full_name': profile.get('full_name'),
+            'avatar_url': profile.get('avatar_url'),
+            'email_address': profile.get('email_address'),
+        })
+    return rows
+
+
+def fetch_event_by_uid(uid: str, db=None) -> dict:
+    """Fetch an event row by uid. Raises 404 if not found."""
+    client = db if db is not None else service_client
+    result = (
+        client.table('events')
+        .select('*')
+        .eq('uid', uid)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail='Event not found')
+    return result.data
 
 
 def _row_to_event_response(row: dict, participants: list[dict]) -> EventResponse:
@@ -47,40 +95,6 @@ def _row_to_event_response(row: dict, participants: list[dict]) -> EventResponse
     )
 
 
-def _fetch_participants(event_id: str, db) -> list[dict]:
-    # Fetch participant rows with authed client (respects RLS for event_participants)
-    ep_result = (
-        db.table('event_participants')
-        .select('event_id, user_id, status, rsvp_status, can_invite, joined_at')
-        .eq('event_id', event_id)
-        .execute()
-    )
-    participants = ep_result.data or []
-    if not participants:
-        return []
-
-    # Fetch profile data via service_client to bypass RLS on profiles table
-    user_ids = [p['user_id'] for p in participants]
-    profile_result = (
-        service_client.table('profiles')
-        .select('id, full_name, avatar_url, email_address')
-        .in_('id', user_ids)
-        .execute()
-    )
-    profile_map = {p['id']: p for p in (profile_result.data or [])}
-
-    rows = []
-    for p in participants:
-        profile = profile_map.get(p['user_id'], {})
-        row = {
-            **p,
-            'full_name': profile.get('full_name'),
-            'avatar_url': profile.get('avatar_url'),
-            'email_address': profile.get('email_address'),
-        }
-        rows.append(row)
-    return rows
-
 
 def create_event(data: EventCreate, current_user: User) -> EventResponse:
     db = get_authed_client(current_user.token)
@@ -119,7 +133,7 @@ def create_event(data: EventCreate, current_user: User) -> EventResponse:
     }
     db.table('event_participants').insert(participant_data).execute()
 
-    participants = _fetch_participants(event_id, db)
+    participants = _fetch_participants_raw(event_id, db)
     return _row_to_event_response(event_row, participants)
 
 
@@ -162,7 +176,7 @@ def get_events_for_user(current_user: User) -> list[EventResponse]:
 
     responses = []
     for event_row in all_events:
-        participants = _fetch_participants(event_row['id'], db)
+        participants = _fetch_participants_raw(event_row['id'], db)
         responses.append(_row_to_event_response(event_row, participants))
 
     return responses
@@ -184,7 +198,7 @@ def get_event_by_uid(uid: str, current_user: User) -> EventResponse:
     event_row = result.data
     event_id = event_row['id']
 
-    participants = _fetch_participants(event_id, db)
+    participants = _fetch_participants_raw(event_id, db)
 
     # Check access: must be coordinator or participant
     user_ids = {p['user_id'] for p in participants}
@@ -213,7 +227,7 @@ def update_event(uid: str, data: EventUpdate, current_user: User) -> EventRespon
 
     update_data = data.model_dump(exclude_none=True)
     if not update_data:
-        participants = _fetch_participants(event_row['id'], db)
+        participants = _fetch_participants_raw(event_row['id'], db)
         return _row_to_event_response(event_row, participants)
 
     # Serialize datetime fields
@@ -235,7 +249,7 @@ def update_event(uid: str, data: EventUpdate, current_user: User) -> EventRespon
     if not updated.data:
         raise HTTPException(status_code=500, detail='Failed to update event')
 
-    participants = _fetch_participants(event_row['id'], db)
+    participants = _fetch_participants_raw(event_row['id'], db)
     return _row_to_event_response(updated.data[0], participants)
 
 

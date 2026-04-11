@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 
+from app.services.event_service import fetch_event_by_uid
 from app.utils.supabase import service_client
 
 
@@ -12,17 +13,7 @@ def get_event_and_check_access(uid: str, user_id: str, coordinator_only: bool = 
     Returns the event row (includes proposals_needs_regeneration).
     Raises 404 if not found, 403 if unauthorized.
     """
-    event_result = (
-        service_client.table("events")
-        .select("id, coordinator_id, proposals_needs_regeneration")
-        .eq("uid", uid)
-        .maybe_single()
-        .execute()
-    )
-    if not event_result or not event_result.data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
-
-    event = event_result.data
+    event = fetch_event_by_uid(uid, db=service_client)
 
     if event["coordinator_id"] == user_id:
         return event
