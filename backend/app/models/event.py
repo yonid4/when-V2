@@ -2,23 +2,10 @@ from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel
 
+from app.models.participant import ParticipantResponse  # noqa: F401 — re-exported for callers
 
 EventType = Literal['meeting', 'social', 'birthday', 'other']
 EventStatus = Literal['planning', 'confirmed', 'cancelled']
-ParticipantStatus = Literal['invited', 'accepted', 'declined', 'maybe']
-RsvpStatus = Literal['pending', 'going', 'maybe', 'not_going']
-
-
-class ParticipantResponse(BaseModel):
-    event_id: str
-    user_id: str
-    status: ParticipantStatus
-    rsvp_status: RsvpStatus | None
-    can_invite: bool
-    joined_at: datetime
-    full_name: str | None
-    avatar_url: str | None
-    email_address: str | None
 
 
 class EventCreate(BaseModel):

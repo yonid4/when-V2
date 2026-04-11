@@ -2,14 +2,15 @@ from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel
 
-RsvpStatus = Literal['going', 'maybe', 'not_going']
+ParticipantStatus = Literal['invited', 'accepted', 'declined', 'maybe']
+RsvpStatus = Literal['pending', 'going', 'maybe', 'not_going']
 
 
 class ParticipantResponse(BaseModel):
     event_id: str
     user_id: str
-    status: str
-    rsvp_status: str | None
+    status: ParticipantStatus
+    rsvp_status: RsvpStatus | None
     can_invite: bool
     joined_at: datetime
     full_name: str | None = None
