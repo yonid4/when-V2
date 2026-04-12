@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import {
   MapPin,
   Trash2,
@@ -15,7 +14,6 @@ import {
   CalendarCheck,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
 import { useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
 import { usePreferredSlots, useSavePreferredSlot, useDeletePreferredSlot } from '@/hooks/usePreferredSlots'
 import { useAvailabilitySegments } from '@/hooks/useAvailabilitySegments'
@@ -24,12 +22,13 @@ import { FinalizeCard } from './FinalizeCard'
 import { ProposalList } from './ProposalList'
 import { GridHeader } from './GridHeader'
 import { supabase } from '@/lib/supabase'
+import { useEventSubscriptions, useEventPresence } from '@/hooks/useEventSubscriptions'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
 import { Navbar } from '@/components/layout/Navbar'
 import { useAuthStore } from '@/stores/authStore'
-import type { EventWithParticipants, EventType, PreferredSlot, Participant } from '@/types'
+import type { EventWithParticipants, PreferredSlot } from '@/types'
 import { toDate, formatDateWindowWithYear, formatTime, formatLongDate } from '@/lib/dates'
 import { typeLabel } from '@/lib/eventUtils'
 import { StatusBadge } from '@/components/event/StatusBadge'
@@ -146,6 +145,12 @@ export default function EventDetailClient({
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [event.id, event.uid, queryClient])
+
+  // Real-time: busy_slots INSERT + event_participants INSERT
+  useEventSubscriptions(event.uid, event.id)
+
+  // Presence: who else is viewing this event right now
+  const presentUsers = useEventPresence(event.uid, user ?? null)
 
   const { mutate: syncAll, isPending: isSyncingAll } = useSyncCalendar(event.uid)
 
@@ -374,17 +379,18 @@ export default function EventDetailClient({
     <div className="h-screen flex flex-col overflow-hidden">
       <Navbar />
 
-      {/* Two-column full-height split */}
-      <main className="flex-1 min-h-0 flex flex-row overflow-hidden">
+      {/* Two-column full-height split — stacked on mobile, side-by-side on md+ */}
+      <main className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
 
         {/* ── Left: Availability Grid ── */}
-        <section className="flex-1 min-h-0 flex flex-col overflow-hidden p-6 lg:p-8 bg-surface">
+        <section className="flex-1 min-h-0 flex flex-col overflow-hidden p-4 md:p-6 lg:p-8 bg-surface">
           <div className="flex flex-col flex-1 gap-4 min-h-0">
 
             <GridHeader
               isEditMode={isEditMode}
               eventStatus={event.status}
               onEdit={enterEditMode}
+              presentUsers={presentUsers}
             />
 
             {/* Grid — extra bottom padding when action bar is visible */}
@@ -452,7 +458,7 @@ export default function EventDetailClient({
         </section>
 
         {/* ── Right: Event Info + Actions ── */}
-        <section className="w-full md:w-[456px] shrink-0 lg:w-[504px] xl:w-[552px] h-full overflow-y-auto hide-scrollbar bg-surface-container-low p-6 flex flex-col gap-8 shadow-[-20px_0_40px_-15px_rgba(0,0,0,0.03)] z-10">
+        <section className="w-full md:w-[400px] shrink-0 lg:w-[456px] xl:w-[504px] md:h-full overflow-y-auto hide-scrollbar bg-surface-container-low p-4 md:p-6 flex flex-col gap-6 md:gap-8 shadow-[-20px_0_40px_-15px_rgba(0,0,0,0.03)] z-10">
 
           {/* ── Section 1: Event Header card ── */}
           <div className="bg-surface-container-lowest p-6 rounded-lg relative shadow-sm">

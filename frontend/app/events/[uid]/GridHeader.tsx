@@ -2,21 +2,63 @@
 
 import { Pencil } from 'lucide-react'
 
+interface PresenceUser {
+  user_id: string
+  avatar_url: string | null
+  full_name: string | null
+}
+
 export function GridHeader({
   isEditMode,
   eventStatus,
   onEdit,
+  presentUsers = [],
 }: {
   isEditMode: boolean
   eventStatus: string
   onEdit: () => void
+  presentUsers?: PresenceUser[]
 }) {
+  const visibleUsers = presentUsers.slice(0, 5)
+  const overflowCount = presentUsers.length - visibleUsers.length
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-extrabold font-headline text-primary tracking-tight">
-          Availability Grid
-        </h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-3xl font-extrabold font-headline text-primary tracking-tight">
+            Availability Grid
+          </h2>
+          {presentUsers.length > 0 && (
+            <div className="flex items-center gap-1" title="Currently viewing">
+              <div className="flex -space-x-1.5">
+                {visibleUsers.map((u) =>
+                  u.avatar_url ? (
+                    <img
+                      key={u.user_id}
+                      src={u.avatar_url}
+                      alt={u.full_name ?? ''}
+                      className="w-6 h-6 rounded-full border-2 border-surface object-cover"
+                    />
+                  ) : (
+                    <div
+                      key={u.user_id}
+                      className="w-6 h-6 rounded-full border-2 border-surface bg-primary/20 flex items-center justify-center text-[9px] font-bold text-primary"
+                    >
+                      {(u.full_name ?? '?').charAt(0).toUpperCase()}
+                    </div>
+                  )
+                )}
+                {overflowCount > 0 && (
+                  <div className="w-6 h-6 rounded-full border-2 border-surface bg-surface-container-high flex items-center justify-center text-[9px] font-bold text-on-surface-variant">
+                    +{overflowCount}
+                  </div>
+                )}
+              </div>
+              <span className="text-[10px] text-on-surface-variant/60 ml-1">also viewing</span>
+            </div>
+          )}
+        </div>
         {/* Legend */}
         <div className="flex flex-wrap gap-4 text-[10px] sm:text-xs font-bold uppercase tracking-wider">
           <div className="flex items-center gap-2">
