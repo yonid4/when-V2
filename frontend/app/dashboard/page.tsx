@@ -1,16 +1,25 @@
-'use client'
-
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { Plus, Calendar, CalendarCheck, ExternalLink } from 'lucide-react'
 
-import { useEvents } from '@/hooks/useEvent'
-import { useCalendarAccounts } from '@/hooks/useCalendarAccounts'
+import { fetchEvents, fetchCalendarAccounts } from './fetchers'
 import EventCard from '@/components/dashboard/EventCard'
 import { Navbar } from '@/components/layout/Navbar'
 
-export default function DashboardPage() {
-  const { data: events = [] } = useEvents()
-  const { data: calendarAccounts = [] } = useCalendarAccounts()
+export default async function DashboardPage() {
+  const cookieStore = await cookies()
+  const token = cookieStore.get('token')?.value
+
+  if (!token) {
+    redirect('/')
+  }
+
+  const [events, calendarAccounts] = await Promise.all([
+    fetchEvents(token),
+    fetchCalendarAccounts(token),
+  ])
+
   const calendarConnected = calendarAccounts.length > 0
 
   return (
