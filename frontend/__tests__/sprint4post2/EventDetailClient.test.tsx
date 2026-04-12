@@ -26,7 +26,6 @@ vi.mock('@/hooks/useEvent', () => ({
 }))
 
 vi.mock('@/hooks/useBusySlots', () => ({
-  useEventBusySlots: () => ({ data: [] }),
   useSyncCalendar: () => ({ mutate: vi.fn(), isPending: false }),
   useSyncMyCalendar: () => ({ mutate: vi.fn(), isPending: false }),
 }))

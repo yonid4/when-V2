@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { computeMerge } from '@/lib/editModeUtils'
-import type { PendingSlot } from '@/lib/editModeUtils'
+import type { PendingSlot } from '@/types'
 import type { PreferredSlot } from '@/types'
 
 function makeSlot(
