@@ -475,3 +475,21 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **The stale deletion delete call must be skipped entirely when `stale_event_ids` is empty.**
   The implementation gates the delete behind `if stale_event_ids:` — this is intentional and must be preserved. Running `.delete().eq(...).in_("provider_event_id", [])` against Supabase with an empty list produces undefined behavior (may delete all rows for the source). Tests must assert `mock_svc.table.return_value.delete.assert_not_called()` when no stale slots exist.
+
+---
+
+## Modularization — Model Polish
+
+### Backend
+
+- **`notification_type` Literal must include `'invite_accepted'` — the task spec listed only three values but a fourth is actively used.**
+  The modularization task specified `Literal['event_invitation', 'event_finalized', 'event_deleted']` for `NotificationResponse.notification_type`. However, `invitation_service.py` writes `notification_type='invite_accepted'` rows when invitations are accepted. Adding a Literal that omits an in-use value would cause runtime Pydantic validation errors for every accepted invitation notification. Always grep for actual values before tightening a `str` field — the grep is: `grep -r "notification_type" backend/app/services/ --include="*.py"`.
+
+- **Pydantic V2 auto-coerces ISO strings to `datetime` fields — no caller changes needed when tightening DB-mapped models.**
+  Changing `BusySlotResponse.start_time_utc` / `end_time_utc` from `str` to `datetime`, and `CalendarSourceResponse.created_at` / `updated_at` from `Optional[str]` to `datetime | None`, did not require any changes in `calendar_service.py`. Pydantic V2 parses ISO strings (as returned by Supabase) automatically when the declared field type is `datetime`. All 137 backend tests passed after the change with no modifications to callers.
+
+- **`proposal_service.py` DB column / API field split is already consistent — no bug found.**
+  The task suspected a mismatch between the DB column name `conflicts` and the frontend-expected field `conflict_count`. On inspection, both `get_cached_proposals` and `generate_proposals` already read the DB column `conflicts` and map it to the key `conflict_count` in every returned dict, and `ProposalResponse` uses `conflict_count: int`. The split is intentional and correct — DB stores `conflicts`, API exposes `conflict_count`.
+
+- **`models/participant.py` was already fully tightened in a prior sprint — Task 5 was a no-op.**
+  `ParticipantStatus` and `RsvpStatus` were already `Literal` types, `status` was already `ParticipantStatus`, and `rsvp_status` was already `RsvpStatus | None`. The grep confirmed `'pending'` is a valid in-use value (included in the Literal). No changes needed.
