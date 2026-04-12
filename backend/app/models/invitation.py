@@ -13,7 +13,7 @@ class InvitationResponse(BaseModel):
     inviter_id: str
     invitee_id: str | None
     invitee_email: str
-    status: str
+    status: Literal['pending', 'accepted', 'declined']
     created_at: datetime
     updated_at: datetime
 
