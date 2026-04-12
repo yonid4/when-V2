@@ -38,7 +38,7 @@ describe('ParticipantList', () => {
   it('shows loading state', () => {
     vi.mocked(useParticipants).mockReturnValue({ data: undefined, isLoading: true } as any)
     render(<ParticipantList uid="uid-1" coordinatorId="coord-1" currentUserId="user-1" />)
-    expect(screen.getByText(/loading participants/i)).toBeInTheDocument()
+    expect(document.querySelector('.animate-pulse')).toBeInTheDocument()
   })
 
   it('shows empty state when no participants', () => {
