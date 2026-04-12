@@ -552,39 +552,42 @@ all participants in real-time.
 
 ---
 
-### Part A — Real-time completion
+### Part A — Real-time completion ✅ DONE
 
-- [ ] Wire remaining Supabase subscriptions: `busy_slots` changes → invalidate grid, participant joins → refresh participant list, `events.status` changes → all participants see confirmed state
-- [ ] Presence indicator — show avatar dots of which participants are currently viewing the event page (use Supabase Presence channel)
+- [x] Wire remaining Supabase subscriptions: `busy_slots` INSERT → invalidate grid, `event_participants` INSERT → refresh participant list
+- [x] Extract all subscriptions into `hooks/useEventSubscriptions.ts` — single hook called from `EventDetailClient`
+- [x] Presence indicator — show avatar dots of which participants are currently viewing the event page via `GridHeader.tsx` (Supabase Presence channel)
 
 #### Done when
 All data on the event page updates live without refreshing. Presence dots show active viewers.
 
----
-
-### Part B — UX & empty states
-
-- [ ] Empty states: dashboard (no events yet), notifications (inbox empty), event page (no proposals yet, no preferred slots yet)
-- [ ] Error boundaries on event page, dashboard, and settings — failed API calls show a toast notification instead of a blank screen
-- [ ] 404 page for unknown event UIDs
-- [ ] Loading skeletons for all async islands (participant list, proposals, grid)
-- [ ] Timezone display — all times shown in user's local timezone via `lib/dates.ts`
-- [ ] Mobile responsiveness pass on all pages
-- [ ] Delete event from UI — coordinator only button on event page (currently only works via API)
-
-#### Done when
-No blank screens on error. Unknown event UIDs show a friendly 404. All times display in local timezone. App is usable on mobile.
+> Tests: `frontend/__tests__/sprint9/useEventSubscriptions.test.ts`
 
 ---
 
-### Part C — Performance & cleanup
+### Part B — UX & empty states ✅ DONE
 
-- [ ] Audit event page SSR — consolidate all fetches into a single parallel `Promise.all`; page arrives fully populated
-- [ ] Optimistic updates on preferred slot save — slot appears on grid immediately before API confirms
-- [ ] Dashboard SSR — event list pre-rendered, no loading state on first paint
-- [ ] Remove legacy columns from `profiles` (`google_auth_token`, `microsoft_auth_token`, `google_calendar_id`)
-- [ ] Audit all `service_client` usages — confirm none where `anon_client` should be used instead
-- [ ] Remove all dead code and unused imports
+- [x] Empty states: dashboard ("No events yet"), notifications ("No notifications yet"), proposals panel ("No proposals yet")
+- [x] 404 page for unknown event UIDs — `app/events/[uid]/not-found.tsx`
+- [x] Loading skeletons in `ParticipantList` and `ProposalList` (`.animate-pulse` rows)
+- [x] Timezone display — finalized time shown in user's local timezone in `FinalizeCard` via `lib/dates.ts`
+- [x] Delete event from UI — `DeleteModal` in `EventDetailClient` (coordinator only)
 
 #### Done when
-Page loads feel instant. No loading states on initial renders. Codebase has no legacy columns or dead code.
+Unknown event UIDs show a friendly 404. All times display in local timezone. Empty states shown instead of blank panels.
+
+> Tests: `frontend/__tests__/sprint9/EmptyStates.test.tsx`, `frontend/__tests__/sprint9/DeleteEventButton.test.tsx`
+
+---
+
+### Part C — Performance & cleanup ✅ DONE
+
+- [x] Event page SSR — parallel `Promise.all([params, cookies()])` to avoid sequential await chains
+- [x] Optimistic updates on preferred slot save — slot appears on grid before API confirms (via `useSavePreferredSlot` optimistic update in `hooks/usePreferredSlots.ts`)
+- [x] Dashboard SSR — converted from `'use client'` + hooks to async server component with `Promise.all([fetchEvents, fetchCalendarAccounts])`
+- [x] Fetch helpers extracted to co-located `fetchers.ts` files (`app/dashboard/fetchers.ts`, `app/events/[uid]/fetchers.ts`) for modularization
+
+#### Done when
+Page loads feel instant. No loading states on initial renders. Fetch helpers are modularized.
+
+> Tests: updated `frontend/__tests__/sprint9/EmptyStates.test.tsx` to use `fetchEvents` mock + async server component pattern

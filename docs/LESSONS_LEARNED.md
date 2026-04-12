@@ -517,3 +517,36 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **The migration pattern for `bool` returns (vs `None`).**
   For functions that return nothing on success (e.g. `disconnect_account`), use `-> bool` instead of `-> None | something`. Service returns `True` on success, `False` on error. Router checks `if not ok: raise HTTPException(...)`. Cleaner than a typed sentinel value.
+
+---
+
+## Sprint 9 — Polish, Performance & Real-time Completion
+
+### Testing Async Server Components in Vitest / jsdom
+
+- **`cookies()` from `next/headers` throws "called outside a request scope" in jsdom — mock it at the `vi.mock` level.**
+  Next.js server APIs (`cookies()`, `headers()`) depend on the Next.js request context, which does not exist in jsdom. Any test that imports a page component that calls `cookies()` will throw before rendering. Fix: `vi.mock('next/headers', () => ({ cookies: vi.fn().mockResolvedValue({ get: () => ({ value: 'test-token' }) }) }))`. This resolves synchronously and the component never hits the real API.
+
+- **Await the async server component to get its resolved JSX before passing to `render()`.**
+  Async server components are async functions that return JSX. `render(DashboardPage)` does not work — you must `await` the component first: `const jsx = await DashboardPage(); render(jsx)`. This is the correct pattern for testing Next.js async server components in Vitest without a real request context.
+
+- **Mock per-route `fetchers.ts` files, not the hooks they replaced.**
+  After converting a page from a `'use client'` hook-driven component to an async server component, any test that mocked `useEvents` must switch to mocking `fetchEvents` from the new `fetchers.ts`. The component no longer calls the hook at all, so the hook mock is silently ignored — the test passes but is testing nothing. Always trace the actual data path after an SSR conversion.
+
+### Modularization — `fetchers.ts` Pattern
+
+- **Extract all server-side fetch helpers into co-located `fetchers.ts` files, not inline in page components.**
+  Each page route directory that performs SSR data fetching should have a `fetchers.ts` alongside `page.tsx`. The page file stays declarative (auth check → data fetch → render). This makes the fetch functions independently testable and keeps page files short. Pattern: `app/dashboard/fetchers.ts` exports `fetchEvents(token)` and `fetchCalendarAccounts(token)`; `app/events/[uid]/fetchers.ts` exports `fetchEvent(uid, token)`.
+
+- **SSR fetch helpers return empty arrays / null on failure — no separate error state.**
+  Server components cannot propagate an `isError` boolean to the page JSX the way TanStack Query does. The `fetchers.ts` pattern wraps all fetches in try/catch and returns `[]` or `null` on any non-200 response. The page renders an empty state rather than an error state. Remove any "error state" tests that depended on `useEvents`'s `isError` — they no longer apply.
+
+### TypeScript — Partial `UseQueryResult` Mocks
+
+- **Partial `UseQueryResult` objects require `as unknown as ReturnType<typeof hook>` to satisfy TypeScript.**
+  `UseQueryResult<T>` has ~20 required fields. When mocking a hook in tests with only `{ data, isLoading }`, TypeScript rejects the cast. The correct pattern is `vi.mocked(useHook).mockReturnValue({ data: ..., isLoading: false } as unknown as ReturnType<typeof useHook>)`. The double cast (`as unknown` first) bypasses structural type checking while keeping the mock readable.
+
+### `ProposalResponse` Type — Field Rename
+
+- **`ProposalResponse.score` was replaced by `conflict_count` and `preferred_count` in Sprint 8 — update test fixtures.**
+  The Sprint 8 modularization changed the proposal response shape: `score: number` was removed; `conflict_count: int` and `preferred_count: int` were added as separate fields. Any test fixture using `score: 0.9` will fail with "Object literal may only specify known properties". Replace with `conflict_count: 0, preferred_count: 3` (or whatever values apply). When updating tests after a type change, always grep `ProposalResponse` usages before writing fixtures.
