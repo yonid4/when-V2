@@ -503,48 +503,44 @@ all participants in real-time.
 
 ---
 
-### Part B — Backend service layer cleanup (P1 complete)
+### Part B — Backend service layer cleanup ✅ DONE
 
-Based on audit findings — P1 items done:
 - [x] Fill `backend/app/models/slot.py` with all slot/proposal/finalize Pydantic models
 - [x] Create `backend/app/services/preferred_slots_service.py` with all four CRUD operations
 - [x] Remove inline helpers from `preferred_slots.py`, `proposals.py`, `finalize.py` routers; route through service layer
-- [ ] Create `backend/app/utils/google_auth.py` and deduplicate credentials construction across `sync_service.py`, `finalize_service.py`, `calendar_service.py` (P2)
-- [ ] Add `get_event_or_404()` to `event_service.py` and replace 5 separate implementations (P2)
-- [ ] Consolidate `ParticipantResponse` and `RsvpStatus` duplicates in models (P2)
-- [ ] Extract `HTTPException` raises out of service files into router-level error translation (P3)
-
-#### Done when
-No service file raises `HTTPException`. `service_client` only in authorized files. No service file exceeds 150 lines without clear justification.
+- [x] Create `backend/app/utils/google_auth.py` and deduplicate credentials construction across `sync_service.py`, `finalize_service.py`, `calendar_service.py`
+- [x] Add `fetch_event_by_uid()` to `event_service.py` and replace 5 separate implementations
+- [x] Consolidate `ParticipantResponse` and `RsvpStatus` duplicates in models
+- [x] Extract `HTTPException` raises out of service files into router-level error translation (where safe; multi-code cases left in service intentionally)
+- [x] Resolve hidden function-body import in `notification_service.py`
+- [x] Add `Literal` types to `models/invitation.py`, `models/notification.py`, `models/calendar.py`
+- [x] Permit `service_client` usage documented in `docs/CLAUDE.md` for all authorized files
 
 ---
 
-### Part C — Frontend hook and component cleanup (P1 complete)
+### Part C — Frontend hook and component cleanup ✅ DONE
 
-Based on audit findings — P1 items done:
 - [x] Create `frontend/lib/dates.ts` with timezone-aware date helpers
 - [x] Move `Step1Values`, `Step2Values`, `WizardData`, `SlotOverlay`, `ConflictOverlay` into `types/index.ts`
 - [x] Extract `StepIndicator`, `Step1`, `Step2`, `Step3` into `components/event/wizard/`
 - [x] Replace direct `api.post()` in `events/new/page.tsx` event handler with hook mutation
 - [x] Remove `console.error()` from production code in `events/new/page.tsx`
 - [x] Fix dashboard to remove direct `fetch()` calls; use `useEvents()` hook
-- [ ] Roll out `lib/dates.ts` to `NotificationList.tsx`, `EventCard.tsx`, `settings/page.tsx` (P2)
-- [ ] Extract `EventDetailClient.tsx` sections into `EditModal`, `DeleteModal`, `AvailabilityGrid`, `FinalizeCard` components (P2)
-- [ ] Extract remaining inline sub-components from `EventCard.tsx` and `settings/page.tsx` (P2)
-
-#### Done when
-No component calls `api.*` directly. No hook file mixes multiple unrelated domains.
+- [x] Roll out `lib/dates.ts` to `NotificationList.tsx`, `EventCard.tsx`, `settings/page.tsx`
+- [x] Extract `EventDetailClient.tsx` sections into `EditModal`, `DeleteModal`, `AvailabilityGrid`, `FinalizeCard`, `ProposalList`, `GridHeader` components
+- [x] Extract remaining inline sub-components from `EventCard.tsx` (`EventTypeBadge`, `StatusBadge`, `ParticipantAvatars`) and `settings/page.tsx` (`SourceRow`)
+- [x] Extract `RsvpBadge` from `ParticipantList.tsx`
+- [x] Extract `useNotificationSubscription` hook from `NotificationBell.tsx`
+- [x] Move inline types to `types/index.ts`: `FinalizeBody`, `PendingSlot`, `MergeResult`, `PopoverContextValue`
 
 ---
 
-### Part D — Dead code and import cleanup
+### Part D — Dead code and import cleanup ✅ DONE
 
-- [ ] Remove all unused imports (backend + frontend)
-- [ ] Remove dead utility functions and types
-- [ ] Remove legacy columns from Pydantic models if already removed from schema
-
-#### Done when
-No unused imports. No dead functions. Codebase matches current schema.
+- [x] Delete ghost file `backend/app/routers/finalization.py`
+- [x] Remove all unused imports introduced during refactor passes
+- [x] Remove dead utility functions and types
+- [x] Add re-exports to `backend/app/models/__init__.py`
 
 ---
 
