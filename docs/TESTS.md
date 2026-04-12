@@ -1532,3 +1532,34 @@ Tests expected `204 No Content`. The router (`routers/invitations.py`) had been 
 
 - **Two-client update pattern requires two-phase mocks.** When a service method writes via `service_client` and re-reads via the authed `db` client, the `db` mock must return different data on successive calls to the same table — not the same row both times.
 - **Router response shape changed during modularization; tests were not updated.** The invitation respond endpoint was changed from `204 No Content` to `200` + `InvitationRespondResponse` to carry back `event_uid`. Always cross-check router `status_code=` and `response_model=` annotations against test assertions after router changes.
+
+---
+
+## Modularization — Refactor Clean Pass
+
+**Completed:** 2026-04-11
+**Result:** 145/145 backend tests passing, 155/155 frontend tests passing
+
+### What Was Removed / Changed
+
+#### Backend — unnecessary comments stripped
+
+Comments of the form `# HTTPException: leave here — ...` were removed from six service files. These comments explained reasoning that was already tracked in `docs/LESSONS_LEARNED.md` and `docs/MODULARIZATION_AUDIT.md`. The code itself is self-documenting — `raise HTTPException` in a service is visible without annotation.
+
+Files cleaned: `event_service.py`, `invitation_service.py`, `notification_service.py`, `proposal_service.py`
+
+#### Frontend — duplicate import removed
+
+`AvailabilityGrid.tsx` imported `PendingSlot` twice (once in the multi-import at line 4, once standalone at line 11). Consolidated to a single import.
+
+#### Frontend — `useAvailabilitySegments` staleTime added
+
+Hook was missing `staleTime`. Without it, TanStack Query treated segments as immediately stale, triggering a refetch on every component mount. Added `staleTime: 60_000` (60 seconds) — availability data computed server-side does not change faster than that without a real-time event.
+
+#### Frontend — `AvailabilityGrid` segment filtering optimized
+
+The render loop was iterating `segments` three times per column (once per type: `conflict`, `busy`, `preferred`) plus once for the day-bounds filter — four passes total per column × 7 columns. Replaced with a single `reduce` pass that groups segments by type into `colSegmentsByType`, then each overlay block reads directly from `colSegmentsByType['conflict']`, `colSegmentsByType['busy']`, `colSegmentsByType['preferred']`.
+
+### Gotchas
+
+- **Double invalidation in `EventDetailClient` (`preferred-slots` + `availability-segments`) is intentional.** The `availability-segments` endpoint computes from both `busy_slots` and `preferred_slots` server-side, so when `preferred_slots` changes, both queries must be invalidated independently — they are separate fetches, not derived on the client.

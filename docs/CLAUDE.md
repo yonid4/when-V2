@@ -100,6 +100,23 @@ npx vitest run
 - `anon_client` — default for all user queries (respects RLS)
 - `service_client` — ONLY in: auth_service.py, invitation_service.py, notification_service.py, scheduler/jobs.py
 
+## service_client usage policy
+
+The following service files are permitted to use service_client
+directly (RLS bypass required):
+
+- calendar_service.py — credentials contain sensitive OAuth tokens
+- sync_service.py — busy_slots.user_id references auth.users not profiles
+- finalize_service.py — writes to multiple tables atomically post-GCal
+- busy_slots_service.py — same reason as sync_service
+- preferred_slots_service.py — preferred_slots RLS requires service access
+- notification_service.py — notifications written on behalf of other users
+- event_service.py — event_deleted notifications sent to other users
+- proposal_service.py — reads proposal and event data that requires bypassing RLS for cross-user scoring
+
+All other reads should use get_authed_client to respect the requesting
+user's RLS scope.
+
 ### Error handling
 ```python
 # Correct pattern

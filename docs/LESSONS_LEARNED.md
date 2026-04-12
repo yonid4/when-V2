@@ -493,3 +493,27 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **`models/participant.py` was already fully tightened in a prior sprint — Task 5 was a no-op.**
   `ParticipantStatus` and `RsvpStatus` were already `Literal` types, `status` was already `ParticipantStatus`, and `rsvp_status` was already `RsvpStatus | None`. The grep confirmed `'pending'` is a valid in-use value (included in the Literal). No changes needed.
+
+---
+
+## Modularization — HTTPException Migration
+
+### Backend
+
+- **The three-condition rule: only migrate an HTTPException to the router if all three hold.**
+  (1) The service function is called by exactly one router. (2) The router does not already handle the same error case. (3) Moving it does not require duplicating the check in multiple callers. Fail any condition → leave the exception in the service.
+
+- **The disambiguation problem: `return None` is useless when a service raises multiple distinct status codes.**
+  When a service function can raise both 403 and 404, replacing both with `return None` loses the status code. The router can't know which to use. Any function that raises more than one distinct status code must keep its exceptions in the service.
+
+- **Single-error-code functions with a single caller are always safe to migrate.**
+  `create_event` (500 only), `get_finalize_status` (403 only), `disconnect_account` (403 only), `get_event_busy_slots` (403 only), `get_event_for_coordinator_sync` (403 only) — all moved. Service returns `None`; router raises with the one known status code.
+
+- **`respond_to_invitation` fails Condition 1 — called by both a router and another service.**
+  `invitation_service.respond_to_invitation` is called by `routers/invitations.py` AND by `notification_service.take_action`. Multiple callers → all exceptions stay in the service. Always grep all callers before migrating: `grep -r "respond_to_invitation" backend/app/ --include="*.py"`.
+
+- **`sync_service.py` had no HTTPExceptions at all — nothing to migrate.**
+  The service returns data directly and lets callers handle the logic. Worth noting because it proves the final architecture is achievable without HTTPExceptions in services.
+
+- **The migration pattern for `bool` returns (vs `None`).**
+  For functions that return nothing on success (e.g. `disconnect_account`), use `-> bool` instead of `-> None | something`. Service returns `True` on success, `False` on error. Router checks `if not ok: raise HTTPException(...)`. Cleaner than a typed sentinel value.

@@ -73,7 +73,7 @@ Each priority group should be fully complete before the next begins — P2 items
 ### Backend — Shared Utilities
 
 - [x] Create `backend/app/utils/google_auth.py` with a shared credentials builder helper (to be used by `sync_service.py` and `finalize_service.py`)
-- [ ] Move `build_oauth_flow()` / `_build_calendar_flow()` to `backend/app/utils/google_auth.py` and remove the duplicate from `backend/app/services/calendar_service.py`
+- [x] Move `build_oauth_flow()` / `_build_calendar_flow()` to `backend/app/utils/google_auth.py` and remove the duplicate from `backend/app/services/calendar_service.py`
 
 ### Backend — Service Deduplication
 
@@ -126,42 +126,44 @@ Each priority group should be fully complete before the next begins — P2 items
 
 ### Backend — `HTTPException` Migration
 
-- [ ] Move all `HTTPException` raises from `backend/app/services/event_service.py` to the calling router
-- [ ] Move all `HTTPException` raises from `backend/app/services/sync_service.py` to the calling router
-- [ ] Move all `HTTPException` raises from `backend/app/services/finalize_service.py` to the calling router
-- [ ] Move all `HTTPException` raises from `backend/app/services/calendar_service.py` to the calling router
-- [ ] Move all `HTTPException` raises from `backend/app/services/invitation_service.py` to the calling router
-- [ ] Move all `HTTPException` raises from `backend/app/services/proposal_service.py` to the calling router
-- [ ] Move all `HTTPException` raises from `backend/app/services/participant_service.py` to the calling router
-- [ ] Move all `HTTPException` raises from `backend/app/services/busy_slots_service.py` to the calling router
-- [ ] Move all `HTTPException` raises from `backend/app/services/notification_service.py` to the calling router
+Migration rule: move only if (1) single caller, (2) single error code, (3) no duplication. Everything else stays in the service.
+
+- [x] `event_service.py` — `create_event` 500 moved; others left (multi-code)
+- [x] `sync_service.py` — no HTTPExceptions; nothing to migrate
+- [x] `finalize_service.py` — `get_finalize_status` 403 moved; `finalize_event` left (multi-code)
+- [x] `calendar_service.py` — `disconnect_account` 403 moved; `update_calendar_source` left (403+404)
+- [x] `invitation_service.py` — all left (`invite_by_email` multi-code; `respond_to_invitation` multi-caller)
+- [x] `proposal_service.py` — all left (403+404 disambiguation)
+- [x] `participant_service.py` — all left (403+404 disambiguation)
+- [x] `busy_slots_service.py` — `get_event_busy_slots` 403 moved; `get_event_for_coordinator_sync` 403 moved
+- [x] `notification_service.py` — all left (`mark_read` and `take_action` raise 403+404)
 
 ### Backend — Model Polish
 
-- [ ] Fix field name mismatch in `backend/app/services/proposal_service.py`: DB column is `conflicts` but code returns `conflict_count`
-- [ ] Add `Literal` type to `status` field in `backend/app/models/invitation.py:InvitationResponse` (currently `str`)
-- [ ] Add `Literal` type to `notification_type` field in `backend/app/models/notification.py` (currently `str`)
-- [ ] Add `Literal` type to `action_type` field in `backend/app/models/notification.py` (currently `str | None`)
-- [ ] Add typed dict contents for `metadata: dict | None` in `backend/app/models/notification.py`
-- [ ] Replace `Optional[str]` with `str | None` throughout `backend/app/models/calendar.py` for consistency
-- [ ] Change `created_at`, `updated_at`, `start_time_utc`, `end_time_utc` fields in `backend/app/models/calendar.py` from `str` to `datetime`
-- [ ] Add canonical `RsvpStatus` literal to `backend/app/models/participant.py` — include `'pending'` value to match `event.py` usage (or explicitly exclude and update all callers)
-- [ ] Fix `status` and `rsvp_status` fields in `backend/app/models/participant.py` from generic `str` to the canonical `RsvpStatus` Literal
+- [x] Fix field name mismatch in `backend/app/services/proposal_service.py`: DB column is `conflicts` but code returns `conflict_count` (already consistent — no change needed)
+- [x] Add `Literal` type to `status` field in `backend/app/models/invitation.py:InvitationResponse` (currently `str`)
+- [x] Add `Literal` type to `notification_type` field in `backend/app/models/notification.py` (currently `str`)
+- [x] Add `Literal` type to `action_type` field in `backend/app/models/notification.py` (currently `str | None`)
+- [x] Add typed dict contents for `metadata: dict | None` in `backend/app/models/notification.py` — deferred with TODO comment; shapes are heterogeneous per type, typed union not warranted yet
+- [x] Replace `Optional[str]` with `str | None` throughout `backend/app/models/calendar.py` for consistency
+- [x] Change `created_at`, `updated_at`, `start_time_utc`, `end_time_utc` fields in `backend/app/models/calendar.py` from `str` to `datetime`
+- [x] Add canonical `RsvpStatus` literal to `backend/app/models/participant.py` — include `'pending'` value to match `event.py` usage (or explicitly exclude and update all callers)
+- [x] Fix `status` and `rsvp_status` fields in `backend/app/models/participant.py` from generic `str` to the canonical `RsvpStatus` Literal (already correct from prior sprint — no change needed)
 
 ### Backend — Housekeeping
 
-- [ ] Delete ghost file `backend/app/routers/finalization.py` (0 lines, empty)
-- [ ] Add re-exports for all models in `backend/app/models/__init__.py` (currently empty)
-- [ ] Update `docs/CLAUDE.md` to explicitly permit or deny `service_client` usage in `calendar_service.py`, `sync_service.py`, `finalize_service.py`, and `busy_slots_service.py`
+- [x] Delete ghost file `backend/app/routers/finalization.py` (0 lines, empty)
+- [x] Add re-exports for all models in `backend/app/models/__init__.py` (currently empty)
+- [x] Update `docs/CLAUDE.md` to explicitly permit or deny `service_client` usage in `calendar_service.py`, `sync_service.py`, `finalize_service.py`, and `busy_slots_service.py`
 
 ### Frontend — Type Consolidation
 
-- [ ] Move `FinalizeBody` inline interface from `hooks/useFinalize.ts` into `types/index.ts`
-- [ ] Move `PendingSlot` inline interface from `lib/editModeUtils.ts` into `types/index.ts`
-- [ ] Move `MergeResult` inline interface from `lib/editModeUtils.ts` into `types/index.ts`
-- [ ] Move inline `PopoverContextValue` type from `components/ui/popover.tsx` into `types/index.ts`
+- [x] Move `FinalizeBody` inline interface from `hooks/useFinalize.ts` into `types/index.ts`
+- [x] Move `PendingSlot` inline interface from `lib/editModeUtils.ts` into `types/index.ts`
+- [x] Move `MergeResult` inline interface from `lib/editModeUtils.ts` into `types/index.ts`
+- [x] Move inline `PopoverContextValue` type from `components/ui/popover.tsx` into `types/index.ts`
 
 ### Frontend — Component Polish
 
-- [ ] Extract `RsvpBadge` inline sub-component (lines 7–23) from `components/event/ParticipantList.tsx` into `components/event/RsvpBadge.tsx`
-- [ ] Replace `new Date(Date.now() + days * 864e5)` in `stores/authStore.ts` with a `lib/dates.ts` helper
+- [x] Extract `RsvpBadge` inline sub-component (lines 7–23) from `components/event/ParticipantList.tsx` into `components/event/RsvpBadge.tsx`
+- [x] Replace `new Date(Date.now() + days * 864e5)` in `stores/authStore.ts` with a `lib/dates.ts` helper

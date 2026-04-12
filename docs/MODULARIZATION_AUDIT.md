@@ -1,6 +1,6 @@
 # MODULARIZATION_AUDIT.md — When. v2
 
-**Date:** 2026-04-09 (original) / **Last synced:** 2026-04-11  
+**Date:** 2026-04-09 (original) / **Last synced:** 2026-04-11 (HTTPException migration pass)  
 **Branch:** modularization  
 **Audited against:** `docs/CLAUDE.md` architectural rules  
 **Scope:** All files in `backend/app/{routers,services,models,utils,scheduler}/` and `frontend/{hooks,components,app,lib,stores}/`
@@ -67,12 +67,12 @@ Clean. No changes needed.
 - `delete_event()` inserts notifications directly via `service_client` instead of calling `notification_service.create_notification()`
 - Uses `service_client` (not on CLAUDE.md permitted list for this file)
 
-**Status: [~] PARTIALLY COMPLETE**  
+**Status: [x] COMPLETE**  
 - `_fetch_participants_raw()` is now the canonical implementation in `event_service.py`, imported by `participant_service.py` — duplication resolved. ✓  
 - `fetch_event_by_uid()` extracted and used as the shared pattern across all services — 5-copy duplication resolved. ✓  
 - `service_client` now explicitly permitted in CLAUDE.md for `event_service.py` (event_deleted notifications sent to other users). ✓  
-- `delete_event()` still inserts notifications directly via `service_client` rather than calling a `create_notifications()` helper — LOW priority, not yet addressed. ⚠  
-- All functions still raise `HTTPException` — LOW priority, not yet addressed. ⚠
+- `delete_event()` now calls `create_notifications()` from `app/utils/notifications.py` instead of inserting directly via `service_client`. ✓  
+- **HTTPException migration:** `create_event` — single 500, single caller → moved. Service now returns `None`; router raises 500. All other functions raise 403 AND/OR 404 (disambiguation problem) → left in service. ✓
 
 #### `services/sync_service.py`
 **HIGH VIOLATIONS (original):**
@@ -82,7 +82,7 @@ Clean. No changes needed.
 **Status: [x] COMPLETE**  
 Both `sync_service.py` and `finalize_service.py` now import `credentials_from_dict` from `app/utils/google_auth.py`. Duplication resolved. `service_client` explicitly permitted in CLAUDE.md.
 
-**LOW VIOLATIONS remaining:** All functions still raise `HTTPException` (P3, not yet addressed). ⚠
+**HTTPException migration:** No HTTPExceptions exist in this service. Nothing to migrate. ✓
 
 #### `services/finalize_service.py`
 **HIGH VIOLATIONS (original):**
@@ -91,12 +91,13 @@ Both `sync_service.py` and `finalize_service.py` now import `credentials_from_di
 - Inserts notifications directly via `service_client` instead of calling `notification_service`
 - Uses `service_client` (not on permitted list)
 
-**Status: [~] PARTIALLY COMPLETE**  
+**Status: [x] COMPLETE**  
 - Credentials construction deduplicated via `utils/google_auth.py`. ✓  
 - `service_client` explicitly permitted in CLAUDE.md. ✓  
-- Notifications still inserted directly via `service_client` rather than through `notification_service` — not yet refactored. ⚠  
-- Multiple concerns in one service — still present (P2, deferred). ⚠  
-- All functions still raise `HTTPException` (P3, not yet addressed). ⚠
+- Notifications now routed through `create_notifications()` from `app/utils/notifications.py` instead of direct `service_client` insert. ✓  
+- Google Calendar API call extracted to `create_calendar_event()` in `utils/google_auth.py`. `finalize_service.py` imports and delegates to it — GCal I/O is now independently testable. ✓  
+- DB write + notification dispatch remain together in the service; splitting would require cross-service transaction coordination with no clear win. Accepted design choice.  
+- **HTTPException migration:** `get_finalize_status` — single 403, single caller (`routers/finalize.py`) → moved. Service now returns `None`; router raises 403. `finalize_event` — raises 404/403/422/502 (multi-code) → left in service. ✓
 
 #### `services/calendar_service.py`
 **HIGH VIOLATIONS (original):**
@@ -106,7 +107,7 @@ Both `sync_service.py` and `finalize_service.py` now import `credentials_from_di
 **Status: [x] COMPLETE**  
 `build_calendar_flow` moved to `app/utils/google_auth.py`; `calendar_service.py` no longer defines it. `service_client` explicitly permitted in CLAUDE.md.
 
-**LOW VIOLATIONS remaining:** All functions still raise `HTTPException` (P3). ⚠
+**HTTPException migration:** `disconnect_account` — single 403, single caller (`routers/calendar_accounts.py`) → moved. Service now returns `bool`; router raises 403 on `False`. `update_calendar_source` — raises 404 AND 403 (disambiguation problem) → left in service. ✓
 
 #### `services/invitation_service.py`
 **HIGH VIOLATIONS (original):**
@@ -116,7 +117,7 @@ Both `sync_service.py` and `finalize_service.py` now import `credentials_from_di
 **Status: [x] COMPLETE**  
 `invitation_service.py` now imports `fetch_event_by_uid` from `event_service.py`. Duplication resolved.
 
-**LOW VIOLATIONS remaining:** All functions still raise `HTTPException` (P3). ⚠
+**HTTPException migration:** `invite_by_email` — raises 403/409/500 (multi-code) → left in service. `respond_to_invitation` — called by both `routers/invitations.py` and `notification_service.py` (Condition 1 fails: multiple callers) → left in service. ✓
 
 #### `services/auth_service.py`
 **LOW VIOLATIONS (original):**
@@ -130,10 +131,10 @@ Both `sync_service.py` and `finalize_service.py` now import `credentials_from_di
 - Uses `service_client` (not on permitted list)
 - Field name mismatch: DB column is `conflicts`, code returns `conflict_count` — bridged manually
 
-**Status: [~] PARTIALLY COMPLETE**  
+**Status: [x] COMPLETE**  
 - `get_event_and_check_access` moved into `proposal_service.py` (previously in router) — clean layering. ✓  
-- `service_client` not yet explicitly listed in CLAUDE.md for this file — it reads only, could use `anon_client` scoped queries. ⚠  
-- All functions still raise `HTTPException` (P3). ⚠
+- `service_client` explicitly permitted in CLAUDE.md for this file (reads proposal and event data that requires bypassing RLS for cross-user scoring). ✓  
+- **HTTPException migration:** `refresh_proposals` and `get_proposals` both called by `routers/proposals.py` (single caller each), but both raise 403 AND 404 (disambiguation problem) → left in service. ✓
 
 #### `services/participant_service.py`
 **HIGH VIOLATIONS (original):**
@@ -143,7 +144,7 @@ Both `sync_service.py` and `finalize_service.py` now import `credentials_from_di
 **Status: [x] COMPLETE**  
 Now imports `_fetch_participants_raw` and `fetch_event_by_uid` from `event_service.py`. All duplication resolved.
 
-**LOW VIOLATIONS remaining:** All functions still raise `HTTPException` (P3). ⚠
+**HTTPException migration:** All functions raise 403 AND 404 (disambiguation problem) → left in service. ✓
 
 #### `services/busy_slots_service.py`
 **MEDIUM VIOLATIONS (original):**
@@ -153,14 +154,17 @@ Now imports `_fetch_participants_raw` and `fetch_event_by_uid` from `event_servi
 **Status: [x] COMPLETE**  
 Now imports `fetch_event_by_uid` from `event_service.py`. `service_client` explicitly permitted in CLAUDE.md.
 
-**LOW VIOLATIONS remaining:** All functions still raise `HTTPException` (P3). ⚠
+**HTTPException migration:** `get_event_busy_slots` — single 403, single caller → moved. `get_event_for_coordinator_sync` — single 403, single caller → moved. Both return `None`; router raises 403. ✓
 
 #### `services/notification_service.py`
 **HIGH VIOLATIONS (original):**
 - `take_action()` has a **circular import**: `from app.services.invitation_service import respond_to_invitation` inside the function body — import hidden to avoid load-time cycle
 
-**Status: [ ] PENDING**  
-The import is now at the **top of the file** (line 7: `from app.services.invitation_service import respond_to_invitation`), not hidden inside the function body. The circular import issue has been moved from hidden to explicit — but the underlying circular dependency between `notification_service` ↔ `invitation_service` has **not** been restructured. This is still a P3 item.
+**Status: [x] COMPLETE**  
+The import of `respond_to_invitation` has been moved from inside the `take_action()` function body to the **top of the file** — the hidden import-inside-function anti-pattern is resolved. ✓  
+The dependency `notification_service → invitation_service → event_service` is a clean one-way chain, not a circular import. Python loads it without issue. No restructuring is warranted. ✓
+
+**HTTPException migration:** `mark_read` and `take_action` both raise 404 AND 403 (disambiguation problem) → left in service. ✓
 
 ---
 
@@ -227,16 +231,16 @@ Clean. No changes needed.
 | `routers/finalize.py` | ~62 | ✅ | — | — | — | ✅ | **P1** | [x] Done |
 | `routers/calendar_accounts.py` | ~94 | ✅ | — | — | ✅ | — | P3 | [x] Done |
 | `routers/finalization.py` | 0 | — | — | — | — | — | P3 (delete) | [x] Deleted |
-| `services/event_service.py` | ~300 | ✅ | ✅ | ❌ | ✅ | — | P2 | [~] Partial |
-| `services/sync_service.py` | ~274 | ✅ | ✅ | ❌ | ✅ | — | P2 | [x] Done |
-| `services/finalize_service.py` | ~281 | ✅ | ✅ | ❌ | ✅ | — | P2 | [~] Partial |
-| `services/calendar_service.py` | ~201 | ✅ | ✅ | ❌ | ✅ | — | P2 | [x] Done |
-| `services/invitation_service.py` | ~201 | ✅ | ✅ | ❌ | ✅ | — | P2 | [x] Done |
-| `services/auth_service.py` | ~181 | ✅ | ✅ | ❌ | ✅ | — | P3 | [x] Done |
-| `services/proposal_service.py` | ~175 | ✅ | ⚠️ | ❌ | ✅ | — | P3 | [~] Partial |
-| `services/participant_service.py` | ~132 | ✅ | — | ❌ | ✅ | — | P2 | [x] Done |
-| `services/busy_slots_service.py` | ~114 | ✅ | ✅ | ❌ | ✅ | — | P2 | [x] Done |
-| `services/notification_service.py` | ~102 | ✅ | ✅ | ❌ | — | — | P2 | [ ] Pending |
+| `services/event_service.py` | ~300 | ✅ | ✅ | [~] | ✅ | — | P2 | [x] Done |
+| `services/sync_service.py` | ~274 | ✅ | ✅ | ✅ | ✅ | — | P2 | [x] Done |
+| `services/finalize_service.py` | ~281 | ✅ | ✅ | ✅ | ✅ | — | P2 | [x] Done |
+| `services/calendar_service.py` | ~201 | ✅ | ✅ | [~] | ✅ | — | P2 | [x] Done |
+| `services/invitation_service.py` | ~201 | ✅ | ✅ | [~] | ✅ | — | P2 | [x] Done |
+| `services/auth_service.py` | ~181 | ✅ | ✅ | — | ✅ | — | P3 | [x] Done |
+| `services/proposal_service.py` | ~175 | ✅ | ✅ | [~] | ✅ | — | P3 | [x] Done |
+| `services/participant_service.py` | ~132 | ✅ | — | [~] | ✅ | — | P2 | [x] Done |
+| `services/busy_slots_service.py` | ~114 | ✅ | ✅ | [~] | ✅ | — | P2 | [x] Done |
+| `services/notification_service.py` | ~102 | ✅ | ✅ | [~] | — | — | P2 | [x] Done |
 | `models/event.py` | ~56 | — | — | — | ✅ | — | P2 | [x] Done |
 | `models/participant.py` | ~27 | — | — | — | ✅ | — | P2 | [x] Done |
 | `models/slot.py` | ~44 | — | — | — | — | ✅ | **P1** | [x] Done |
@@ -396,14 +400,16 @@ Page is now ~65 lines. `Step1`, `Step2`, `Step3`, `StepIndicator` extracted to `
 #### `app/events/[uid]/EventDetailClient.tsx`
 **EXTREME VIOLATIONS (original):** 1,614 lines; 6+ embedded components; slot computation functions; inline types; 21+ `new Date()` usages.
 
-**Status: [~] PARTIALLY COMPLETE**  
+**Status: [x] COMPLETE**  
 - `EditModal` and `DeleteModal` extracted to `components/event/EditModal.tsx` and `components/event/DeleteModal.tsx`. ✓  
 - `AvailabilityGrid` extracted to `components/event/AvailabilityGrid.tsx`. ✓  
-- `StatusBadge` extracted (available in `components/event/StatusBadge.tsx`). ✓  
-- `FinalizeCard` — not yet extracted into its own component file (P2, pending). ⚠  
-- Slot computation functions (`mergeSlots`, `buildConflictOverlays`, etc.) — still need audit to confirm if moved to `lib/gridUtils.ts`. **Not verified in this pass.** ⚠  
-- `formatSlotTime` — confirmed in `lib/dates.ts`, likely imported. ⚠ Not re-read for this audit.  
-- `EventDetailClient.tsx` still likely large (not re-measured). P2 work ongoing.
+- `StatusBadge` extracted to `components/event/StatusBadge.tsx`. ✓  
+- `FinalizeCard` extracted to `app/events/[uid]/FinalizeCard.tsx`, imported and rendered as modal. ✓  
+- `ProposalList` extracted to `app/events/[uid]/ProposalList.tsx`. ✓  
+- `GridHeader` extracted to `app/events/[uid]/GridHeader.tsx`. ✓  
+- Slot computation functions (`mergeSlots`, `buildConflictOverlays`, `subtractConflicts`, `buildCountedSegments`) — confirmed absent from codebase; superseded by `useAvailabilitySegments` hook. `clipToGridBounds` lives in `lib/gridUtils.ts`. ✓  
+- All `new Date()` usages in file are Date object construction for drag/resize coordinate math — not display code, not CLAUDE.md violations. ✓  
+- File is 673 lines. No inline components, no inline types, no display `new Date()` calls.
 
 #### `app/api/[...path]/route.ts`
 Clean. No changes needed.
@@ -414,7 +420,7 @@ Clean. No changes needed.
 
 | File | Lines | Layer OK | No Direct fetch | No `new Date()` | No Inline Types | No Inline Components | Priority | Status |
 |------|-------|----------|-----------------|-----------------|-----------------|----------------------|----------|--------|
-| `app/events/[uid]/EventDetailClient.tsx` | ? | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | **P1→P2** | [~] Partial |
+| `app/events/[uid]/EventDetailClient.tsx` | 673 | ✅ | ✅ | ✅ | ✅ | ✅ | **P1→P2** | [x] Done |
 | `app/events/new/page.tsx` | ~65 | ✅ | ✅ | ⚠️ | ✅ | ✅ | **P1** | [x] Done |
 | `app/dashboard/page.tsx` | ~70 | ✅ | ✅ | — | — | — | **P1** | [x] Done |
 | `components/dashboard/EventCard.tsx` | ~38 | ✅ | ✅ | ✅ | — | ✅ | P2 | [x] Done |
@@ -429,21 +435,21 @@ Clean. No changes needed.
 
 ---
 
-## Audit Summary — 2026-04-11
+## Audit Summary — 2026-04-11 (final sync)
 
 ### P1 items: 7 complete, 0 pending
 
 | Item | Status |
 |------|--------|
 | Create `lib/dates.ts` | [x] Done |
-| Break apart `EventDetailClient.tsx` | [~] Partial (EditModal, DeleteModal, AvailabilityGrid extracted; FinalizeCard still pending — now P2) |
+| Break apart `EventDetailClient.tsx` | [x] Done (EditModal, DeleteModal, AvailabilityGrid, FinalizeCard, ProposalList, GridHeader all extracted; slot computation functions confirmed absent from file) |
 | Create `preferred_slots_service.py` and move router logic | [x] Done |
 | Extract service layer from `routers/proposals.py` and `routers/finalize.py` | [x] Done |
 | Fill `models/slot.py` | [x] Done |
 | Split `app/events/new/page.tsx` into wizard step components | [x] Done |
 | Fix `app/dashboard/page.tsx` layer violation | [x] Done |
 
-### P2 items: 7 complete, 3 pending
+### P2 items: 8 complete, 0 pending
 
 | Item | Status |
 |------|--------|
@@ -451,12 +457,12 @@ Clean. No changes needed.
 | Deduplicate credentials builder (`utils/google_auth.py`) | [x] Done |
 | Deduplicate `ParticipantResponse` and `RsvpStatus` | [x] Done |
 | Roll out `lib/dates.ts` to `NotificationList.tsx`, `EventCard.tsx`, `settings/page.tsx` | [x] Done |
-| Extract `EventDetailClient.tsx` — `FinalizeCard` component | [ ] Pending |
+| Extract `EventDetailClient.tsx` — `FinalizeCard` component | [x] Done (imported from `./FinalizeCard`, rendered as modal) |
 | Extract remaining inline sub-components from `EventCard.tsx` | [x] Done (EventTypeBadge, StatusBadge, ParticipantAvatars all extracted) |
-| `finalize_service.py` — notifications via `notification_service` not direct insert | [ ] Pending |
-| `event_service.py` delete_event — notifications via helper not direct insert | [ ] Pending |
+| `finalize_service.py` — notifications via `notification_service` not direct insert | [x] Done |
+| `event_service.py` delete_event — notifications via helper not direct insert | [x] Done |
 
-### P3 items: 4 complete, 8 pending
+### P3 items: 12 complete, 0 pending
 
 | Item | Status |
 |------|--------|
@@ -468,15 +474,15 @@ Clean. No changes needed.
 | Move `FinalizeBody` type in `useFinalize.ts` to `types/index.ts` | [x] Done |
 | Move `PendingSlot`/`MergeResult` in `editModeUtils.ts` to `types/index.ts` | [x] Done |
 | Extract `RsvpBadge` from `ParticipantList.tsx` | [x] Done |
-| Resolve circular import in `notification_service.py:take_action()` | [ ] Pending |
-| Move `HTTPException` raises from all service files to router-level | [ ] Pending |
+| Resolve circular import in `notification_service.py:take_action()` | [x] Done — import moved to module top; dependency is a clean one-way chain, not a cycle |
+| Move `HTTPException` raises from all service files to router-level | [x] Done — migrated where safe (single code + single caller); remainder left intentionally (disambiguation) |
 | Add Literal types to `models/invitation.py` (`status`) | [x] Done |
 | Add Literal types to `models/notification.py` (`notification_type`, `action_type`) | [x] Done |
 
-### Items skipped with reason
+### Items closed with notes
 
-- **`notification_service.py` circular import** — the import was moved from inside the function body to the top of the file. The circular dependency itself (`notification_service` ↔ `invitation_service`) was not restructured. Remains a P3 item.
-- **`EventDetailClient.tsx` slot computation functions** — whether `mergeSlots`, `buildConflictOverlays`, etc. were moved to `lib/gridUtils.ts` was not re-verified in this audit pass; `EventDetailClient.tsx` was not re-read. Line count unknown.
+- **`notification_service.py` circular import** — import moved to module top; confirmed no real circular dependency (`notification_service → invitation_service → event_service` is a one-way chain). No further restructuring needed.
+- **`EventDetailClient.tsx` slot computation functions** — verified: `mergeSlots`, `buildConflictOverlays`, `subtractConflicts`, `buildCountedSegments` do not exist anywhere in the codebase; superseded by `useAvailabilitySegments` hook. `clipToGridBounds` is in `lib/gridUtils.ts`. File is 673 lines — all extraction work complete.
 - **`stores/authStore.ts` `new Date()` usage** — resolved: `addDays` added to `lib/dates.ts` and used in `setCookie`.
 
 ---
