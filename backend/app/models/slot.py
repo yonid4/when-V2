@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -24,6 +26,14 @@ class ProposalResponse(BaseModel):
     preferred_count: int
     reasoning: str
     rank: int
+
+
+class AvailabilitySegment(BaseModel):
+    start_time_utc: str
+    end_time_utc: str
+    type: Literal["busy", "preferred", "conflict"]
+    busy_count: int
+    preferred_count: int
 
 
 class FinalizeRequest(BaseModel):
