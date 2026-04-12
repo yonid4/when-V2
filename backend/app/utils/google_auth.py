@@ -1,7 +1,9 @@
-"""Shared Google OAuth credential helpers used across services."""
+"""Shared Google OAuth and Calendar API helpers used across services."""
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from app.config import settings
 
@@ -28,6 +30,26 @@ def build_calendar_flow() -> Flow:
     flow = Flow.from_client_config(client_config, scopes=SCOPES)
     flow.redirect_uri = settings.google_calendar_redirect_uri
     return flow
+
+
+def create_calendar_event(credentials: Credentials, calendar_id: str, event_body: dict) -> str:
+    """Create a Google Calendar event and return the created event's ID.
+
+    Args:
+        credentials: A :class:`google.oauth2.credentials.Credentials` instance.
+        calendar_id: The calendar ID to insert the event into (e.g. ``'primary'``).
+        event_body: The Google Calendar event resource dict.
+
+    Returns:
+        The ``id`` string of the newly created Google Calendar event.
+
+    Raises:
+        :class:`googleapiclient.errors.HttpError`: If the API returns an error.
+        :exc:`Exception`: For any unexpected error from the API call.
+    """
+    cal_service = build("calendar", "v3", credentials=credentials)
+    created = cal_service.events().insert(calendarId=calendar_id, body=event_body).execute()
+    return created["id"]
 
 
 def credentials_from_dict(creds_data: dict) -> Credentials:
