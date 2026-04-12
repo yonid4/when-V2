@@ -37,8 +37,8 @@ export function Navbar() {
   return (
     <header className="w-full sticky top-0 z-50 bg-surface/80 backdrop-blur-md border-b-0">
       <div className="w-full flex items-center justify-between px-4 h-16">
-        <Link href="/dashboard" className="text-2xl font-black text-primary tracking-tighter">
-          When.
+        <Link href="/dashboard">
+          <img src="/navbar_logo.png" alt="When." className="h-13 w-auto object-contain" />
         </Link>
         <div className="flex items-center gap-3">
           <NotificationBell />

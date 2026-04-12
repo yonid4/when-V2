@@ -20,6 +20,9 @@ const beVietnamPro = Be_Vietnam_Pro({
 export const metadata: Metadata = {
   title: "When.",
   description: "Group event coordination",
+  icons: {
+    icon: "/favicon.png",
+  },
 };
 
 export default function RootLayout({

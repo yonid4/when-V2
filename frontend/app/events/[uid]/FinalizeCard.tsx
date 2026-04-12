@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { X, CalendarCheck, Plus } from 'lucide-react'
 import { useFinalize } from '@/hooks/useFinalize'
+import { formatDayLabel, formatTime } from '@/lib/dates'
 import type { Event, Participant, ProposalResponse } from '@/types'
 
 interface FinalizeCardProps {
@@ -133,10 +134,8 @@ export function FinalizeCard({
             ) : (
               <div className="space-y-2">
                 {proposals.map((proposal) => {
-                  const start = new Date(proposal.start_time_utc)
-                  const end = new Date(proposal.end_time_utc)
-                  const dayLabel = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                  const timeRange = `${start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} – ${end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+                  const dayLabel = formatDayLabel(proposal.start_time_utc)
+                  const timeRange = `${formatTime(proposal.start_time_utc)} – ${formatTime(proposal.end_time_utc)}`
                   const isSelected = selectedProposalId === proposal.id
                   return (
                     <label

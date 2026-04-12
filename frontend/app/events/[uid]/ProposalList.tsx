@@ -62,8 +62,19 @@ export function ProposalList({
       )}
 
       {isLoadingProposals && (
-        <div className="flex items-center justify-center py-8">
-          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        <div className="space-y-3 animate-pulse">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="bg-surface-container-lowest rounded-xl p-4 shadow-sm border border-outline-variant/20 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-1.5 flex-1">
+                  <div className="h-3.5 rounded bg-surface-container-high w-28" />
+                  <div className="h-3 rounded bg-surface-container-high w-20" />
+                </div>
+                <div className="h-5 rounded-full bg-surface-container-high w-6" />
+              </div>
+              <div className="h-3 rounded bg-surface-container-high w-full" />
+            </div>
+          ))}
         </div>
       )}
 

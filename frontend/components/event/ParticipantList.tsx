@@ -21,7 +21,19 @@ export function ParticipantList({
   const isCoordinator = currentUserId === coordinatorId
 
   if (isLoading) {
-    return <div className="text-sm text-on-surface-variant">Loading participants…</div>
+    return (
+      <div className="space-y-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex items-center gap-3 animate-pulse">
+            <div className="w-10 h-10 rounded-full bg-surface-container-high shrink-0" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-3 rounded bg-surface-container-high w-32" />
+              <div className="h-2.5 rounded bg-surface-container-high w-20" />
+            </div>
+          </div>
+        ))}
+      </div>
+    )
   }
 
   if (!participants || participants.length === 0) {
