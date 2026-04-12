@@ -4,8 +4,6 @@ All Supabase queries that were previously in the busy_slots router have been
 moved here so the router can stay free of database concerns.
 """
 
-from fastapi import HTTPException, status
-
 from app.services.event_service import fetch_event_by_uid
 from app.utils.supabase import service_client
 
@@ -22,15 +20,14 @@ def get_my_busy_slots(user_id: str) -> list[dict]:
     return result.data or []
 
 
-def get_event_busy_slots(event_uid: str, current_user_id: str) -> list[dict]:
+def get_event_busy_slots(event_uid: str, current_user_id: str) -> list[dict] | None:
     """Return busy slots for all non-declined participants of an event, within
     the event's datetime window.
 
-    Authorization: current_user must be the coordinator or an accepted/invited
-    participant. Raises 403 otherwise.
-
+    Returns None if the current_user is not the coordinator or an accepted/invited
+    participant (router raises 403).
     Returns an empty list (not 404) when the event has no participants yet.
-    Raises 404 when the event does not exist.
+    Raises 404 (via fetch_event_by_uid) when the event does not exist.
     """
     event = fetch_event_by_uid(event_uid, db=service_client)
     event_id = event["id"]
@@ -50,10 +47,7 @@ def get_event_busy_slots(event_uid: str, current_user_id: str) -> list[dict]:
             .execute()
         )
         if not participant or not participant.data:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You are not a participant of this event",
-            )
+            return None
 
     # Fetch all non-declined participants
     participants = (
@@ -79,19 +73,16 @@ def get_event_busy_slots(event_uid: str, current_user_id: str) -> list[dict]:
     return result.data or []
 
 
-def get_event_for_coordinator_sync(event_uid: str, current_user_id: str) -> dict:
+def get_event_for_coordinator_sync(event_uid: str, current_user_id: str) -> dict | None:
     """Fetch event for coordinator-only sync endpoint.
 
-    Raises 404 if the event does not exist.
-    Raises 403 if current_user is not the coordinator.
+    Raises 404 (via fetch_event_by_uid) if the event does not exist.
+    Returns None if current_user is not the coordinator (router raises 403).
     Returns the event row dict on success.
     """
     event = fetch_event_by_uid(event_uid, db=service_client)
 
     if event["coordinator_id"] != current_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the coordinator can sync all participants",
-        )
+        return None
 
     return event

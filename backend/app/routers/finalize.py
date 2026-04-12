@@ -53,6 +53,8 @@ def get_finalize_status_endpoint(
     Accessible by coordinator or any accepted participant.
     """
     event = get_finalize_status(uid, current_user.id)
+    if event is None:
+        raise HTTPException(status_code=403, detail="Forbidden")
     return FinalizeStatusResponse(
         status=event["status"],
         finalized_start_time_utc=event.get("finalized_start_time_utc"),

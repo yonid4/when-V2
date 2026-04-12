@@ -100,7 +100,7 @@ def connect_google_account(
     return CalendarAccountResponse(**account_row, sources=sources)
 
 
-def disconnect_account(account_id: str, user_id: str) -> None:
+def disconnect_account(account_id: str, user_id: str) -> bool:
     result = (
         service_client.table("calendar_accounts")
         .select("id")
@@ -109,11 +109,9 @@ def disconnect_account(account_id: str, user_id: str) -> None:
         .execute()
     )
     if not result.data:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Calendar account not found or access denied",
-        )
+        return False
     service_client.table("calendar_accounts").delete().eq("id", account_id).execute()
+    return True
 
 
 def update_calendar_source(

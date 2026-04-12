@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from app.models.event import EventCreate, EventUpdate, EventResponse
 from app.models.participant import ParticipantResponse
 from app.models.user import User
+from app.utils.notifications import create_notifications
 from app.utils.supabase import get_authed_client, service_client
 from app.utils.uid import generate_uid
 
@@ -96,7 +97,7 @@ def _row_to_event_response(row: dict, participants: list[dict]) -> EventResponse
 
 
 
-def create_event(data: EventCreate, current_user: User) -> EventResponse:
+def create_event(data: EventCreate, current_user: User) -> EventResponse | None:
     db = get_authed_client(current_user.token)
     uid = generate_uid()
     now = datetime.now(timezone.utc).isoformat()
@@ -118,7 +119,7 @@ def create_event(data: EventCreate, current_user: User) -> EventResponse:
 
     result = db.table('events').insert(event_data).execute()
     if not result.data:
-        raise HTTPException(status_code=500, detail='Failed to create event')
+        return None
 
     event_row = result.data[0]
     event_id = event_row['id']
@@ -295,7 +296,6 @@ def delete_event(uid: str, current_user: User) -> None:
         for p in (participants_result.data or [])
     ]
 
-    if notifications:
-        service_client.table('notifications').insert(notifications).execute()
+    create_notifications(notifications)
 
     db.table('events').delete().eq('id', event_id).execute()

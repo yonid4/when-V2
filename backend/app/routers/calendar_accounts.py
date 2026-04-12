@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -90,4 +90,6 @@ def google_calendar_callback(code: str, state: str):
 
 @router.delete("/{account_id}", status_code=204)
 def disconnect_account(account_id: str, current_user: User = Depends(get_current_user)):
-    calendar_service.disconnect_account(account_id, current_user.id)
+    ok = calendar_service.disconnect_account(account_id, current_user.id)
+    if not ok:
+        raise HTTPException(status_code=403, detail="Calendar account not found or access denied")

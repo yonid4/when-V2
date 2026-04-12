@@ -3,20 +3,19 @@
 import logging
 
 from fastapi import HTTPException
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 from app.models.user import User
 from app.services.event_service import fetch_event_by_uid
-from app.services.notification_service import create_notifications
-from app.utils.google_auth import credentials_from_dict
+from app.utils.notifications import create_notifications
+from app.utils.google_auth import create_calendar_event, credentials_from_dict
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
 
 
-def get_finalize_status(uid: str, user_id: str) -> dict:
-    """Return finalization status for an event. Accessible by coordinator or accepted participant."""
+def get_finalize_status(uid: str, user_id: str) -> dict | None:
+    """Return finalization status for an event. Accessible by coordinator or accepted participant.
+    Returns None if user is not authorized (router raises 403)."""
     event = fetch_event_by_uid(uid, db=service_client)
 
     if event["coordinator_id"] != user_id:
@@ -30,7 +29,7 @@ def get_finalize_status(uid: str, user_id: str) -> dict:
             .execute()
         )
         if not participant_result or not participant_result.data:
-            raise HTTPException(status_code=403, detail="Forbidden")
+            return None
 
     return event
 
@@ -238,18 +237,9 @@ def finalize_event(
 
     # 7. Create Google Calendar event — DO NOT update DB if this fails
     try:
-        cal_service = build("calendar", "v3", credentials=credentials)
-        created = (
-            cal_service.events()
-            .insert(calendarId=write_calendar["calendar_id"], body=event_body)
-            .execute()
-        )
-        google_event_id = created.get("id")
-    except HttpError as exc:
-        logger.error("Google Calendar API error during finalization: %s", exc)
-        raise HTTPException(status_code=502, detail="calendar_create_failed")
+        google_event_id = create_calendar_event(credentials, write_calendar["calendar_id"], event_body)
     except Exception as exc:
-        logger.error("Unexpected error creating Google Calendar event: %s", exc)
+        logger.error("Google Calendar API error during finalization: %s", exc)
         raise HTTPException(status_code=502, detail="calendar_create_failed")
 
     # 8. Atomically update DB (only after successful calendar creation)
