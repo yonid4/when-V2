@@ -380,9 +380,9 @@ def test_update_event_non_coordinator_forbidden(mock_get_client):
 
 # ─── 10. delete_event — sends notifications and deletes ──────────────────────
 
-@patch("app.services.event_service.service_client")
+@patch("app.utils.notifications.service_client")
 @patch("app.services.event_service.get_authed_client")
-def test_delete_event_notifies_participants(mock_get_client, mock_svc):
+def test_delete_event_notifies_participants(mock_get_client, mock_notif_svc):
     user = _make_user()
     db = _mock_db()
     mock_get_client.return_value = db
@@ -400,7 +400,7 @@ def test_delete_event_notifies_participants(mock_get_client, mock_svc):
 
     notif_table = MagicMock()
     notif_table.insert.return_value.execute.return_value = MagicMock(data=[])
-    mock_svc.table.return_value = notif_table
+    mock_notif_svc.table.return_value = notif_table
 
     event_service.delete_event("abc123def456", user)
 

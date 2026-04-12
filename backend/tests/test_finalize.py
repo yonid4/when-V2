@@ -236,11 +236,11 @@ def test_pick_attendee_email_none_when_no_emails():
 
 # ─── POST /api/events/{uid}/finalize ─────────────────────────────────────────
 
-@patch("app.services.notification_service.service_client")
-@patch("app.services.finalize_service.build")
+@patch("app.utils.notifications.service_client")
+@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_build, mock_notif_svc):
+def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_create_cal, mock_notif_svc):
     """Coordinator can finalize an event — returns confirmed event row."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -257,11 +257,6 @@ def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_build, mock_notif_svc
         write_cal_rows=[write_cal],
     ).table.side_effect
 
-    # Mock GCal API
-    mock_cal_service = MagicMock()
-    mock_cal_service.events.return_value.insert.return_value.execute.return_value = {"id": "gcal-event-123"}
-    mock_build.return_value = mock_cal_service
-
     response = client.post(
         "/api/events/event-uid-1/finalize",
         json={
@@ -276,13 +271,13 @@ def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_build, mock_notif_svc
         headers=_auth_headers(),
     )
     assert response.status_code == 200
-    assert mock_build.called
+    assert mock_create_cal.called
 
 
-@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_404_event_not_found(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_404_event_not_found(mock_dep_svc, mock_svc_svc, mock_create_cal):
     """Returns 404 when event does not exist."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -314,10 +309,10 @@ def test_finalize_404_event_not_found(mock_dep_svc, mock_svc_svc, mock_build):
     assert response.status_code == 404
 
 
-@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_403_not_coordinator(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_403_not_coordinator(mock_dep_svc, mock_svc_svc, mock_create_cal):
     """Returns 403 when the caller is not the coordinator."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile("other-user-uuid")
@@ -351,10 +346,10 @@ def test_finalize_403_not_coordinator(mock_dep_svc, mock_svc_svc, mock_build):
     assert response.status_code == 403
 
 
-@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_422_no_write_calendar(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_422_no_write_calendar(mock_dep_svc, mock_svc_svc, mock_create_cal):
     """Returns 422 when coordinator has no write calendar configured."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -386,14 +381,11 @@ def test_finalize_422_no_write_calendar(mock_dep_svc, mock_svc_svc, mock_build):
     assert response.json()["detail"] == "no_write_calendar"
 
 
-@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.create_calendar_event", side_effect=Exception("Calendar API failed"))
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc, mock_create_cal):
     """Returns 502 when Google Calendar API fails — DB is NOT updated."""
-    from googleapiclient.errors import HttpError
-    from unittest.mock import Mock
-
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
     )
@@ -408,16 +400,6 @@ def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc, mock_build)
         write_cal_rows=[write_cal],
     )
     mock_svc_svc.table.side_effect = db_mock.table.side_effect
-
-    # Make GCal API raise HttpError
-    mock_resp = Mock()
-    mock_resp.status = 403
-    mock_resp.reason = "Forbidden"
-    mock_cal_service = MagicMock()
-    mock_cal_service.events.return_value.insert.return_value.execute.side_effect = HttpError(
-        resp=mock_resp, content=b"error"
-    )
-    mock_build.return_value = mock_cal_service
 
     response = client.post(
         "/api/events/event-uid-1/finalize",
@@ -438,11 +420,10 @@ def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc, mock_build)
 
 # ─── Sprint 6C: new attendee / field tests ───────────────────────────────────
 
-@patch("app.services.notification_service.service_client")
-@patch("app.services.finalize_service.build")
+@patch("app.utils.notifications.service_client")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_svc_svc, mock_build, mock_notif_svc):
+def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_svc_svc, mock_notif_svc):
     """Participants listed in excluded_user_ids are not added as attendees."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -462,40 +443,36 @@ def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_sv
         write_cal_rows=[write_cal],
     ).table.side_effect
 
-    mock_cal_service = MagicMock()
-    inserted_body = {}
+    captured_body = {}
 
-    def capture_insert(calendarId, body):
-        inserted_body.update(body)
-        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+    def fake_create(credentials, calendar_id, event_body):
+        captured_body.update(event_body)
+        return "gcal-1"
 
-    mock_cal_service.events.return_value.insert.side_effect = capture_insert
-    mock_build.return_value = mock_cal_service
-
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "",
-            "excluded_user_ids": ["carol-uuid"],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": ["carol-uuid"],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 200
-    attendee_emails = [a["email"] for a in inserted_body.get("attendees", [])]
+    attendee_emails = [a["email"] for a in captured_body.get("attendees", [])]
     assert "bob@example.com" in attendee_emails
     assert "carol@example.com" not in attendee_emails
 
 
-@patch("app.services.notification_service.service_client")
-@patch("app.services.finalize_service.build")
+@patch("app.utils.notifications.service_client")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_extra_emails_added_to_attendees(mock_dep_svc, mock_svc_svc, mock_build, mock_notif_svc):
+def test_finalize_extra_emails_added_to_attendees(mock_dep_svc, mock_svc_svc, mock_notif_svc):
     """Emails in extra_emails are appended to the attendees list."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -512,39 +489,35 @@ def test_finalize_extra_emails_added_to_attendees(mock_dep_svc, mock_svc_svc, mo
         write_cal_rows=[write_cal],
     ).table.side_effect
 
-    mock_cal_service = MagicMock()
-    inserted_body = {}
+    captured_body = {}
 
-    def capture_insert(calendarId, body):
-        inserted_body.update(body)
-        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+    def fake_create(credentials, calendar_id, event_body):
+        captured_body.update(event_body)
+        return "gcal-1"
 
-    mock_cal_service.events.return_value.insert.side_effect = capture_insert
-    mock_build.return_value = mock_cal_service
-
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": ["external@partner.com"],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": ["external@partner.com"],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 200
-    attendee_emails = [a["email"] for a in inserted_body.get("attendees", [])]
+    attendee_emails = [a["email"] for a in captured_body.get("attendees", [])]
     assert "bob@example.com" in attendee_emails
     assert "external@partner.com" in attendee_emails
 
 
-@patch("app.services.finalize_service.build")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_location_in_gcal_body(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_location_in_gcal_body(mock_dep_svc, mock_svc_svc):
     """location field appears in Google Calendar event body."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -560,37 +533,33 @@ def test_finalize_location_in_gcal_body(mock_dep_svc, mock_svc_svc, mock_build):
         write_cal_rows=[write_cal],
     ).table.side_effect
 
-    mock_cal_service = MagicMock()
-    inserted_body = {}
+    captured_body = {}
 
-    def capture_insert(calendarId, body):
-        inserted_body.update(body)
-        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+    def fake_create(credentials, calendar_id, event_body):
+        captured_body.update(event_body)
+        return "gcal-1"
 
-    mock_cal_service.events.return_value.insert.side_effect = capture_insert
-    mock_build.return_value = mock_cal_service
-
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "123 Main St",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "123 Main St",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 200
-    assert inserted_body.get("location") == "123 Main St"
+    assert captured_body.get("location") == "123 Main St"
 
 
-@patch("app.services.finalize_service.build")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_video_call_link_in_description(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_video_call_link_in_description(mock_dep_svc, mock_svc_svc):
     """video_call_link appears in description as 'Video call: {link}'."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -606,37 +575,33 @@ def test_finalize_video_call_link_in_description(mock_dep_svc, mock_svc_svc, moc
         write_cal_rows=[write_cal],
     ).table.side_effect
 
-    mock_cal_service = MagicMock()
-    inserted_body = {}
+    captured_body = {}
 
-    def capture_insert(calendarId, body):
-        inserted_body.update(body)
-        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+    def fake_create(credentials, calendar_id, event_body):
+        captured_body.update(event_body)
+        return "gcal-1"
 
-    mock_cal_service.events.return_value.insert.side_effect = capture_insert
-    mock_build.return_value = mock_cal_service
-
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "https://meet.example.com/abc",
-        },
-        headers=_auth_headers(),
-    )
+    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "https://meet.example.com/abc",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 200
-    assert inserted_body.get("description") == "Video call: https://meet.example.com/abc"
+    assert captured_body.get("description") == "Video call: https://meet.example.com/abc"
 
 
-@patch("app.services.finalize_service.build")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_note_and_video_call_link_combined(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_note_and_video_call_link_combined(mock_dep_svc, mock_svc_svc):
     """note + video_call_link produces '{note}\n\nVideo call: {link}' description."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -652,38 +617,35 @@ def test_finalize_note_and_video_call_link_combined(mock_dep_svc, mock_svc_svc, 
         write_cal_rows=[write_cal],
     ).table.side_effect
 
-    mock_cal_service = MagicMock()
-    inserted_body = {}
+    captured_body = {}
 
-    def capture_insert(calendarId, body):
-        inserted_body.update(body)
-        return MagicMock(execute=MagicMock(return_value={"id": "gcal-1"}))
+    def fake_create(credentials, calendar_id, event_body):
+        captured_body.update(event_body)
+        return "gcal-1"
 
-    mock_cal_service.events.return_value.insert.side_effect = capture_insert
-    mock_build.return_value = mock_cal_service
-
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "See you there!",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "https://meet.example.com/xyz",
-        },
-        headers=_auth_headers(),
-    )
+    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "See you there!",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "https://meet.example.com/xyz",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 200
     expected = "See you there!\n\nVideo call: https://meet.example.com/xyz"
-    assert inserted_body.get("description") == expected
+    assert captured_body.get("description") == expected
 
 
-@patch("app.services.finalize_service.build")
+@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-1")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc, mock_build):
+def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc, mock_create_cal):
     """When name differs from event.name, the update payload includes name."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -734,10 +696,6 @@ def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc, mo
         return tbl
 
     mock_svc_svc.table.side_effect = make_table
-
-    mock_cal_service = MagicMock()
-    mock_cal_service.events.return_value.insert.return_value.execute.return_value = {"id": "gcal-1"}
-    mock_build.return_value = mock_cal_service
 
     response = client.post(
         "/api/events/event-uid-1/finalize",
