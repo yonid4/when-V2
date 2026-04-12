@@ -16,8 +16,9 @@ import {
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useUpdateEvent, useDeleteEvent } from '@/hooks/useEvent'
-import { useEventBusySlots, useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
+import { useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
 import { usePreferredSlots, useSavePreferredSlot, useDeletePreferredSlot } from '@/hooks/usePreferredSlots'
+import { useAvailabilitySegments } from '@/hooks/useAvailabilitySegments'
 import { useProposals, useRefreshProposals } from '@/hooks/useProposals'
 import { FinalizeCard } from './FinalizeCard'
 import { ProposalList } from './ProposalList'
@@ -28,7 +29,7 @@ import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
 import { Navbar } from '@/components/layout/Navbar'
 import { useAuthStore } from '@/stores/authStore'
-import type { BusySlot, EventWithParticipants, EventType, PreferredSlot, Participant } from '@/types'
+import type { EventWithParticipants, EventType, PreferredSlot, Participant } from '@/types'
 import { toDate, formatDateWindowWithYear, formatTime, formatLongDate } from '@/lib/dates'
 import { typeLabel } from '@/lib/eventUtils'
 import { StatusBadge } from '@/components/event/StatusBadge'
@@ -36,7 +37,7 @@ import { EditModal } from '@/components/event/EditModal'
 import { DeleteModal } from '@/components/event/DeleteModal'
 import { AvailabilityGrid } from '@/components/event/AvailabilityGrid'
 import { computeMerge } from '@/lib/editModeUtils'
-import type { PendingSlot } from '@/lib/editModeUtils'
+import type { PendingSlot } from '@/types'
 import type { EditSaveResult } from './editEventUtils'
 
 
@@ -88,7 +89,7 @@ export default function EventDetailClient({
   }
 
   const queryClient = useQueryClient()
-  const { data: busySlots = [] } = useEventBusySlots(event.uid)
+  const { data: segments = [] } = useAvailabilitySegments(event.uid)
   const { data: preferredSlots = [] } = usePreferredSlots(event.uid)
   const { mutate: syncCalendar, isPending: isSyncing } = useSyncMyCalendar()
   const { mutateAsync: savePreferredSlot } = useSavePreferredSlot(event.uid)
@@ -113,6 +114,7 @@ export default function EventDetailClient({
         { event: 'INSERT', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${event.id}` },
         () => {
           queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
+          queryClient.invalidateQueries({ queryKey: ['availability-segments', event.uid] })
           setProposalsStale(true)
         }
       )
@@ -121,6 +123,7 @@ export default function EventDetailClient({
         { event: 'DELETE', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${event.id}` },
         () => {
           queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
+          queryClient.invalidateQueries({ queryKey: ['availability-segments', event.uid] })
           setProposalsStale(true)
         }
       )
@@ -387,7 +390,7 @@ export default function EventDetailClient({
             {/* Grid — extra bottom padding when action bar is visible */}
             <div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${isEditMode ? 'pb-20' : ''}`}>
               <AvailabilityGrid
-                busySlots={busySlots}
+                segments={segments}
                 preferredSlots={displayedPreferredSlots}
                 startDate={event.earliest_datetime_utc}
                 earliestTime={event.earliest_datetime_utc}

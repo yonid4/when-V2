@@ -25,9 +25,9 @@ export function FinalizeCard({
   const [excludedUserIds, setExcludedUserIds] = useState<Set<string>>(new Set())
   const [extraEmailInput, setExtraEmailInput] = useState('')
   const [extraEmails, setExtraEmails] = useState<string[]>([])
-  const [note, setNote] = useState('')
-  const [location, setLocation] = useState('')
-  const [videoCallLink, setVideoCallLink] = useState('')
+  const [note, setNote] = useState(event.description ?? '')
+  const [location, setLocation] = useState(event.location ?? '')
+  const [videoCallLink, setVideoCallLink] = useState(event.video_call_link ?? '')
   const [apiError, setApiError] = useState<string | null>(null)
 
   const { mutate: finalize, isPending } = useFinalize(event.uid)

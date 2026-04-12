@@ -1,11 +1,7 @@
 'use client'
 
 import * as React from 'react'
-
-interface PopoverContextValue {
-  open: boolean
-  setOpen: (open: boolean) => void
-}
+import type { PopoverContextValue } from '@/types'
 
 const PopoverContext = React.createContext<PopoverContextValue>({ open: false, setOpen: () => {} })
 

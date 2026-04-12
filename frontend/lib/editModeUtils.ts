@@ -1,16 +1,4 @@
-import type { PreferredSlot } from '@/types'
-
-export interface PendingSlot {
-  dayIndex: number
-  startUtc: Date
-  endUtc: Date
-}
-
-export interface MergeResult {
-  pendingSlot: PendingSlot
-  slotsToDelete: string[]
-  remainingSlots: PreferredSlot[]
-}
+import type { PreferredSlot, PendingSlot, MergeResult } from '@/types'
 
 /**
  * Computes the merge of a pending slot against confirmed preferred slots.

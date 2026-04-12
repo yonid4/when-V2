@@ -197,21 +197,18 @@ export interface WizardData {
   step2: Step2Values
 }
 
-// ─── Availability grid overlays ───────────────────────────────────────────────
+// ─── Availability segments (pre-computed by backend) ─────────────────────────
 
-export interface SlotOverlay {
-  startUtc: Date
-  endUtc: Date
-  /** unique participants involved (for intensity) */
-  count: number
+export type AvailabilitySegmentType = 'busy' | 'preferred' | 'conflict'
+
+export interface AvailabilitySegment {
+  start_time_utc: string
+  end_time_utc: string
+  type: AvailabilitySegmentType
+  busy_count: number
+  preferred_count: number
 }
 
-export interface ConflictOverlay {
-  startUtc: Date
-  endUtc: Date
-  busyCount: number
-  preferredCount: number
-}
 
 // ─── Finalization ─────────────────────────────────────────────────────────────
 
@@ -222,4 +219,35 @@ export interface FinalizeStatus {
   google_calendar_event_id: string | null
   location: string | null
   video_call_link: string | null
+}
+
+export interface FinalizeBody {
+  proposed_time_id: string
+  name: string
+  excluded_user_ids: string[]
+  extra_emails: string[]
+  note: string
+  location: string
+  video_call_link: string
+}
+
+// ─── Edit mode ────────────────────────────────────────────────────────────────
+
+export interface PendingSlot {
+  dayIndex: number
+  startUtc: Date
+  endUtc: Date
+}
+
+export interface MergeResult {
+  pendingSlot: PendingSlot
+  slotsToDelete: string[]
+  remainingSlots: PreferredSlot[]
+}
+
+// ─── Popover ──────────────────────────────────────────────────────────────────
+
+export interface PopoverContextValue {
+  open: boolean
+  setOpen: (open: boolean) => void
 }

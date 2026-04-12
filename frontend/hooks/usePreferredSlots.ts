@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import type { PreferredSlot } from '@/types'
+import { availabilitySegmentsKey } from './useAvailabilitySegments'
 
 const preferredSlotsKey = (uid: string) => ['preferred-slots', uid] as const
 
@@ -21,6 +22,7 @@ export function useSavePreferredSlot(uid: string) {
       api.post<PreferredSlot>(`/events/${uid}/preferred-slots`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: preferredSlotsKey(uid) })
+      queryClient.invalidateQueries({ queryKey: availabilitySegmentsKey(uid) })
     },
   })
 }
@@ -32,6 +34,7 @@ export function useDeletePreferredSlot(uid: string) {
       api.delete<void>(`/events/${uid}/preferred-slots/${slotId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: preferredSlotsKey(uid) })
+      queryClient.invalidateQueries({ queryKey: availabilitySegmentsKey(uid) })
     },
   })
 }

@@ -1,6 +1,15 @@
 import type { Notification } from '@/types'
 
 /**
+ * Add a number of days to a date and return the new date.
+ */
+export function addDays(date: Date, days: number): Date {
+  const result = new Date(date)
+  result.setDate(result.getDate() + days)
+  return result
+}
+
+/**
  * Parse a UTC string into a Date object.
  * Use this instead of `new Date()` directly so call sites are explicit.
  */

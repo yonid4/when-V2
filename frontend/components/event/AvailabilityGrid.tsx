@@ -1,22 +1,16 @@
 'use client'
 
 import { useState } from 'react'
-import type { PreferredSlot } from '@/types'
+import type { PreferredSlot, AvailabilitySegment, PendingSlot } from '@/types'
 import {
   busyIntensityClass,
   preferredIntensityClass,
-  mergeSlots,
-  buildConflictOverlays,
-  subtractConflicts,
-  buildCountedSegments,
   clipToGridBounds,
 } from '@/lib/gridUtils'
-import type { SlotLike } from '@/lib/gridUtils'
 import { toDate, formatSlotTime } from '@/lib/dates'
-import type { PendingSlot } from '@/lib/editModeUtils'
 
 export function AvailabilityGrid({
-  busySlots,
+  segments,
   preferredSlots,
   startDate,
   earliestTime,
@@ -34,8 +28,8 @@ export function AvailabilityGrid({
   onSlotDeleteConfirm,
   onSlotDeleteCancel,
 }: {
-  busySlots: SlotLike[]
-  preferredSlots: SlotLike[]
+  segments: AvailabilitySegment[]
+  preferredSlots: PreferredSlot[]
   startDate: string
   earliestTime: string
   latestTime: string
@@ -184,21 +178,21 @@ export function AvailabilityGrid({
                 const colDayStart = new Date(colDate.getFullYear(), colDate.getMonth(), colDate.getDate(), startHour, 0)
                 const colDayEnd = new Date(colDate.getFullYear(), colDate.getMonth(), colDate.getDate(), endHour, 0)
 
-                const colBusy = busySlots.filter((s) => {
-                  const ss = toDate(s.start_time_utc); const se = toDate(s.end_time_utc)
-                  return ss < colDayEnd && se > colDayStart
-                })
+                const colSegmentsByType = segments.reduce<Record<string, AvailabilitySegment[]>>(
+                  (acc, s) => {
+                    const ss = toDate(s.start_time_utc); const se = toDate(s.end_time_utc)
+                    if (ss < colDayEnd && se > colDayStart) {
+                      acc[s.type] = acc[s.type] ?? []
+                      acc[s.type].push(s)
+                    }
+                    return acc
+                  },
+                  {}
+                )
                 const colPreferred = preferredSlots.filter((s) => {
                   const ss = toDate(s.start_time_utc); const se = toDate(s.end_time_utc)
                   return ss < colDayEnd && se > colDayStart
                 })
-
-                const busyOverlays = mergeSlots(colBusy)
-                // Build per-segment preferred overlays with accurate per-region counts
-                const preferredOverlays = buildCountedSegments(colPreferred)
-                // For conflict detection, merge preferred into single blocks (as before)
-                const preferredMerged = mergeSlots(colPreferred)
-                const conflictOverlays = buildConflictOverlays(busyOverlays, preferredMerged)
 
 
                 // ── Pending slot overlay ─────────────────────────────────────
@@ -233,9 +227,10 @@ export function AvailabilityGrid({
                       })
                     })}
 
-                    {/* Conflict overlays (rendered first so busy/preferred don't cover them) */}
-                    {conflictOverlays.map((c, ci) => {
-                      const cc = clipToGridBounds(c.startUtc, c.endUtc, colDayStart, colDayEnd)
+                    {/* Conflict overlays */}
+                    {(colSegmentsByType['conflict'] ?? []).map((s, ci) => {
+                      const ss = toDate(s.start_time_utc); const se = toDate(s.end_time_utc)
+                      const cc = clipToGridBounds(ss, se, colDayStart, colDayEnd)
                       if (cc.endUtc <= cc.startUtc) return null
                       return (
                         <div
@@ -244,8 +239,8 @@ export function AvailabilityGrid({
                           className="rounded-md z-20 overflow-hidden relative"
                         >
                           <div className="flex w-full h-full">
-                            <div className={`w-1/2 h-full ${busyIntensityClass(c.busyCount)}`} />
-                            <div className={`w-1/2 h-full ${preferredIntensityClass(c.preferredCount)}`} />
+                            <div className={`w-1/2 h-full ${busyIntensityClass(s.busy_count)}`} />
+                            <div className={`w-1/2 h-full ${preferredIntensityClass(s.preferred_count)}`} />
                             <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
                               <span className="text-xs font-semibold text-error">CONFLICT</span>
                               {cc.endUtc.getTime() - cc.startUtc.getTime() >= 30 * 60 * 1000 && (
@@ -257,49 +252,46 @@ export function AvailabilityGrid({
                       )
                     })}
 
-                    {/* Busy overlays — clipped to non-conflict segments */}
-                    {busyOverlays.flatMap((o, oi) =>
-                      subtractConflicts(o, conflictOverlays).map((seg, si) => {
-                        const cs = clipToGridBounds(seg.startUtc, seg.endUtc, colDayStart, colDayEnd)
-                        if (cs.endUtc <= cs.startUtc) return null
-                        return (
-                          <div
-                            key={`busy-${oi}-${si}`}
-                            style={overlayStyle(cs.startUtc, cs.endUtc)}
-                            className={`${busyIntensityClass(o.count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
-                          >
-                            {cs.endUtc.getTime() - cs.startUtc.getTime() >= 30 * 60 * 1000 && (
-                              <span className="text-xs text-error font-medium">{formatSlotTime(cs.startUtc.toISOString())} – {formatSlotTime(cs.endUtc.toISOString())}</span>
-                            )}
-                          </div>
-                        )
-                      })
-                    )}
+                    {/* Busy overlays */}
+                    {(colSegmentsByType['busy'] ?? []).map((s, bi) => {
+                      const ss = toDate(s.start_time_utc); const se = toDate(s.end_time_utc)
+                      const cs = clipToGridBounds(ss, se, colDayStart, colDayEnd)
+                      if (cs.endUtc <= cs.startUtc) return null
+                      return (
+                        <div
+                          key={`busy-${bi}`}
+                          style={overlayStyle(cs.startUtc, cs.endUtc)}
+                          className={`${busyIntensityClass(s.busy_count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
+                        >
+                          {cs.endUtc.getTime() - cs.startUtc.getTime() >= 30 * 60 * 1000 && (
+                            <span className="text-xs text-error font-medium">{formatSlotTime(cs.startUtc.toISOString())} – {formatSlotTime(cs.endUtc.toISOString())}</span>
+                          )}
+                        </div>
+                      )
+                    })}
 
-                    {/* Preferred overlays — clipped to non-conflict segments (display only) */}
-                    {preferredOverlays.flatMap((o, oi) =>
-                      subtractConflicts(o, conflictOverlays).map((seg, si) => {
-                        const cs = clipToGridBounds(seg.startUtc, seg.endUtc, colDayStart, colDayEnd)
-                        if (cs.endUtc <= cs.startUtc) return null
-                        return (
-                          <div
-                            key={`preferred-${oi}-${si}`}
-                            style={overlayStyle(cs.startUtc, cs.endUtc)}
-                            className={`${preferredIntensityClass(o.count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
-                          >
-                            {cs.endUtc.getTime() - cs.startUtc.getTime() >= 30 * 60 * 1000 && (
-                              <span className="text-xs text-secondary font-medium">{formatSlotTime(cs.startUtc.toISOString())} – {formatSlotTime(cs.endUtc.toISOString())}</span>
-                            )}
-                          </div>
-                        )
-                      })
-                    )}
+                    {/* Preferred overlays */}
+                    {(colSegmentsByType['preferred'] ?? []).map((s, pi) => {
+                      const ss = toDate(s.start_time_utc); const se = toDate(s.end_time_utc)
+                      const cs = clipToGridBounds(ss, se, colDayStart, colDayEnd)
+                      if (cs.endUtc <= cs.startUtc) return null
+                      return (
+                        <div
+                          key={`preferred-${pi}`}
+                          style={overlayStyle(cs.startUtc, cs.endUtc)}
+                          className={`${preferredIntensityClass(s.preferred_count)} rounded-md z-10 overflow-hidden flex items-center justify-center`}
+                        >
+                          {cs.endUtc.getTime() - cs.startUtc.getTime() >= 30 * 60 * 1000 && (
+                            <span className="text-xs text-secondary font-medium">{formatSlotTime(cs.startUtc.toISOString())} – {formatSlotTime(cs.endUtc.toISOString())}</span>
+                          )}
+                        </div>
+                      )
+                    })}
 
                     {/* Own slot dot indicators — one per own preferred slot */}
                     {colPreferred
-                      .filter((slot) => (slot as PreferredSlot).user_id === currentUserId && !slotsToDelete.includes((slot as PreferredSlot).id))
-                      .map((slot) => {
-                        const s = slot as PreferredSlot
+                      .filter((s) => s.user_id === currentUserId && !slotsToDelete.includes(s.id))
+                      .map((s) => {
                         const clipped = clipToGridBounds(toDate(s.start_time_utc), toDate(s.end_time_utc), colDayStart, colDayEnd)
                         if (clipped.endUtc <= clipped.startUtc) return null
                         return (
@@ -316,12 +308,8 @@ export function AvailabilityGrid({
 
                     {/* Own preferred slot click/delete overlays — only in edit mode and not confirmed */}
                     {isEditMode && eventStatus !== 'confirmed' && colPreferred
-                      .filter((slot) => {
-                        const s = slot as PreferredSlot
-                        return s.user_id === currentUserId && !slotsToDelete.includes(s.id)
-                      })
-                      .map((slot) => {
-                        const s = slot as PreferredSlot
+                      .filter((s) => s.user_id === currentUserId && !slotsToDelete.includes(s.id))
+                      .map((s) => {
                         const isConfirming = deletingSlotId === s.id
                         const clipped = clipToGridBounds(toDate(s.start_time_utc), toDate(s.end_time_utc), colDayStart, colDayEnd)
                         if (clipped.endUtc <= clipped.startUtc) return null

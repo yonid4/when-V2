@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { User } from '@/types'
+import { addDays } from '@/lib/dates'
 
 interface AuthState {
   user: User | null
@@ -9,7 +10,7 @@ interface AuthState {
 }
 
 function setCookie(name: string, value: string, days: number) {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString()
+  const expires = addDays(new Date(), days).toUTCString()
   document.cookie = `${name}=${value}; expires=${expires}; path=/; SameSite=Lax`
 }
 

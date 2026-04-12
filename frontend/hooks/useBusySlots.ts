@@ -1,18 +1,10 @@
 'use client'
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { BusySlot } from '@/types'
+import { availabilitySegmentsKey } from './useAvailabilitySegments'
 
 const eventBusySlotsKey = (uid: string) => ['busy-slots', 'event', uid] as const
-
-export function useEventBusySlots(uid: string) {
-  return useQuery({
-    queryKey: eventBusySlotsKey(uid),
-    queryFn: () => api.get<BusySlot[]>(`/busy-slots/event/${uid}`),
-    enabled: !!uid,
-  })
-}
 
 export function useSyncCalendar(uid: string) {
   const queryClient = useQueryClient()
@@ -20,6 +12,7 @@ export function useSyncCalendar(uid: string) {
     mutationFn: () => api.post<{ synced: number }>(`/busy-slots/sync/event/${uid}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: eventBusySlotsKey(uid) })
+      queryClient.invalidateQueries({ queryKey: availabilitySegmentsKey(uid) })
     },
   })
 }
@@ -30,6 +23,7 @@ export function useSyncMyCalendar() {
     mutationFn: () => api.post<{ synced: number }>('/busy-slots/sync'),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['busy-slots'] })
+      queryClient.invalidateQueries({ queryKey: ['availability-segments'] })
     },
   })
 }
