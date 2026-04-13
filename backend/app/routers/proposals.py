@@ -39,6 +39,6 @@ def refresh_proposals(
     uid: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Force regenerate proposals regardless of cache state. Coordinator only."""
-    event = get_event_and_check_access(uid, current_user.id, coordinator_only=True)
+    """Force regenerate proposals regardless of cache state."""
+    event = get_event_and_check_access(uid, current_user.id)
     return generate_proposals(event["id"])
