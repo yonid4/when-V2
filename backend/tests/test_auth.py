@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, call
 import os
 
+from google.oauth2.credentials import Credentials
+
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -182,8 +184,7 @@ def test_profile_created_on_first_login(mock_build_flow, mock_svc):
 
     # Mock OAuth flow
     mock_flow = MagicMock()
-    mock_flow.credentials.token = "access-token"
-    mock_flow.credentials.refresh_token = "refresh-token"
+    mock_flow.credentials = Credentials(token="access-token", refresh_token="refresh-token")
     mock_build_flow.return_value = mock_flow
 
     # Mock Google userinfo API call
@@ -251,8 +252,7 @@ def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
     }
 
     mock_flow = MagicMock()
-    mock_flow.credentials.token = "tok"
-    mock_flow.credentials.refresh_token = "ref"
+    mock_flow.credentials = Credentials(token="tok", refresh_token="ref")
     mock_build_flow.return_value = mock_flow
 
     # Track operations by table
