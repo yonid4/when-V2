@@ -16,8 +16,8 @@ def google_login() -> RedirectResponse:
 
 
 @router.get("/google/callback")
-def google_callback(code: str) -> RedirectResponse:
-    token = auth_service.exchange_code_and_upsert_user(code)
+def google_callback(code: str, state: str = "stateless") -> RedirectResponse:
+    token = auth_service.exchange_code_and_upsert_user(code, state)
     redirect_url = f"{settings.frontend_url}/auth/callback?token={token}"
     return RedirectResponse(url=redirect_url)
 
