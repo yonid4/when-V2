@@ -36,7 +36,7 @@ export function DeleteModal({
             <h2 className="text-xl font-bold text-on-surface">Delete Event</h2>
             <p className="text-sm text-on-surface-variant mt-2">
               Are you sure you want to delete{' '}
-              <span className="font-semibold text-on-surface">"{event.name}"</span>? All participants
+              <span className="font-semibold text-on-surface">&quot;{event.name}&quot;</span>? All participants
               will be notified. This action cannot be undone.
             </p>
           </div>

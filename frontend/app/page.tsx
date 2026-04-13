@@ -183,7 +183,7 @@ export default function LandingPage() {
                 </div>
                 <h3 className="text-2xl font-headline font-bold">Pick the winner</h3>
                 <p className="text-on-surface-variant leading-relaxed">
-                  When. ranks the best times based on everyone's availability, including travel time
+                  When. ranks the best times based on everyone&apos;s availability, including travel time
                   and time zones.
                 </p>
               </div>
@@ -202,8 +202,8 @@ export default function LandingPage() {
                   Real availability, not guesses
                 </h3>
                 <p className="text-on-surface-variant text-lg max-w-md">
-                  Direct Google Calendar sync ensures you're never looking at stale data. We see the
-                  gaps so you don't have to.
+                  Direct Google Calendar sync ensures you&apos;re never looking at stale data. We see the
+                  gaps so you don&apos;t have to.
                 </p>
               </div>
               <div className="mt-12 flex flex-wrap gap-3">
@@ -228,7 +228,7 @@ export default function LandingPage() {
               <div>
                 <h3 className="text-2xl font-headline font-bold mt-4">Mark your preferences</h3>
                 <p className="text-on-tertiary-fixed-variant mt-2">
-                  Highlight the specific times that work best for you, not just when you're free.
+                  Highlight the specific times that work best for you, not just when you&apos;re free.
                 </p>
               </div>
             </div>
@@ -239,7 +239,7 @@ export default function LandingPage() {
               <div>
                 <h3 className="text-2xl font-headline font-bold mt-4">Smart time proposals</h3>
                 <p className="text-on-secondary-container mt-2">
-                  Our algorithm ranks slots based on who's free and who prefers them.
+                  Our algorithm ranks slots based on who&apos;s free and who prefers them.
                 </p>
               </div>
             </div>

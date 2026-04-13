@@ -19,7 +19,7 @@ function AuthRehydrator() {
     }).catch(() => {
       localStorage.removeItem('token')
     })
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return null
 }

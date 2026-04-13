@@ -24,7 +24,7 @@ function Popover({ children, onOpenChange }: { children: React.ReactNode; onOpen
     }
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
-  }, [open])
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <PopoverContext.Provider value={{ open, setOpen: handleSetOpen }}>

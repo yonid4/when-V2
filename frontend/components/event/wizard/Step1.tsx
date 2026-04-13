@@ -46,7 +46,7 @@ export function Step1({
     <form onSubmit={handleSubmit(onNext)} className="space-y-10">
       <div>
         <h2 className="text-3xl font-extrabold text-on-surface tracking-tight mb-2">Create a New Event</h2>
-        <p className="text-on-surface-variant">Let's start with the basics. What are we celebrating?</p>
+        <p className="text-on-surface-variant">Let&apos;s start with the basics. What are we celebrating?</p>
       </div>
 
       <div className="space-y-8">

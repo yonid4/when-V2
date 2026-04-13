@@ -108,7 +108,7 @@ export function Step2({
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-10">
       <div>
         <h2 className="text-3xl font-extrabold text-on-surface tracking-tight mb-2">Find the perfect window</h2>
-        <p className="text-on-surface-variant">Define the timeframe and duration. We'll find the gaps for everyone.</p>
+        <p className="text-on-surface-variant">Define the timeframe and duration. We&apos;ll find the gaps for everyone.</p>
       </div>
 
       <div className="bg-surface-container-low p-8 rounded-xl space-y-6">
@@ -200,7 +200,7 @@ export function Step2({
       <div className="space-y-4">
         <div>
           <h3 className="text-lg font-bold text-on-surface">Participants</h3>
-          <p className="text-sm text-on-surface-variant">Who's joining the discussion?</p>
+          <p className="text-sm text-on-surface-variant">Who&apos;s joining the discussion?</p>
         </div>
 
         <div className="bg-surface-container-low p-6 rounded-xl space-y-4">
