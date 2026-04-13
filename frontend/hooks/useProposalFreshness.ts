@@ -27,7 +27,7 @@ export function useProposalFreshness(uid: string) {
       const freshEvent = await fetchFreshEvent(queryClient, uid)
       if (freshEvent.proposals_needs_regeneration) {
         await refreshProposalsAsync()
-        queryClient.invalidateQueries({ queryKey: ['event', uid] })
+        queryClient.invalidateQueries({ queryKey: ['events', uid] })
         return false
       }
       return true

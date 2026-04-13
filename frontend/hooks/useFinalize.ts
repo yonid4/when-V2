@@ -10,7 +10,7 @@ export function useFinalize(uid: string) {
     mutationFn: (body: FinalizeBody) =>
       api.post(`/events/${uid}/finalize`, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['event', uid] })
+      queryClient.invalidateQueries({ queryKey: ['events', uid] })
       queryClient.invalidateQueries({ queryKey: ['proposals', uid] })
     },
   })

@@ -14,6 +14,7 @@ import {
   CalendarCheck,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useEvent } from '@/hooks/useEvent'
 import { useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
 import { usePreferredSlots, useSavePreferredSlot, useDeletePreferredSlot } from '@/hooks/usePreferredSlots'
 import { useAvailabilitySegments } from '@/hooks/useAvailabilitySegments'
@@ -22,8 +23,6 @@ import { useProposalFreshness } from '@/hooks/useProposalFreshness'
 import { FinalizeCard } from './FinalizeCard'
 import { ProposalList } from './ProposalList'
 import { GridHeader } from './GridHeader'
-import { supabase } from '@/lib/supabase'
-import { fetchFreshEvent } from './proposalUtils'
 import { useEventSubscriptions, useEventPresence } from '@/hooks/useEventSubscriptions'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
@@ -44,6 +43,12 @@ import type { EditSaveResult } from './editEventUtils'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Stable empty array — used as the default for usePreferredSlots so that the
+// inline `= []` default doesn't create a new reference every render, which
+// would cause the preferredSlotsRef comparison in the sync effect to always
+// be true and trigger an infinite setState loop.
+const EMPTY_PREFERRED_SLOTS: PreferredSlot[] = []
+
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 export default function EventDetailClient({
@@ -54,7 +59,8 @@ export default function EventDetailClient({
   const { user } = useAuthStore()
   const currentUserId = user?.id ?? ''
 
-  const [event, setEvent] = useState(initialEvent)
+  const { data: liveEvent } = useEvent(initialEvent.uid)
+  const event = liveEvent ?? initialEvent
   const [participantsKey, setParticipantsKey] = useState(0)
 
   const isCoordinator = !!user?.id && user.id === event.coordinator_id
@@ -80,18 +86,18 @@ export default function EventDetailClient({
   const [proposalsStale, setProposalsStale] = useState(false)
   const [showFinalizeCard, setShowFinalizeCard] = useState(false)
 
+  const queryClient = useQueryClient()
+
   function handleSave(result: EditSaveResult) {
     if (result.infoChanged || result.timeRangeChanged) {
-      setEvent((prev) => ({ ...prev, ...result.updated }))
+      queryClient.invalidateQueries({ queryKey: ['events', initialEvent.uid] })
     }
     if (result.guestInvitesChanged) {
       setParticipantsKey((k) => k + 1)
     }
   }
-
-  const queryClient = useQueryClient()
   const { data: segments = [] } = useAvailabilitySegments(event.uid)
-  const { data: preferredSlots = [] } = usePreferredSlots(event.uid)
+  const { data: preferredSlots = EMPTY_PREFERRED_SLOTS } = usePreferredSlots(event.uid)
   const { mutate: syncCalendar, isPending: isSyncing } = useSyncMyCalendar()
   const { mutateAsync: savePreferredSlot } = useSavePreferredSlot(event.uid)
   const { mutateAsync: deletePreferredSlot } = useDeletePreferredSlot(event.uid)
@@ -105,51 +111,8 @@ export default function EventDetailClient({
     }
   }, [preferredSlots, isEditMode])
 
-  // Real-time subscription: invalidate preferred slots on INSERT or DELETE
-  useEffect(() => {
-    if (!event.id) return
-    const channel = supabase
-      .channel(`preferred-slots-${event.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${event.id}` },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
-          queryClient.invalidateQueries({ queryKey: ['availability-segments', event.uid] })
-          setProposalsStale(true)
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${event.id}` },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['preferred-slots', event.uid] })
-          queryClient.invalidateQueries({ queryKey: ['availability-segments', event.uid] })
-          setProposalsStale(true)
-        }
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [event.id, event.uid, queryClient])
-
-  // Real-time subscription: invalidate event on UPDATE (finalization, status changes)
-  useEffect(() => {
-    if (!event.id) return
-    const channel = supabase
-      .channel(`event-updates-${event.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${event.id}` },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['event', event.uid] })
-        }
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [event.id, event.uid, queryClient])
-
-  // Real-time: busy_slots INSERT + event_participants INSERT
-  useEventSubscriptions(event.uid, event.id)
+  // Real-time: all event subscriptions via broadcast channels
+  useEventSubscriptions(event.uid, event.id, currentUserId || undefined)
 
   // Presence: who else is viewing this event right now
   const presentUsers = useEventPresence(event.uid, user ?? null)
@@ -690,7 +653,7 @@ export default function EventDetailClient({
           onClose={() => setShowFinalizeCard(false)}
           onSuccess={() => {
             setShowFinalizeCard(false)
-            queryClient.invalidateQueries({ queryKey: ['event', event.uid] })
+            queryClient.invalidateQueries({ queryKey: ['events', event.uid] })
           }}
         />
       )}
