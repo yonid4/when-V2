@@ -1,44 +1,81 @@
 # When.
 
-Group scheduling without the back-and-forth. Create an event, invite participants, sync Google Calendars, and get the best meeting time automatically.
+Group scheduling without the back-and-forth. Create an event, invite participants, sync Google Calendars, and get the best meeting time automatically — ranked by real availability and stated preferences.
 
-## Stack
+## Key Features
 
-- **Backend:** FastAPI + Supabase (PostgreSQL) + Google OAuth/Calendar API
-- **Frontend:** Next.js 14 (App Router) + shadcn/ui + TanStack Query + Zustand
+- **Google Calendar sync** — participants connect their Google account once; busy slots are pulled automatically and refreshed hourly in the background
+- **Availability heatmap** — interactive grid shows where everyone is free across the scheduling window
+- **Preferred-slot marking** — participants swipe to highlight their ideal times, not just their open ones
+- **Smart proposal ranking** — algorithm scores candidate windows by conflict count (ascending) and preferred-slot overlap (descending), surfaces the top 5
+- **Email invitations** — coordinator invites participants by email; invitees receive a join link and RSVP flow
+- **Real-time updates** — Supabase Realtime pushes participant changes, busy-slot syncs, and proposal refreshes live to all viewers
+- **Event finalization** — coordinator picks the winning proposal and closes the event
 
----
+## Tech Stack
 
-## Dev setup
+- **Backend:** Python 3.12 · FastAPI · Supabase (PostgreSQL + Realtime) · Google OAuth 2.0 / Calendar API · APScheduler
+- **Frontend:** Next.js 14 (App Router) · TypeScript · TanStack Query · Zustand · shadcn/ui · Tailwind CSS
 
-Run backend and frontend in separate terminals. No Docker.
+## Getting Started
 
-### Backend
+### Prerequisites
+
+- Python 3.12
+- Node.js 18+
+- A Supabase project (PostgreSQL database + Realtime enabled)
+- A Google Cloud project with OAuth 2.0 credentials and the Calendar API enabled
+
+### Installation
+
+**Backend**
 
 ```bash
 cd backend
 python3.12 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # fill in your values
-uvicorn app.main:app --reload --reload-dir app --port 8000
+cp .env.example .env   # fill in Supabase keys, Google OAuth credentials, JWT secret
 ```
 
-### Frontend
+**Frontend**
 
 ```bash
 cd frontend
 npm install
-cp .env.local.example .env.local  # fill in your values
+cp .env.local.example .env.local   # fill in Supabase public key, API URL
+```
+
+## Usage
+
+Run the backend and frontend in separate terminals.
+
+```bash
+# Terminal 1 — API server (port 8000)
+cd backend
+source venv/bin/activate
+uvicorn app.main:app --reload --reload-dir app --port 8000
+
+# Terminal 2 — Next.js dev server (port 3000)
+cd frontend
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000), sign in with Google, and create your first event.
 
----
+## Visuals
 
-## Running tests
+![Landing page](./docs/screenshots/landing.png)
+*Landing page — hero section with availability grid mockup*
 
-### Backend
+![Dashboard](./docs/screenshots/dashboard.png)
+*Dashboard — event cards and calendar connect prompt*
+
+![Event detail](./docs/screenshots/event_detail.png)
+*Event detail — availability grid, participant list, and ranked proposals*
+
+## Tests
+
+**Backend**
 
 ```bash
 cd backend
@@ -46,7 +83,7 @@ source venv/bin/activate
 pytest tests/ -v
 ```
 
-### Frontend
+**Frontend**
 
 ```bash
 cd frontend
@@ -55,18 +92,4 @@ npm run test
 
 ---
 
-## Env vars
-
-See `backend/.env.example` and `frontend/.env.local.example` for required variables (Supabase keys, Google OAuth credentials, JWT secret).
-
----
-
-## Docs
-
-- [Architecture](docs/ARCHITECTURE.md)
-- [Data model](docs/DATA_MODEL.md)
-- [Tech stack](docs/TECH_STACK.md)
-- [Sprint plan](docs/SPRINT%20PLAN.md)
-- [Lessons learned](docs/LESSONS_LEARNED.md)
-- [Project rules](docs/CLAUDE.md)
-- [Stitch Design](docs/STITCH_DESIGN.md)
+See [`docs/`](docs/) for architecture, data model, and sprint plan documentation.
