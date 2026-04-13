@@ -40,8 +40,8 @@ backend/
 │   │   ├── calendar_sources.py  # Toggle calendar sources, set write calendar
 │   │   ├── busy_slots.py        # Get merged busy slots, manual sync trigger
 │   │   ├── preferred_slots.py   # Save/get/delete preferred slots
-│   │   ├── proposals.py         # Get proposals, force refresh
-│   │   ├── finalization.py      # Finalize event, create Google Calendar event
+│   │   ├── proposals.py         # Get proposals, force refresh (coordinator-only regeneration)
+│   │   ├── finalize.py          # Finalize event, create Google Calendar event
 │   │   └── notifications.py     # Get notifications, mark read, take action
 │   │
 │   ├── services/                # Business logic, no HTTP concerns
@@ -51,6 +51,10 @@ backend/
 │   │   ├── invitation_service.py # Invite logic, pending invite matching on signup
 │   │   ├── calendar_service.py  # Google Calendar API calls (read + write)
 │   │   ├── sync_service.py      # Fetch busy times, upsert busy_slots
+│   │   ├── busy_slots_service.py # Busy slot reads/writes, RLS bypass for cross-user data
+│   │   ├── preferred_slots_service.py # Preferred slot reads/writes
+│   │   ├── availability_service.py    # Merged availability segment computation
+│   │   ├── finalize_service.py  # Finalization logic, GCal event creation
 │   │   ├── proposal_service.py  # Scheduling algorithm (see algorithm section)
 │   │   └── notification_service.py
 │   │
@@ -73,7 +77,19 @@ backend/
 ├── tests/                       # pytest test suite (one file per feature domain)
 │   ├── __init__.py
 │   ├── test_auth.py             # Sprint 1: auth router, service, get_current_user dependency
-│   └── test_events.py          # Sprint 2: event service CRUD, access control
+│   ├── test_events.py           # Sprint 2: event service CRUD, access control
+│   ├── test_participants.py     # Sprint 3: participant management, RSVP
+│   ├── test_invitations.py      # Sprint 3: invite by email, respond to invite
+│   ├── test_notifications.py    # Sprint 3: notification creation, mark read
+│   ├── test_calendar.py         # Sprint 4: Google Calendar account connect/disconnect
+│   ├── test_busy_slots.py       # Sprint 5: busy slot sync and retrieval
+│   ├── test_sync.py             # Sprint 5: calendar sync job
+│   ├── test_sync_service.py     # Sprint 5: sync_service unit tests
+│   ├── test_preferred_slots.py  # Sprint 5: preferred slot saves and reads
+│   ├── test_proposals.py        # Sprint 6: proposal generation and scoring
+│   ├── test_availability_segments.py # Sprint 7: merged availability computation
+│   ├── test_email_normalization.py   # Sprint 7: email normalisation helper
+│   └── test_finalize.py         # Sprint 8: finalization router and service
 │
 ├── .env                         # Never committed
 ├── .env.example
@@ -86,6 +102,7 @@ backend/
 frontend/
 ├── app/                         # Next.js App Router
 │   ├── layout.tsx               # Root layout: providers (QueryClient, Zustand, Supabase)
+│   ├── providers.tsx            # Client-side provider tree (QueryClient, auth bootstrap)
 │   ├── page.tsx                 # Landing / login page (server component)
 │   ├── auth/
 │   │   └── callback/
@@ -96,7 +113,13 @@ frontend/
 │   │   ├── new/
 │   │   │   └── page.tsx         # Create event wizard (client component)
 │   │   └── [uid]/
-│   │       └── page.tsx         # Event detail (server component shell + client islands)
+│   │       ├── page.tsx             # Server component shell: SSR fetch + passes props to client
+│   │       ├── EventDetailClient.tsx # Main client island: availability grid, proposals, RSVP
+│   │       ├── FinalizeCard.tsx      # Coordinator finalization UI
+│   │       ├── GridHeader.tsx        # Date/time column headers for availability grid
+│   │       ├── ProposalList.tsx      # List of proposed times with freshness-check logic
+│   │       ├── editEventUtils.ts     # Utilities for inline event editing
+│   │       └── not-found.tsx         # 404 fallback for unknown event UIDs
 │   └── settings/
 │       └── page.tsx             # Calendar accounts, timezone
 │
@@ -108,21 +131,33 @@ frontend/
 │   ├── ui/                      # shadcn/ui generated components (do not edit manually)
 │   ├── auth/
 │   │   └── LoginButton.tsx
+│   ├── layout/
+│   │   └── Navbar.tsx           # Top navigation bar with notification bell
 │   ├── dashboard/
-│   │   └── EventCard.tsx
+│   │   ├── EventCard.tsx
+│   │   ├── EventTypeBadge.tsx
+│   │   ├── StatusBadge.tsx
+│   │   └── ParticipantAvatars.tsx
 │   ├── event/
-│   │   ├── EventHeader.tsx      # Name, status badge, coordinator controls
-│   │   ├── ParticipantList.tsx
 │   │   ├── AvailabilityGrid.tsx # The calendar grid (busy/preferred/proposed overlays)
-│   │   ├── ProposalPanel.tsx    # List of proposed times with reasoning
-│   │   ├── FinalizeButton.tsx
-│   │   └── InviteInput.tsx
+│   │   ├── ParticipantList.tsx
+│   │   ├── InviteInput.tsx
+│   │   ├── RsvpSelector.tsx     # RSVP status picker (attending/declined/maybe)
+│   │   ├── RsvpBadge.tsx        # Inline RSVP status badge
+│   │   ├── StatusBadge.tsx      # Event status badge (open/confirmed/cancelled)
+│   │   ├── EditModal.tsx        # Edit event name/window modal
+│   │   ├── DeleteModal.tsx      # Delete event confirmation modal
+│   │   └── wizard/              # Multi-step create-event wizard
+│   │       ├── Step1.tsx
+│   │       ├── Step2.tsx
+│   │       ├── Step3.tsx
+│   │       └── StepIndicator.tsx
 │   ├── notifications/
 │   │   ├── NotificationBell.tsx # Badge + dropdown trigger
 │   │   └── NotificationList.tsx
 │   └── settings/
-│       ├── CalendarAccountCard.tsx
-│       └── CalendarSourceList.tsx
+│       ├── SourceRow.tsx        # Individual calendar source toggle row
+│       └── (CalendarAccountCard, CalendarSourceList via SettingsPage)
 │
 ├── hooks/                       # TanStack Query hooks (one file per domain)
 │   ├── useEvent.ts              # useEvent(uid), useEvents(), useUpdateEvent()
@@ -133,11 +168,26 @@ frontend/
 │   ├── useProposals.ts
 │   ├── useNotifications.ts
 │   ├── useCalendarAccounts.ts
-│   └── useFinalize.ts
+│   ├── useFinalize.ts
+│   ├── useAvailabilitySegments.ts # Merged availability segment computation
+│   ├── useEventSubscriptions.ts   # Supabase real-time subscription setup per event
+│   └── useProposalFreshness.ts    # Lazy freshness check: triggers regeneration when stale
 │
 ├── stores/                      # Zustand stores
 │   ├── authStore.ts             # { user, token, setUser, clearAuth }
 │   └── notificationStore.ts     # { unreadCount, increment, reset }
+│
+├── __tests__/                   # Vitest test suite (one directory per sprint)
+│   ├── setup.ts
+│   ├── auth/                    # Sprint 1: authStore, middleware, callback, lib/api
+│   ├── sprint3/                 # Sprint 3: InviteInput, RsvpSelector, NotificationBell/List, ParticipantList
+│   ├── sprint4/                 # Sprint 4: EventDetailClient, useBusySlots, useCalendarAccounts, SettingsPage
+│   ├── sprint4post/             # Post-sprint 4: notification store/bell/list, CreateEventForm
+│   ├── sprint4post2/            # Post-sprint 4 follow-up: NewEventPage, editEventUtils, EventDetailClient
+│   ├── sprint5/                 # Sprint 5: gridUtils, usePreferredSlots, editModeUtils, EditMode
+│   ├── sprint6/                 # Sprint 6: useFinalize, useProposals
+│   ├── sprint7/                 # Sprint 7: useNotifications
+│   └── sprint9/                 # Sprint 9: useEventSubscriptions, DeleteEventButton, EmptyStates
 │
 ├── lib/
 │   ├── api.ts                   # Base fetch wrapper (attaches JWT, handles 401)
@@ -195,7 +245,7 @@ User drags to mark a preferred slot
 ```
 Another participant saves a preferred slot
   → Supabase real-time fires on preferred_slots INSERT
-  → Client receives event
+  → useEventSubscriptions hook receives event (set up in EventDetailClient)
   → queryClient.invalidateQueries(['preferredSlots', uid])
   → Grid refetches and updates
 ```
@@ -282,16 +332,37 @@ Step 5 — Store
 Output: 5 ProposedTime objects
 ```
 
+### Proposal freshness flow
+
+```
+User opens event detail (any role)
+  → ProposalList mounts, calls useProposalFreshness(uid, proposals_needs_regeneration)
+  → If proposals_needs_regeneration === true AND current user is coordinator:
+      → POST /api/events/{uid}/proposals/refresh (coordinator-only endpoint)
+      → proposals query invalidated on success
+  → If proposals_needs_regeneration === true AND current user is NOT coordinator:
+      → Show stale-data banner only (no regeneration triggered)
+  → If proposals_needs_regeneration === false:
+      → No action needed
+```
+
 ---
 
 ## Supabase usage rules
 
 - **anon_client** — used for all user-facing queries. RLS policies enforce that users can only read/write their own data.
-- **service_client** — used ONLY in:
-  - `auth_service.py` (profile upsert on login)
-  - `invitation_service.py` (pending invite matching on new user signup)
-  - `notification_service.py` (inserting notifications for other users)
-  - `scheduler/jobs.py` (background sync across all users)
+- **service_client** — used in services that require RLS bypass:
+  - `auth_service.py` — profile upsert on login
+  - `invitation_service.py` — pending invite matching on new user signup
+  - `notification_service.py` — inserting notifications for other users
+  - `scheduler/jobs.py` — background sync across all users
+  - `calendar_service.py` — credentials contain sensitive OAuth tokens
+  - `sync_service.py` — busy_slots.user_id references auth.users not profiles
+  - `finalize_service.py` — writes to multiple tables atomically post-GCal
+  - `busy_slots_service.py` — cross-user busy slot reads
+  - `preferred_slots_service.py` — preferred_slots RLS requires service access
+  - `event_service.py` — event_deleted notifications sent to other users
+  - `proposal_service.py` — reads cross-user data for scoring
 - Never use service_client in a route directly — only call it from a service function
 - All other service functions receive the current user's ID and use anon_client with RLS
 
