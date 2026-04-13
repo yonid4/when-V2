@@ -417,3 +417,39 @@ $$;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function handle_new_user();
+
+
+
+-- Replica identity for realtime
+ALTER TABLE preferred_slots REPLICA IDENTITY FULL;
+ALTER TABLE event_participants REPLICA IDENTITY FULL;
+ALTER TABLE busy_slots REPLICA IDENTITY FULL;
+ALTER TABLE notifications REPLICA IDENTITY FULL;
+ALTER TABLE events REPLICA IDENTITY FULL;
+
+-- Realtime publication
+ALTER PUBLICATION supabase_realtime ADD TABLE 
+  preferred_slots, event_participants, busy_slots, notifications, events;
+
+-- Anon RLS policies for realtime
+CREATE POLICY "anon can select preferred_slots"
+ON public.preferred_slots FOR SELECT TO anon USING (true);
+
+CREATE POLICY "anon can select event_participants"
+ON public.event_participants FOR SELECT TO anon USING (true);
+
+CREATE POLICY "anon can select events"
+ON public.events FOR SELECT TO anon USING (true);
+
+CREATE POLICY "anon can select notifications"
+ON public.notifications FOR SELECT TO anon USING (true);
+
+CREATE POLICY "anon can select busy_slots"
+ON public.busy_slots FOR SELECT TO anon USING (true);
+
+-- RLS policies for realtime.messages
+CREATE POLICY "anon can receive broadcasts"
+ON realtime.messages FOR SELECT TO anon USING (true);
+
+CREATE POLICY "anon can send broadcasts"
+ON realtime.messages FOR INSERT TO anon WITH CHECK (true);
