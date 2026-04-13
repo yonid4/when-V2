@@ -2,8 +2,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-
-logger = logging.getLogger(__name__)
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -13,6 +11,8 @@ from app.config import settings
 from app.models.user import User
 from app.utils.email import normalize_email
 from app.utils.supabase import service_client
+
+logger = logging.getLogger(__name__)
 
 SCOPES = [
     "openid",
@@ -51,7 +51,7 @@ def exchange_code_and_upsert_user(code: str) -> str:
     """Exchange OAuth code, upsert profile, check pending invites, return JWT."""
     flow = build_oauth_flow()
     # Use a fixed state to match what we sent in the authorization URL
-    flow._state = "stateless"
+    object.__setattr__(flow, "_state", "stateless")
     # Disable scope change validation — calendar scopes may not be returned
     # immediately if the consent screen is in testing mode
     flow.oauth2session.scope = None
@@ -64,6 +64,7 @@ def exchange_code_and_upsert_user(code: str) -> str:
         )
 
     credentials = flow.credentials
+    assert isinstance(credentials, Credentials)
     user_info = _fetch_google_user_info(credentials)
 
     profile = _upsert_profile(user_info, credentials)

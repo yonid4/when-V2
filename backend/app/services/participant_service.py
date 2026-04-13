@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from app.models.participant import ParticipantResponse
 from app.models.user import User
 from app.services.event_service import fetch_event_by_uid, _fetch_participants_raw
-from app.utils.supabase import get_authed_client, service_client
+from app.utils.supabase import get_authed_client
 
 
 def _require_member(participants: list[dict], user_id: str) -> None:

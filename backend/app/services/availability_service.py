@@ -40,8 +40,8 @@ def compute_availability_segments(event_uid: str, current_user_id: str) -> list[
 
     Adjacent segments of the same type and intensity tier are merged.
     """
-    busy_slots = busy_slots_service.get_event_busy_slots(event_uid, current_user_id)
-    preferred_slots = preferred_slots_service.get_preferred_slots(event_uid, current_user_id)
+    busy_slots = busy_slots_service.get_event_busy_slots(event_uid, current_user_id) or []
+    preferred_slots = preferred_slots_service.get_preferred_slots(event_uid, current_user_id) or []
 
     busy_ivs = [
         (_parse_dt(s["start_time_utc"]), _parse_dt(s["end_time_utc"]))

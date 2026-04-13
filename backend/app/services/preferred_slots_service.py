@@ -1,6 +1,6 @@
 from fastapi import HTTPException, status
 
-from app.models.slot import PreferredSlotCreate, PreferredSlotResponse
+from app.models.slot import PreferredSlotCreate
 from app.utils.supabase import service_client
 
 

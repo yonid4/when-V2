@@ -50,7 +50,7 @@ def connect_google(current_user: User = Depends(get_current_user)):
 def google_calendar_callback(code: str, state: str):
     """Receives the OAuth callback. `state` carries the user_id."""
     flow = build_calendar_flow()
-    flow._state = state
+    object.__setattr__(flow, "_state", state)
     try:
         flow.fetch_token(code=code)
     except Exception as exc:
@@ -59,7 +59,8 @@ def google_calendar_callback(code: str, state: str):
             url=f"{settings.frontend_url}/settings?error=calendar_auth_failed"
         )
 
-    credentials: Credentials = flow.credentials
+    credentials = flow.credentials
+    assert isinstance(credentials, Credentials)
 
     try:
         user_info_svc = build("oauth2", "v2", credentials=credentials)

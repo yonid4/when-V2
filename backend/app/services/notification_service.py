@@ -5,7 +5,6 @@ from fastapi import HTTPException
 from app.models.notification import NotificationResponse
 from app.models.user import User
 from app.services.invitation_service import respond_to_invitation
-from app.utils.notifications import create_notifications
 from app.utils.supabase import get_authed_client, service_client
 
 

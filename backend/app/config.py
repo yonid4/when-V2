@@ -17,4 +17,4 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]

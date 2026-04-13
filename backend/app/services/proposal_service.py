@@ -89,7 +89,7 @@ def generate_proposals(event_id: str, db=None) -> list[dict]:
         .maybe_single()
         .execute()
     )
-    event = event_result.data
+    event = event_result.data if event_result else None
     if not event:
         return []
 
