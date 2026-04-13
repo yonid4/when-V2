@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { Pencil } from 'lucide-react'
 
 interface PresenceUser {
@@ -34,10 +35,12 @@ export function GridHeader({
               <div className="flex -space-x-1.5">
                 {visibleUsers.map((u) =>
                   u.avatar_url ? (
-                    <img
+                    <Image
                       key={u.user_id}
                       src={u.avatar_url}
                       alt={u.full_name ?? ''}
+                      width={24}
+                      height={24}
                       className="w-6 h-6 rounded-full border-2 border-surface object-cover"
                     />
                   ) : (

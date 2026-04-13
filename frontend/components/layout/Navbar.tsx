@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { Settings, LogOut } from 'lucide-react'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
@@ -22,9 +23,11 @@ export function Navbar() {
 
   const avatarElement = user ? (
     user.avatar_url ? (
-      <img
+      <Image
         src={user.avatar_url}
         alt={user.full_name ?? ''}
+        width={36}
+        height={36}
         className="w-9 h-9 rounded-full object-cover ring-2 ring-primary/20 hover:ring-primary/60 transition"
       />
     ) : (
@@ -38,6 +41,7 @@ export function Navbar() {
     <header className="w-full sticky top-0 z-50 bg-surface/80 backdrop-blur-md border-b-0">
       <div className="w-full flex items-center justify-between px-4 h-16">
         <Link href="/dashboard">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/navbar_logo.png" alt="When." className="h-13 w-auto object-contain" />
         </Link>
         <div className="flex items-center gap-3">
