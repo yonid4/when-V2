@@ -18,10 +18,12 @@ import { useSyncCalendar, useSyncMyCalendar } from '@/hooks/useBusySlots'
 import { usePreferredSlots, useSavePreferredSlot, useDeletePreferredSlot } from '@/hooks/usePreferredSlots'
 import { useAvailabilitySegments } from '@/hooks/useAvailabilitySegments'
 import { useProposals, useRefreshProposals } from '@/hooks/useProposals'
+import { useProposalFreshness } from '@/hooks/useProposalFreshness'
 import { FinalizeCard } from './FinalizeCard'
 import { ProposalList } from './ProposalList'
 import { GridHeader } from './GridHeader'
 import { supabase } from '@/lib/supabase'
+import { fetchFreshEvent } from './proposalUtils'
 import { useEventSubscriptions, useEventPresence } from '@/hooks/useEventSubscriptions'
 import { ParticipantList } from '@/components/event/ParticipantList'
 import { InviteInput } from '@/components/event/InviteInput'
@@ -156,6 +158,13 @@ export default function EventDetailClient({
 
   const { data: proposals, isLoading: isLoadingProposals } = useProposals(event.uid, proposalsEnabled)
   const { mutate: refreshProposals, isPending: isRefreshing } = useRefreshProposals(event.uid)
+  const { isChecking: isCheckingProposals, checkAndRefreshIfNeeded } = useProposalFreshness(event.uid)
+
+  async function handleViewProposedTimes() {
+    await checkAndRefreshIfNeeded()
+    setProposalsEnabled(true)
+    setProposalsStale(false)
+  }
 
   function runMergeCheck(
     pending: PendingSlot,
@@ -511,13 +520,23 @@ export default function EventDetailClient({
               </label>
 
               <button
-                onClick={() => setProposalsEnabled(true)}
-                className="w-full py-4 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-xl font-bold shadow-[0_15px_30px_-10px_rgba(155,68,40,0.3)] flex items-center justify-center gap-2 transform hover:-translate-y-0.5 transition-all duration-300"
+                onClick={handleViewProposedTimes}
+                disabled={isCheckingProposals}
+                className="w-full py-4 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-xl font-bold shadow-[0_15px_30px_-10px_rgba(155,68,40,0.3)] flex items-center justify-center gap-2 transform hover:-translate-y-0.5 transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0"
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74z" />
-                </svg>
-                View Proposed Times
+                {isCheckingProposals ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                    Updating proposals...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74z" />
+                    </svg>
+                    View Proposed Times
+                  </>
+                )}
               </button>
 
               <div className="grid grid-cols-2 gap-3">
@@ -577,6 +596,7 @@ export default function EventDetailClient({
           {/* ── Section 3: Top Proposals ── */}
           {proposalsEnabled && event.status !== 'confirmed' && (
             <ProposalList
+              uid={event.uid}
               proposals={proposals ?? []}
               isLoadingProposals={isLoadingProposals}
               isCoordinator={isCoordinator}

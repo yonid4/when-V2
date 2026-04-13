@@ -1,10 +1,13 @@
 'use client'
 
+import { useState } from 'react'
 import { RefreshCw, Calendar, CalendarCheck } from 'lucide-react'
 import type { ProposalResponse } from '@/types'
 import { formatDayLabel, formatTime } from '@/lib/dates'
+import { useProposalFreshness } from '@/hooks/useProposalFreshness'
 
 export function ProposalList({
+  uid,
   proposals,
   isLoadingProposals,
   isCoordinator,
@@ -14,6 +17,7 @@ export function ProposalList({
   onRefresh,
   onFinalize,
 }: {
+  uid: string
   proposals: ProposalResponse[]
   isLoadingProposals: boolean
   isCoordinator: boolean
@@ -23,6 +27,19 @@ export function ProposalList({
   onRefresh: () => void
   onFinalize: () => void
 }) {
+  const [showStaleWarning, setShowStaleWarning] = useState(false)
+  const { isChecking: isCheckingFinalize, checkAndRefreshIfNeeded } = useProposalFreshness(uid)
+
+  async function handleFinalizeClick() {
+    const isFresh = await checkAndRefreshIfNeeded()
+    if (isFresh) {
+      setShowStaleWarning(false)
+      onFinalize()
+    } else {
+      setShowStaleWarning(true)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between px-1">
@@ -43,16 +60,44 @@ export function ProposalList({
 
       {isCoordinator && (
         <button
-          onClick={onFinalize}
-          className="w-full py-2.5 rounded-xl bg-primary text-on-primary text-sm font-bold flex items-center justify-center gap-2 hover:-translate-y-0.5 transition-all duration-300"
+          onClick={handleFinalizeClick}
+          disabled={showStaleWarning || isCheckingFinalize}
+          className="w-full py-2.5 rounded-xl bg-primary text-on-primary text-sm font-bold flex items-center justify-center gap-2 hover:-translate-y-0.5 transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0"
         >
-          <CalendarCheck className="w-4 h-4" />
+          {isCheckingFinalize ? (
+            <RefreshCw className="w-4 h-4 animate-spin" />
+          ) : (
+            <CalendarCheck className="w-4 h-4" />
+          )}
           Finalize Event
         </button>
       )}
 
-      {/* Stale banner */}
-      {(proposalsStale || proposalsNeedsRegeneration) && (
+      {/* Stale proposals warning — shown when finalize check detects proposals_needs_regeneration */}
+      {showStaleWarning && (
+        <div className="flex items-start gap-3 px-3 py-3 rounded-lg bg-tertiary-container/40 border border-tertiary/20">
+          <RefreshCw className="w-3.5 h-3.5 text-on-tertiary-container flex-shrink-0 mt-0.5" />
+          <div className="flex-1 space-y-2">
+            <p className="text-xs font-medium text-on-tertiary-container">
+              Availability has changed since proposals were last generated.
+            </p>
+            <button
+              onClick={async () => {
+                await checkAndRefreshIfNeeded()
+                setShowStaleWarning(false)
+              }}
+              disabled={isCheckingFinalize}
+              className="flex items-center gap-1.5 text-[10px] font-bold text-on-tertiary-container uppercase tracking-wider hover:opacity-70 transition-opacity disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${isCheckingFinalize ? 'animate-spin' : ''}`} />
+              {isCheckingFinalize ? 'Refreshing…' : 'Refresh Proposals'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Stale banner (existing — from real-time subscription or parent prop) */}
+      {!showStaleWarning && (proposalsStale || proposalsNeedsRegeneration) && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-tertiary-container/40 border border-tertiary/20">
           <RefreshCw className="w-3.5 h-3.5 text-on-tertiary-container flex-shrink-0" />
           <p className="text-xs font-medium text-on-tertiary-container">
