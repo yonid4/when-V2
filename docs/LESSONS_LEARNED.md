@@ -550,3 +550,63 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **`ProposalResponse.score` was replaced by `conflict_count` and `preferred_count` in Sprint 8 — update test fixtures.**
   The Sprint 8 modularization changed the proposal response shape: `score: number` was removed; `conflict_count: int` and `preferred_count: int` were added as separate fields. Any test fixture using `score: 0.9` will fail with "Object literal may only specify known properties". Replace with `conflict_count: 0, preferred_count: 3` (or whatever values apply). When updating tests after a type change, always grep `ProposalResponse` usages before writing fixtures.
+
+---
+
+## Post-Sprint 9 — Final Touches & Realtime Hardening
+
+### Backend
+
+- **`supabase-py` + `h2` package causes `RemoteProtocolError` drops — force HTTP/1.1 on every client.**
+  When the `h2` package is installed, `httpx` (used internally by `supabase-py`/`postgrest-py`) negotiates HTTP/2 by default. Supabase's PostgREST drops HTTP/2 connections mid-stream, raising `httpx.RemoteProtocolError`. Fix: add a `_force_http1` helper in `app/utils/supabase.py` that replaces `client.postgrest._session` with `httpx.Client(http2=False)`. Apply it to `anon_client`, `service_client`, and the client returned by `get_authed_client`. No router or service changes needed.
+
+- **Google OAuth callback must forward the `state` parameter to `exchange_code_and_upsert_user`.**
+  The `/auth/callback` router was not passing the `state` query param to the service function. When Google returns a non-default state value, `flow.fetch_token` fails its internal state check. Fix: accept `state: str | None = None` as a query param in the callback handler and pass it through. Add `logger.error(..., exc_info=True)` inside `fetch_token` to surface failures that were previously swallowed.
+
+- **Auth tests must use a real `google.oauth2.credentials.Credentials` object, not a plain `MagicMock`.**
+  `auth_service.py` inspects `.token` and `.refresh_token` on the flow credentials object, and later serializes them via `google.oauth2.credentials` methods. A raw `MagicMock()` passes attribute reads but breaks serialization. Fix: `from google.oauth2.credentials import Credentials` and set `mock_flow.credentials = Credentials(token="...", refresh_token="...")` in test setup. This is more brittle to library internals but correctly exercises the auth path.
+
+- **`busy_slots_service` now owns `service_client` — patch it there, not in `app.routers.busy_slots`.**
+  After the modularization that moved business logic into service files, `service_client` is imported in `app.services.busy_slots_service`, not in the router. Tests that patched `app.routers.busy_slots.service_client` stopped intercepting anything and caused real DB hits. Correct patch path: `@patch("app.services.busy_slots_service.service_client")`. Apply the same principle whenever a router is refactored to delegate to a service — always trace where `service_client` is imported, not where it is called.
+
+- **`get_event_busy_slots` chain depth changed after modularization — mock `.maybe_single()` not `.single()`.**
+  After the router-to-service migration, `fetch_event_by_uid` uses `.select('*').eq('uid', uid).maybe_single().execute()`. Tests that mocked `.single.return_value` for the events table stopped returning data. Update all `busy_slots`-related test mocks to use `.maybe_single.return_value`. Similarly, the `event_participants` authorization check now uses `.eq().eq().in_().maybe_single()` and the participant list uses `.eq().neq().execute()` — two separate call chains that need separate mock branches.
+
+- **Force-refresh proposals must be coordinator-only — always check authorization before running a heavyweight operation.**
+  The initial `POST /events/{uid}/proposals` implementation allowed any authenticated participant to trigger a force-refresh (full re-generation). This was corrected to check `event['coordinator_id'] != current_user.id` and raise 403 for non-coordinators. The lazy view path (read cached proposals) remains available to all participants.
+
+### Frontend
+
+- **Merge all Supabase postgres_changes for an event into a single channel — do not create one channel per table.**
+  The original `useEventSubscriptions` created a separate `supabase.channel(...)` for each table (`busy_slots`, `event_participants`, etc.). Supabase counts each channel toward connection limits. The consolidated pattern: one channel `event-subs-${uid}` with multiple `.on('postgres_changes', ...)` calls chained before `.subscribe()`. Use `refetchQueries` (not `invalidateQueries`) for real-time handlers so stale data is replaced immediately, not just marked dirty.
+
+- **Query key inconsistency between `['event', uid]` and `['events', uid]` breaks cross-hook invalidation.**
+  `useFinalize`, `useProposalFreshness`, `proposalUtils`, and `EventDetailClient` all had subtly different query keys for the same event data. After the subscription consolidation, the canonical key is `['events', uid]` (plural). Any hook that invalidates or reads the event query must use the same key. Grep `queryKey.*event` before adding a new hook that touches event data.
+
+- **`EMPTY_PREFERRED_SLOTS` must be a module-level constant — do not inline `[]` as a default prop or fallback.**
+  `EventDetailClient` passed `preferredSlots ?? []` to child components. Each render creates a new `[]` reference, which triggers a `useEffect` dependency change on every render, causing an infinite re-render loop. Fix: declare `const EMPTY_PREFERRED_SLOTS: PreferredSlot[] = []` once at module level and use it as the fallback. Same applies to any array or object used as a stable reference in dependency arrays.
+
+- **Replace `useState(initialEvent)` with `useEvent(uid)` so event data stays live after edits.**
+  The original `EventDetailClient` kept a local `useState(initialEvent)` that was seeded from SSR props and updated by the edit modal. After any other real-time change (e.g. finalization), the local state was stale. The fix: remove the local state, call `useEvent(uid)` (TanStack Query), and let the subscription invalidation keep it fresh. The edit modal's `onSuccess` now just invalidates `['events', uid]` instead of merging into local state.
+
+- **The `write-calendar` toggle must be disabled when `source.is_write_calendar` is true.**
+  Disabling a calendar source that is the current write calendar would orphan the write-calendar assignment, causing silent sync failures. Add `disabled={source.is_write_calendar}` to the enable/disable checkbox and add `cursor-not-allowed opacity-50` to the label with a tooltip: `"This is your write calendar. Select another write calendar before disabling."` The UX contract: a user must first assign a different write calendar, which automatically clears this one.
+
+- **After navigating away from a deleted event, always call `router.refresh()` before `router.push()`.**
+  This was documented in the Bug Fixes section above, but a regression re-appeared here. The `event_deleted` notification handler in `NotificationList` must use the same pattern: `router.refresh(); router.push('/dashboard')`. Without `router.refresh()`, the RSC cache still has the deleted event and it reappears on the dashboard until the user hard-reloads.
+
+- **Supabase real-time `anon` policies are required for `postgres_changes` to fire in the browser.**
+  The JS client subscribes without a signed-in Supabase session (auth is JWT-based via the backend). Without explicit `anon SELECT` policies on each real-time table, Supabase silently drops change events. Add `REPLICA IDENTITY FULL` on each table, add the table to the `supabase_realtime` publication, and add `create policy ... for select using (true)` for the `anon` role. Without `REPLICA IDENTITY FULL`, DELETE events carry no old row data and the payload is empty.
+
+### Schema
+
+- **`proposed_time_notes` RLS select policy must join through `proposed_times` to reach `event_participants`.**
+  The `proposed_time_notes` table has no direct `event_id` column — it links only to `proposed_times(id)`. The select policy cannot simply check `ep.event_id = proposed_time_notes.event_id`. It must join: `proposed_times pt ON pt.id = proposed_time_notes.proposed_time_id` then `event_participants ep ON ep.event_id = pt.event_id WHERE ep.user_id = auth.uid()`. Any RLS policy on a table that is two hops from `event_participants` requires this explicit join chain — there is no shortcut.
+
+### UI Component — `ProposedTimeOverlay`
+
+- **Proposal overlays are positioned absolutely over the grid using `colIndex * (100% / 7)` — not relative to individual column divs.**
+  `ProposedTimeOverlay` renders a flat list of absolutely positioned `<div>`s over the entire grid container. It does not render inside individual column `<div>`s. The column is encoded via `data-col={colIndex}` for debugging. The `left` style uses `calc(${colIndex} * (100% / 7))` and `width: calc(100% / 7)` to align with the grid's 7-column layout. This means the grid container must be `position: relative` and have a known width for the overlay to align correctly.
+
+- **Use `isScrollable` to branch between `px`-based and `%`-based top/height geometry.**
+  When the grid uses fixed `h-8` (32 px) rows (`isScrollable: true`), slot positions must be computed in pixels: `startRow * ROW_HEIGHT_PX + 2` and `rowsSpanned * ROW_HEIGHT_PX - 4`. When the grid uses percentage-based rows, use `calc(${(startRow / totalRows) * 100}% + 2px)`. Mixing px and % on the same grid causes visual misalignment. Pass `isScrollable` and `totalRows` as explicit props rather than inferring them from the grid's CSS.
