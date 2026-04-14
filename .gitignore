@@ -46,3 +46,6 @@ Thumbs.db
 # Misc
 *.pem
 .vercel
+
+# Supabase CLI
+supabase/.temp/

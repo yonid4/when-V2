@@ -11,19 +11,14 @@ export function useNotificationSubscription(userId: string | undefined) {
     if (!userId) return
 
     const channel = supabase
-      .channel(`notifications-${userId}`)
+      .channel(`notifications-subs-${userId}`)
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${userId}`,
-        },
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
         () => {
           increment()
           queryClient.invalidateQueries({ queryKey: ['notifications'] })
-        }
+        },
       )
       .subscribe()
 

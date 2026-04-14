@@ -47,17 +47,18 @@ def get_authorization_url() -> str:
     return auth_url
 
 
-def exchange_code_and_upsert_user(code: str) -> str:
+def exchange_code_and_upsert_user(code: str, state: str = "stateless") -> str:
     """Exchange OAuth code, upsert profile, check pending invites, return JWT."""
     flow = build_oauth_flow()
-    # Use a fixed state to match what we sent in the authorization URL
-    object.__setattr__(flow, "_state", "stateless")
+    # Use the state value from the callback to match what we sent
+    object.__setattr__(flow, "_state", state)
     # Disable scope change validation — calendar scopes may not be returned
     # immediately if the consent screen is in testing mode
     flow.oauth2session.scope = None
     try:
         flow.fetch_token(code=code)
     except Exception as exc:
+        logger.error("fetch_token failed: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to exchange OAuth code: {exc}",

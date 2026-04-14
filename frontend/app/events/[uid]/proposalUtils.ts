@@ -8,7 +8,7 @@ import type { EventWithParticipants } from '@/types'
  */
 export function fetchFreshEvent(queryClient: QueryClient, uid: string) {
   return queryClient.fetchQuery<EventWithParticipants>({
-    queryKey: ['event', uid],
+    queryKey: ['events', uid],
     queryFn: () => api.get<EventWithParticipants>(`/events/${uid}`),
   })
 }

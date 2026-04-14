@@ -38,20 +38,12 @@ function makeWrapper() {
 describe('useEventSubscriptions', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('subscribes to busy_slots INSERT channel on mount', () => {
+  it('subscribes to event-subs channel on mount', () => {
     renderHook(() => useEventSubscriptions('event-uid-1', 'db-id-1'), {
       wrapper: makeWrapper(),
     })
 
-    expect(supabase.channel).toHaveBeenCalledWith('busy-slots-event-db-id-1')
-  })
-
-  it('subscribes to event_participants INSERT channel on mount', () => {
-    renderHook(() => useEventSubscriptions('event-uid-1', 'db-id-1'), {
-      wrapper: makeWrapper(),
-    })
-
-    expect(supabase.channel).toHaveBeenCalledWith('event-participants-db-id-1')
+    expect(supabase.channel).toHaveBeenCalledWith('event-subs-event-uid-1')
   })
 
   it('does not subscribe when eventDbId is undefined', () => {
@@ -62,7 +54,7 @@ describe('useEventSubscriptions', () => {
     expect(supabase.channel).not.toHaveBeenCalled()
   })
 
-  it('calls removeChannel for both channels on unmount', () => {
+  it('calls removeChannel once (for event-subs channel) on unmount', () => {
     const fakeChannel = {
       on: vi.fn().mockReturnThis(),
       subscribe: vi.fn().mockReturnThis(),
@@ -76,17 +68,39 @@ describe('useEventSubscriptions', () => {
     })
     unmount()
 
+    expect(supabase.removeChannel).toHaveBeenCalledTimes(1)
+    expect(supabase.removeChannel).toHaveBeenCalledWith(fakeChannel)
+  })
+
+  it('calls removeChannel for both channels on unmount when currentUserId is provided', () => {
+    const fakeChannel = {
+      on: vi.fn().mockReturnThis(),
+      subscribe: vi.fn().mockReturnThis(),
+      presenceState: vi.fn().mockReturnValue({}),
+      track: vi.fn().mockResolvedValue(undefined),
+    }
+    vi.mocked(supabase.channel).mockReturnValue(fakeChannel as ReturnType<typeof supabase.channel>)
+
+    const { unmount } = renderHook(() => useEventSubscriptions('event-uid-1', 'db-id-1', 'user-1'), {
+      wrapper: makeWrapper(),
+    })
+    unmount()
+
     expect(supabase.removeChannel).toHaveBeenCalledTimes(2)
     expect(supabase.removeChannel).toHaveBeenCalledWith(fakeChannel)
   })
 
-  it('invalidates busy-slots query on INSERT event', () => {
-    let insertCallback: (() => void) | undefined
+  it('refetches participants query on event_participants change', () => {
+    let participantsCallback: (() => void) | undefined
     const fakeChannel = {
-      on: vi.fn((type: string, _filter: unknown, cb: () => void) => {
-        if (type === 'postgres_changes') {
-          // Capture the first postgres_changes callback (busy_slots)
-          insertCallback = insertCallback ?? cb
+      on: vi.fn((type: string, filter: unknown, cb: () => void) => {
+        if (
+          type === 'postgres_changes' &&
+          typeof filter === 'object' &&
+          filter !== null &&
+          (filter as Record<string, unknown>).table === 'event_participants'
+        ) {
+          participantsCallback = cb
         }
         return fakeChannel
       }),
@@ -94,50 +108,10 @@ describe('useEventSubscriptions', () => {
       presenceState: vi.fn().mockReturnValue({}),
       track: vi.fn().mockResolvedValue(undefined),
     }
-    vi.mocked(supabase.channel).mockReturnValueOnce(fakeChannel as ReturnType<typeof supabase.channel>)
-    // Second channel for event_participants — use a plain one
-    const participantsChannel = {
-      on: vi.fn().mockReturnThis(),
-      subscribe: vi.fn().mockReturnThis(),
-    }
-    vi.mocked(supabase.channel).mockReturnValueOnce(participantsChannel as ReturnType<typeof supabase.channel>)
+    vi.mocked(supabase.channel).mockReturnValue(fakeChannel as ReturnType<typeof supabase.channel>)
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
-
-    renderHook(() => useEventSubscriptions('event-uid-1', 'db-id-1'), {
-      wrapper: ({ children }) =>
-        React.createElement(QueryClientProvider, { client: queryClient }, children),
-    })
-
-    act(() => { insertCallback?.() })
-
-    expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['busy-slots', 'event', 'event-uid-1'],
-    })
-  })
-
-  it('invalidates participants query on INSERT event', () => {
-    let participantsCallback: (() => void) | undefined
-    const busySlotsChannel = {
-      on: vi.fn().mockReturnThis(),
-      subscribe: vi.fn().mockReturnThis(),
-    }
-    const fakeParticipantsChannel = {
-      on: vi.fn((type: string, _filter: unknown, cb: () => void) => {
-        if (type === 'postgres_changes') {
-          participantsCallback = cb
-        }
-        return fakeParticipantsChannel
-      }),
-      subscribe: vi.fn().mockReturnThis(),
-    }
-    vi.mocked(supabase.channel)
-      .mockReturnValueOnce(busySlotsChannel as ReturnType<typeof supabase.channel>)
-      .mockReturnValueOnce(fakeParticipantsChannel as ReturnType<typeof supabase.channel>)
-
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    const refetchSpy = vi.spyOn(queryClient, 'refetchQueries')
 
     renderHook(() => useEventSubscriptions('event-uid-1', 'db-id-1'), {
       wrapper: ({ children }) =>
@@ -146,8 +120,43 @@ describe('useEventSubscriptions', () => {
 
     act(() => { participantsCallback?.() })
 
-    expect(invalidateSpy).toHaveBeenCalledWith({
+    expect(refetchSpy).toHaveBeenCalledWith({
       queryKey: ['participants', 'event-uid-1'],
+    })
+  })
+
+  it('refetches busy-slots query on event_participants change', () => {
+    let participantsCallback: (() => void) | undefined
+    const fakeChannel = {
+      on: vi.fn((type: string, filter: unknown, cb: () => void) => {
+        if (
+          type === 'postgres_changes' &&
+          typeof filter === 'object' &&
+          filter !== null &&
+          (filter as Record<string, unknown>).table === 'event_participants'
+        ) {
+          participantsCallback = cb
+        }
+        return fakeChannel
+      }),
+      subscribe: vi.fn().mockReturnThis(),
+      presenceState: vi.fn().mockReturnValue({}),
+      track: vi.fn().mockResolvedValue(undefined),
+    }
+    vi.mocked(supabase.channel).mockReturnValue(fakeChannel as ReturnType<typeof supabase.channel>)
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const refetchSpy = vi.spyOn(queryClient, 'refetchQueries')
+
+    renderHook(() => useEventSubscriptions('event-uid-1', 'db-id-1'), {
+      wrapper: ({ children }) =>
+        React.createElement(QueryClientProvider, { client: queryClient }, children),
+    })
+
+    act(() => { participantsCallback?.() })
+
+    expect(refetchSpy).toHaveBeenCalledWith({
+      queryKey: ['busy-slots', 'events', 'event-uid-1'],
     })
   })
 })

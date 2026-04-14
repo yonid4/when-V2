@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import type { User } from '@/types'
@@ -12,58 +13,84 @@ interface PresenceUser {
 }
 
 /**
- * Wires the three remaining Supabase real-time subscriptions for an event:
- * - busy_slots INSERT → invalidate ['busy-slots', 'event', uid]
- * - event_participants INSERT → invalidate ['participants', uid]
- *
- * The events UPDATE subscription lives in EventDetailClient because it needs
- * access to event.id (DB integer PK) which is available in that component.
+ * Wires Supabase real-time postgres_changes subscriptions for an event:
+ * - preferred_slots * → invalidate ['preferred-slots', uid]
+ * - event_participants * → invalidate ['participants', uid]
+ * - events UPDATE → invalidate all event-related query keys
+ * - busy_slots * → invalidate ['busy-slots', 'events', uid] (only if currentUserId provided)
  */
 export function useEventSubscriptions(
   uid: string,
   eventDbId: string | undefined,
+  currentUserId?: string,
 ) {
+  const router = useRouter()
   const queryClient = useQueryClient()
 
   useEffect(() => {
     if (!uid || !eventDbId) return
-
-    const busySlotsChannel = supabase
-      .channel(`busy-slots-event-${eventDbId}`)
+    const ch = supabase
+      .channel(`event-subs-${uid}`)
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'busy_slots',
-        },
+        { event: '*', schema: 'public', table: 'preferred_slots', filter: `event_id=eq.${eventDbId}` },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['busy-slots', 'event', uid] })
-        }
+          queryClient.refetchQueries({ queryKey: ['preferred-slots', uid] })
+          queryClient.refetchQueries({ queryKey: ['availability-segments', uid] })
+        },
       )
-      .subscribe()
-
-    const participantsChannel = supabase
-      .channel(`event-participants-${eventDbId}`)
       .on(
         'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'event_participants',
-          filter: `event_id=eq.${eventDbId}`,
-        },
+        { event: '*', schema: 'public', table: 'event_participants', filter: `event_id=eq.${eventDbId}` },
         () => {
+          queryClient.refetchQueries({ queryKey: ['participants', uid] })
+          queryClient.refetchQueries({ queryKey: ['busy-slots', 'events', uid] })
+          queryClient.refetchQueries({ queryKey: ['availability-segments', uid] })
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'events', filter: `id=eq.${eventDbId}` },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            router.push('/dashboard')
+            return
+          }
+          queryClient.invalidateQueries({ queryKey: ['events', uid] })
           queryClient.invalidateQueries({ queryKey: ['participants', uid] })
-        }
+          queryClient.invalidateQueries({ queryKey: ['proposals', uid] })
+          queryClient.invalidateQueries({ queryKey: ['preferred-slots', uid] })
+          queryClient.refetchQueries({ queryKey: ['availability-segments', uid] })
+          queryClient.invalidateQueries({ queryKey: ['busy-slots', 'events', uid] })
+          queryClient.invalidateQueries({ queryKey: ['finalize-status', uid] })
+        },
       )
       .subscribe()
 
     return () => {
-      supabase.removeChannel(busySlotsChannel)
-      supabase.removeChannel(participantsChannel)
+      supabase.removeChannel(ch)
     }
-  }, [uid, eventDbId, queryClient])
+  }, [uid, eventDbId, queryClient, router])
+
+  useEffect(() => {
+    if (!uid || !currentUserId) return
+
+    const ch = supabase
+      .channel(`busy-slots-subs-${uid}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'busy_slots', filter: `user_id=eq.${currentUserId}` },
+        () => {
+          queryClient.refetchQueries({ queryKey: ['busy-slots', 'events', uid] })
+          queryClient.refetchQueries({ queryKey: ['availability-segments', uid] })
+        },
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(ch)
+    }
+  }, [uid, currentUserId, queryClient])
 }
 
 /**
