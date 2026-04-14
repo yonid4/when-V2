@@ -91,6 +91,25 @@ export function useEventSubscriptions(
       supabase.removeChannel(ch)
     }
   }, [uid, currentUserId, queryClient])
+
+  useEffect(() => {
+    if (!uid) return
+
+    const ch = supabase
+      .channel(`proposal-notes-subs-${uid}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'proposed_time_notes', filter: `event_uid=eq.${uid}` },
+        (payload) => {
+          queryClient.refetchQueries({ queryKey: ['proposalNotes', payload.new.proposed_time_id] })
+        },
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(ch)
+    }
+  }, [uid, queryClient])
 }
 
 /**
