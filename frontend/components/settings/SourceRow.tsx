@@ -32,12 +32,16 @@ export function SourceRow({ source, onToggle, onSetWrite }: SourceRowProps) {
             Write calendar
           </span>
         </label>
-        <label className="relative inline-flex items-center cursor-pointer">
+        <label
+          className={`relative inline-flex items-center ${source.is_write_calendar ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+          title={source.is_write_calendar ? 'This is your write calendar. Select another write calendar before disabling.' : undefined}
+        >
           <input
             type="checkbox"
             className="sr-only peer"
             checked={source.is_enabled}
             onChange={(e) => onToggle(e.target.checked)}
+            disabled={source.is_write_calendar}
           />
           <div className="w-11 h-6 bg-surface-container-high rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary" />
         </label>

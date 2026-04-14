@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import type { User } from '@/types'
@@ -23,6 +24,7 @@ export function useEventSubscriptions(
   eventDbId: string | undefined,
   currentUserId?: string,
 ) {
+  const router = useRouter()
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -48,8 +50,12 @@ export function useEventSubscriptions(
       )
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventDbId}` },
-        () => {
+        { event: '*', schema: 'public', table: 'events', filter: `id=eq.${eventDbId}` },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            router.push('/dashboard')
+            return
+          }
           queryClient.invalidateQueries({ queryKey: ['events', uid] })
           queryClient.invalidateQueries({ queryKey: ['participants', uid] })
           queryClient.invalidateQueries({ queryKey: ['proposals', uid] })
@@ -64,7 +70,7 @@ export function useEventSubscriptions(
     return () => {
       supabase.removeChannel(ch)
     }
-  }, [uid, eventDbId, queryClient])
+  }, [uid, eventDbId, queryClient, router])
 
   useEffect(() => {
     if (!uid || !currentUserId) return

@@ -92,6 +92,11 @@ export default function EventDetailClient({
     if (result.infoChanged || result.timeRangeChanged) {
       queryClient.invalidateQueries({ queryKey: ['events', initialEvent.uid] })
     }
+    if (result.timeRangeChanged) {
+      queryClient.refetchQueries({ queryKey: ['busy-slots', 'event', initialEvent.uid] })
+      queryClient.refetchQueries({ queryKey: ['preferred-slots', initialEvent.uid] })
+      queryClient.refetchQueries({ queryKey: ['availability-segments', initialEvent.uid] })
+    }
     if (result.guestInvitesChanged) {
       setParticipantsKey((k) => k + 1)
     }
@@ -368,6 +373,7 @@ export default function EventDetailClient({
             {/* Grid — extra bottom padding when action bar is visible */}
             <div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${isEditMode ? 'pb-20' : ''}`}>
               <AvailabilityGrid
+                key={`${event.earliest_datetime_utc}-${event.latest_datetime_utc}`}
                 segments={segments}
                 preferredSlots={displayedPreferredSlots}
                 startDate={event.earliest_datetime_utc}

@@ -1,6 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
 import { useNotifications, useMarkRead } from '@/hooks/useNotifications'
 import { useRespondToInvitation } from '@/hooks/useInvitations'
@@ -9,6 +10,7 @@ import type { Notification } from '@/types'
 
 export function NotificationList() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { data: notifications, isLoading } = useNotifications()
   const { mutate: markRead } = useMarkRead()
   const { mutate: respondToInvitation, isPending: isResponding } = useRespondToInvitation()
@@ -77,7 +79,15 @@ export function NotificationList() {
                 onClick={() => {
                   const invitationId = n.metadata?.invitation_id as string | undefined
                   if (!invitationId) return
-                  respondToInvitation({ invitationId, action: 'decline' })
+                  respondToInvitation(
+                    { invitationId, action: 'decline' },
+                    {
+                      onSuccess: () => {
+                        queryClient.invalidateQueries({ queryKey: ['notifications'] })
+                        queryClient.refetchQueries({ queryKey: ['notifications'] })
+                      },
+                    }
+                  )
                 }}
                 disabled={isResponding}
                 className="flex-1 py-1.5 rounded-lg bg-surface-container-high text-on-surface-variant text-xs font-bold disabled:opacity-60 transition-opacity hover:bg-surface-container-highest"
