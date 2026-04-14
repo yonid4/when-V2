@@ -36,6 +36,7 @@ import { StatusBadge } from '@/components/event/StatusBadge'
 import { EditModal } from '@/components/event/EditModal'
 import { DeleteModal } from '@/components/event/DeleteModal'
 import { AvailabilityGrid } from '@/components/event/AvailabilityGrid'
+import { ProposedTimeOverlay } from '@/components/event/ProposedTimeOverlay'
 import { computeMerge } from '@/lib/editModeUtils'
 import type { PendingSlot } from '@/types'
 import type { EditSaveResult } from './editEventUtils'
@@ -83,6 +84,7 @@ export default function EventDetailClient({
 
   // ── Proposals state ──────────────────────────────────────────────────────
   const [proposalsEnabled, setProposalsEnabled] = useState(false)
+  const [showProposedOverlay, setShowProposedOverlay] = useState(false)
   const [proposalsStale, setProposalsStale] = useState(false)
   const [showFinalizeCard, setShowFinalizeCard] = useState(false)
 
@@ -129,9 +131,16 @@ export default function EventDetailClient({
   const { isChecking: isCheckingProposals, checkAndRefreshIfNeeded } = useProposalFreshness(event.uid)
 
   async function handleViewProposedTimes() {
-    await checkAndRefreshIfNeeded()
+    if (showProposedOverlay) {
+      setShowProposedOverlay(false)
+      return
+    }
+    if (isCoordinator) {
+      await checkAndRefreshIfNeeded()
+      setProposalsStale(false)
+    }
     setProposalsEnabled(true)
-    setProposalsStale(false)
+    setShowProposedOverlay(true)
   }
 
   function runMergeCheck(
@@ -372,34 +381,70 @@ export default function EventDetailClient({
 
             {/* Grid — extra bottom padding when action bar is visible */}
             <div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${isEditMode ? 'pb-20' : ''}`}>
-              <AvailabilityGrid
-                key={`${event.earliest_datetime_utc}-${event.latest_datetime_utc}`}
-                segments={segments}
-                preferredSlots={displayedPreferredSlots}
-                startDate={event.earliest_datetime_utc}
-                earliestTime={event.earliest_datetime_utc}
-                latestTime={event.latest_datetime_utc}
-                isEditMode={isEditMode}
-                eventStatus={event.status}
-                pendingSlot={pendingSlot}
-                currentUserId={currentUserId}
-                deletingSlotId={deletingSlotId}
-                slotsToDelete={slotsToDelete}
-                onCellMouseDown={handleCellMouseDown}
-                onCellMouseEnter={handleCellMouseEnter}
-                onPendingSlotEdgeMouseDown={handlePendingSlotEdgeMouseDown}
-                onSlotClick={(id) => setDeletingSlotId(id)}
-                onSlotDeleteConfirm={(id) => {
-                  setDeletingSlotId(null)
-                  if (isEditMode) {
-                    setSlotsToDelete((prev) => [...prev, id])
-                    setDisplayedPreferredSlots((prev) => prev.filter((s) => s.id !== id))
-                  } else {
-                    deletePreferredSlot(id)
-                  }
-                }}
-                onSlotDeleteCancel={() => setDeletingSlotId(null)}
-              />
+              {(() => {
+                // Compute the same Monday-anchored column dates the grid uses internally
+                const baseDate = toDate(event.earliest_datetime_utc)
+                const dow = baseDate.getDay()
+                baseDate.setHours(0, 0, 0, 0)
+                baseDate.setDate(baseDate.getDate() - (dow + 6) % 7)
+                const columnDates = Array.from({ length: 7 }, (_, i) => {
+                  const d = new Date(baseDate)
+                  d.setDate(d.getDate() + i)
+                  return d
+                })
+                const eventStart = toDate(event.earliest_datetime_utc)
+                // Mirror the grid's isScrollable / totalRows calculation so the overlay
+                // uses the same coordinate system (px vs % based positioning).
+                const earliestDate = toDate(event.earliest_datetime_utc)
+                const latestDate = toDate(event.latest_datetime_utc)
+                const startHour = earliestDate.getHours()
+                const latestHour = latestDate.getHours()
+                const latestMinute = latestDate.getMinutes()
+                const endHour = latestMinute > 0 ? latestHour + 1 : latestHour
+                const totalHours = endHour - startHour
+                const gridIsScrollable = totalHours > 8
+                const totalRows = totalHours * 2
+                return (
+                  <AvailabilityGrid
+                    key={`${event.earliest_datetime_utc}-${event.latest_datetime_utc}`}
+                    segments={segments}
+                    preferredSlots={displayedPreferredSlots}
+                    startDate={event.earliest_datetime_utc}
+                    earliestTime={event.earliest_datetime_utc}
+                    latestTime={event.latest_datetime_utc}
+                    isEditMode={isEditMode}
+                    eventStatus={event.status}
+                    pendingSlot={pendingSlot}
+                    currentUserId={currentUserId}
+                    deletingSlotId={deletingSlotId}
+                    slotsToDelete={slotsToDelete}
+                    overlayContent={
+                      <ProposedTimeOverlay
+                        proposals={proposals ?? []}
+                        visible={showProposedOverlay}
+                        eventStart={eventStart}
+                        columnDates={columnDates}
+                        isScrollable={gridIsScrollable}
+                        totalRows={totalRows}
+                      />
+                    }
+                    onCellMouseDown={handleCellMouseDown}
+                    onCellMouseEnter={handleCellMouseEnter}
+                    onPendingSlotEdgeMouseDown={handlePendingSlotEdgeMouseDown}
+                    onSlotClick={(id) => setDeletingSlotId(id)}
+                    onSlotDeleteConfirm={(id) => {
+                      setDeletingSlotId(null)
+                      if (isEditMode) {
+                        setSlotsToDelete((prev) => [...prev, id])
+                        setDisplayedPreferredSlots((prev) => prev.filter((s) => s.id !== id))
+                      } else {
+                        deletePreferredSlot(id)
+                      }
+                    }}
+                    onSlotDeleteCancel={() => setDeletingSlotId(null)}
+                  />
+                )
+              })()}
             </div>
           </div>
 
@@ -503,7 +548,7 @@ export default function EventDetailClient({
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74z" />
                     </svg>
-                    View Proposed Times
+                    {showProposedOverlay ? 'Hide Proposed Times' : 'View Proposed Times'}
                   </>
                 )}
               </button>
@@ -572,6 +617,7 @@ export default function EventDetailClient({
               isRefreshing={isRefreshing}
               proposalsStale={proposalsStale}
               proposalsNeedsRegeneration={event.proposals_needs_regeneration ?? false}
+              currentUserId={currentUserId}
               onRefresh={() => refreshProposals(undefined, { onSuccess: () => setProposalsStale(false) })}
               onFinalize={() => setShowFinalizeCard(true)}
             />

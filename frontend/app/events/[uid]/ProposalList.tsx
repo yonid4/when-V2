@@ -5,6 +5,7 @@ import { RefreshCw, Calendar, CalendarCheck } from 'lucide-react'
 import type { ProposalResponse } from '@/types'
 import { formatDayLabel, formatTime } from '@/lib/dates'
 import { useProposalFreshness } from '@/hooks/useProposalFreshness'
+import { ProposalNotes } from '@/components/event/ProposalNotes'
 
 export function ProposalList({
   uid,
@@ -14,6 +15,7 @@ export function ProposalList({
   isRefreshing,
   proposalsStale,
   proposalsNeedsRegeneration,
+  currentUserId,
   onRefresh,
   onFinalize,
 }: {
@@ -24,6 +26,7 @@ export function ProposalList({
   isRefreshing: boolean
   proposalsStale: boolean
   proposalsNeedsRegeneration: boolean
+  currentUserId: string
   onRefresh: () => void
   onFinalize: () => void
 }) {
@@ -154,6 +157,7 @@ export function ProposalList({
                   </span>
                 </div>
                 <p className="text-xs text-on-surface-variant">{proposal.reasoning}</p>
+                <ProposalNotes eventUid={uid} proposedTimeId={proposal.id} currentUserId={currentUserId} />
               </div>
             )
           })}

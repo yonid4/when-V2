@@ -21,6 +21,7 @@ export function AvailabilityGrid({
   currentUserId,
   deletingSlotId,
   slotsToDelete,
+  overlayContent,
   onCellMouseDown,
   onCellMouseEnter,
   onPendingSlotEdgeMouseDown,
@@ -39,6 +40,7 @@ export function AvailabilityGrid({
   currentUserId: string
   deletingSlotId: string | null
   slotsToDelete: string[]
+  overlayContent?: React.ReactNode
   onCellMouseDown: (dayIndex: number, rowIndex: number, cellStartUtc: Date) => void
   onCellMouseEnter: (dayIndex: number, rowIndex: number, cellStartUtc: Date) => void
   onPendingSlotEdgeMouseDown: (edge: 'top' | 'bottom', e: React.MouseEvent) => void
@@ -153,7 +155,8 @@ export function AvailabilityGrid({
           </div>
 
           {/* Grid cells */}
-          <div className={`flex-1 flex flex-col ${isScrollable ? '' : 'min-h-0'}`}>
+          <div className={`flex-1 flex flex-col relative ${isScrollable ? '' : 'min-h-0'}`}>
+            {overlayContent}
             <div className={`grid grid-cols-7 ${isScrollable ? '' : 'flex-1 min-h-0'}`}>
               {days.map((_day, di) => {
                 const colDate = new Date(baseDate)
