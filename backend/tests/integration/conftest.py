@@ -14,6 +14,7 @@ Design rules:
   explicitly before deleting the user (FK order matters).
 """
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass as _dataclass
@@ -72,7 +73,6 @@ def _create_test_user(full_name: str) -> IntegrationUser:
 
 def _delete_test_user(user: IntegrationUser) -> None:
     """Delete the auth user — cascades to profile and all owned rows."""
-    import logging
     try:
         service_client.auth.admin.delete_user(user.id)
     except Exception as exc:
