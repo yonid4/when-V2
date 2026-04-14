@@ -610,3 +610,17 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **Use `isScrollable` to branch between `px`-based and `%`-based top/height geometry.**
   When the grid uses fixed `h-8` (32 px) rows (`isScrollable: true`), slot positions must be computed in pixels: `startRow * ROW_HEIGHT_PX + 2` and `rowsSpanned * ROW_HEIGHT_PX - 4`. When the grid uses percentage-based rows, use `calc(${(startRow / totalRows) * 100}% + 2px)`. Mixing px and % on the same grid causes visual misalignment. Pass `isScrollable` and `totalRows` as explicit props rather than inferring them from the grid's CSS.
+
+### Backend — HTTP
+
+- **Supabase `service_client` HTTP/2 connection sharing causes burst 500s under concurrent requests.**
+  A single `service_client` instance (created at module load time) maintains one HTTP/2 connection pool. When multiple concurrent requests arrive simultaneously (e.g. the event detail page polling several endpoints at once), they share the same HTTP/2 connection. If that connection goes idle or hits a server-side timeout, Supabase drops it mid-stream (`RemoteProtocolError: Server disconnected`) and every in-flight request on that connection fails together. The symptom is a burst of identical 500s (e.g. 5 `proposed_time_notes` requests all failing at once), followed by full recovery on the next attempt.
+  **Fix:** configure the Supabase client to use HTTP/1.1 (disabling connection multiplexing) or set a short keepalive timeout so stale connections are recycled before Supabase drops them:
+  ```python
+  import httpx
+  from supabase import create_client
+
+  # Force HTTP/1.1 to avoid shared-connection cascade failures
+  http_client = httpx.Client(transport=httpx.HTTPTransport(http2=False))
+  service_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY, options={"http_client": http_client})
+  ```
