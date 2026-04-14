@@ -453,3 +453,177 @@ ON realtime.messages FOR SELECT TO anon USING (true);
 
 CREATE POLICY "anon can send broadcasts"
 ON realtime.messages FOR INSERT TO anon WITH CHECK (true);
+
+
+-- ============================================================
+-- NOTIFICATIONS RLS FIX
+-- Run this block in the Supabase SQL editor if the integration
+-- test test_user_cannot_read_another_users_notification fails
+-- (Alice can read Bob's notification). This re-creates the
+-- select policy and ensures it is correctly scoped.
+-- ============================================================
+alter table notifications enable row level security;
+
+drop policy if exists "notifications_select_own" on notifications;
+create policy "notifications_select_own"
+  on notifications for select
+  using (auth.uid() = user_id);
+
+-- Also drop and recreate the anon realtime policy with explicit TO anon
+-- to ensure it does not inadvertently allow authenticated users to read
+-- other users' notifications.
+drop policy if exists "anon can select notifications" on public.notifications;
+create policy "anon can select notifications"
+  on public.notifications for select to anon
+  using (true);
+
+
+-- ============================================================
+-- BROADCAST TRIGGER FUNCTIONS
+-- These were created via the Supabase dashboard and are captured
+-- here for completeness. They power realtime broadcast channels.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.broadcast_event_changes() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'event:' || COALESCE(NEW.id, OLD.id)::text,
+    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
+  );
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.broadcast_notification_changes() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'user:' || COALESCE(NEW.user_id, OLD.user_id)::text,
+    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
+  );
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.broadcast_participant_changes() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text,
+    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
+  );
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.broadcast_preferred_slots_changes() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text,
+    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
+  );
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.busy_slots_broadcast_trigger() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  _topic text;
+BEGIN
+  _topic := 'user:' || COALESCE(NEW.user_id, OLD.user_id)::text || ':busy_slots';
+  PERFORM realtime.broadcast_changes(
+    _topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
+  );
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.event_participants_broadcast_trigger() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  _topic text;
+BEGIN
+  _topic := 'event:' || COALESCE(NEW.event_id, OLD.event_id)::text || ':participants';
+  PERFORM realtime.broadcast_changes(
+    _topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
+  );
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.notifications_broadcast_trigger() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  _topic text;
+BEGIN
+  _topic := 'user:' || COALESCE(NEW.user_id, OLD.user_id)::text || ':notifications';
+  PERFORM realtime.broadcast_changes(
+    _topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
+  );
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.preferred_slots_broadcast_trigger() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  _topic text;
+BEGIN
+  _topic := 'event:' || COALESCE(NEW.event_id, OLD.event_id)::text || ':preferred_slots';
+  PERFORM realtime.broadcast_changes(
+    _topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
+  );
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.handle_preferred_slots_broadcast() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text || ':preferred_slots',
+    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
+  );
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+-- ============================================================
+-- BROADCAST TRIGGERS
+-- ============================================================
+
+CREATE OR REPLACE TRIGGER broadcast_events
+  AFTER INSERT OR UPDATE OR DELETE ON public.events
+  FOR EACH ROW EXECUTE FUNCTION public.broadcast_event_changes();
+
+CREATE OR REPLACE TRIGGER broadcast_notifications
+  AFTER INSERT OR UPDATE OR DELETE ON public.notifications
+  FOR EACH ROW EXECUTE FUNCTION public.broadcast_notification_changes();
+
+CREATE OR REPLACE TRIGGER broadcast_participants
+  AFTER INSERT OR UPDATE OR DELETE ON public.event_participants
+  FOR EACH ROW EXECUTE FUNCTION public.broadcast_participant_changes();
+
+CREATE OR REPLACE TRIGGER broadcast_preferred_slots
+  AFTER INSERT OR UPDATE OR DELETE ON public.preferred_slots
+  FOR EACH ROW EXECUTE FUNCTION public.broadcast_preferred_slots_changes();
+
+CREATE OR REPLACE TRIGGER busy_slots_broadcast
+  AFTER INSERT OR UPDATE OR DELETE ON public.busy_slots
+  FOR EACH ROW EXECUTE FUNCTION public.busy_slots_broadcast_trigger();
+
+CREATE OR REPLACE TRIGGER event_participants_broadcast
+  AFTER INSERT OR UPDATE OR DELETE ON public.event_participants
+  FOR EACH ROW EXECUTE FUNCTION public.event_participants_broadcast_trigger();
+
+CREATE OR REPLACE TRIGGER notifications_broadcast
+  AFTER INSERT OR UPDATE OR DELETE ON public.notifications
+  FOR EACH ROW EXECUTE FUNCTION public.notifications_broadcast_trigger();
+
+CREATE OR REPLACE TRIGGER preferred_slots_broadcast
+  AFTER INSERT OR UPDATE OR DELETE ON public.preferred_slots
+  FOR EACH ROW EXECUTE FUNCTION public.handle_preferred_slots_broadcast();
