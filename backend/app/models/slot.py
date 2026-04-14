@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -44,6 +45,18 @@ class FinalizeRequest(BaseModel):
     note: str = ""
     location: str = ""
     video_call_link: str = ""
+
+
+class ProposedTimeNoteCreate(BaseModel):
+    content: str
+
+
+class ProposedTimeNoteResponse(BaseModel):
+    id: str
+    proposed_time_id: str
+    user_id: str
+    content: str
+    created_at: datetime
 
 
 class FinalizeStatusResponse(BaseModel):
