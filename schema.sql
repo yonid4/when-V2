@@ -507,6 +507,9 @@ ON realtime.messages FOR SELECT TO anon USING (true);
 CREATE POLICY "anon can send broadcasts"
 ON realtime.messages FOR INSERT TO anon WITH CHECK (true);
 
+CREATE POLICY "anon can select proposed_time_notes"
+ON public.proposed_time_notes FOR SELECT TO anon USING (true);
+
 
 -- ============================================================
 -- NOTIFICATIONS RLS FIX
