@@ -232,6 +232,23 @@ create index proposed_times_event_id_idx on proposed_times(event_id);
 
 
 -- ============================================================
+-- proposed_time_notes
+-- ============================================================
+create table proposed_time_notes (
+  id                uuid        primary key default gen_random_uuid(),
+  proposed_time_id  uuid        not null references proposed_times(id) on delete cascade,
+  user_id           uuid        not null references auth.users(id) on delete cascade,
+  content           text        not null,
+  event_uid         text        not null,
+  created_at        timestamptz not null default now()
+);
+
+create index proposed_time_notes_proposed_time_id_idx on proposed_time_notes(proposed_time_id);
+create index proposed_time_notes_user_id_idx          on proposed_time_notes(user_id);
+create index proposed_time_notes_event_uid_idx        on proposed_time_notes(event_uid);
+
+
+-- ============================================================
 -- notifications
 -- ============================================================
 create table notifications (
@@ -265,8 +282,9 @@ alter table calendar_accounts   enable row level security;
 alter table calendar_sources    enable row level security;
 alter table busy_slots          enable row level security;
 alter table preferred_slots     enable row level security;
-alter table proposed_times      enable row level security;
-alter table notifications       enable row level security;
+alter table proposed_times          enable row level security;
+alter table proposed_time_notes     enable row level security;
+alter table notifications           enable row level security;
 
 
 -- ============================================================
@@ -366,6 +384,40 @@ create policy "proposed_times_select" on proposed_times for select using (
   )
 );
 
+-- proposed_time_notes: participants can read; own notes only for write/delete
+create policy "proposed_time_notes_select"
+  on proposed_time_notes for select
+  using (
+    exists (
+      select 1
+      from proposed_times pt
+      join event_participants ep on ep.event_id = pt.event_id
+      where pt.id = proposed_time_notes.proposed_time_id
+        and ep.user_id = auth.uid()
+    )
+  );
+
+create policy "proposed_time_notes_insert"
+  on proposed_time_notes for insert
+  with check (user_id = auth.uid());
+
+create policy "proposed_time_notes_delete"
+  on proposed_time_notes for delete
+  using (user_id = auth.uid());
+
+-- Realtime worker select policy — uses denormalized event_uid to avoid cross-table join
+create policy "proposed_time_notes_realtime_select"
+  on proposed_time_notes for select
+  using (
+    exists (
+      select 1
+      from event_participants ep
+      join events e on e.id = ep.event_id
+      where e.uid = proposed_time_notes.event_uid
+        and ep.user_id = auth.uid()
+    )
+  );
+
 -- notifications: own rows only (read); service role writes
 create policy "notifications_select_own" on notifications for select using (user_id = auth.uid());
 create policy "notifications_update_own" on notifications for update using (user_id = auth.uid());
@@ -426,10 +478,11 @@ ALTER TABLE event_participants REPLICA IDENTITY FULL;
 ALTER TABLE busy_slots REPLICA IDENTITY FULL;
 ALTER TABLE notifications REPLICA IDENTITY FULL;
 ALTER TABLE events REPLICA IDENTITY FULL;
+ALTER TABLE proposed_time_notes REPLICA IDENTITY FULL;
 
 -- Realtime publication
-ALTER PUBLICATION supabase_realtime ADD TABLE 
-  preferred_slots, event_participants, busy_slots, notifications, events;
+ALTER PUBLICATION supabase_realtime ADD TABLE
+  preferred_slots, event_participants, busy_slots, notifications, events, proposed_time_notes;
 
 -- Anon RLS policies for realtime
 CREATE POLICY "anon can select preferred_slots"
