@@ -145,6 +145,7 @@ describe('NotificationList — empty state', () => {
 
 describe('ProposalList — empty and loading states', () => {
   const baseProps = {
+    uid: 'test-event-uid',
     proposals: [] as ProposalResponse[],
     isLoadingProposals: false,
     isCoordinator: false,
@@ -156,12 +157,12 @@ describe('ProposalList — empty and loading states', () => {
   }
 
   it('shows empty state when no proposals', () => {
-    render(React.createElement(ProposalList, { ...baseProps }))
+    render(React.createElement(ProposalList, { ...baseProps }), { wrapper: makeWrapper() })
     expect(screen.getByText(/no proposals yet/i)).toBeInTheDocument()
   })
 
   it('shows skeleton when loading', () => {
-    render(React.createElement(ProposalList, { ...baseProps, isLoadingProposals: true }))
+    render(React.createElement(ProposalList, { ...baseProps, isLoadingProposals: true }), { wrapper: makeWrapper() })
     expect(document.querySelector('.animate-pulse')).toBeInTheDocument()
     expect(screen.queryByText(/no proposals yet/i)).not.toBeInTheDocument()
   })
@@ -179,7 +180,7 @@ describe('ProposalList — empty and loading states', () => {
         reasoning: 'Best overlap',
       },
     ]
-    render(React.createElement(ProposalList, { ...baseProps, proposals }))
+    render(React.createElement(ProposalList, { ...baseProps, proposals }), { wrapper: makeWrapper() })
     expect(screen.getByText('Best overlap')).toBeInTheDocument()
   })
 })
