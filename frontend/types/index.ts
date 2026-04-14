@@ -128,6 +128,16 @@ export interface CalendarSource {
   updated_at: string
 }
 
+// ─── Proposed time notes ──────────────────────────────────────────────────────
+
+export interface ProposedTimeNote {
+  id: string
+  proposed_time_id: string
+  user_id: string
+  content: string
+  created_at: string
+}
+
 // ─── Slots ────────────────────────────────────────────────────────────────────
 
 export interface BusySlot {
