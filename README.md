@@ -45,6 +45,19 @@ npm install
 cp .env.local.example .env.local   # fill in Supabase public key, API URL
 ```
 
+## Database Setup
+
+The project uses Supabase (PostgreSQL). To build the database from scratch:
+
+1. Create a new [Supabase](https://supabase.com) project.
+2. In the Supabase dashboard, open **SQL Editor**.
+3. Copy the contents of [`schema.sql`](schema.sql) and run it in the SQL Editor.
+   This creates all extensions, enums, tables, indexes, Row Level Security policies, and triggers.
+4. If you have existing migrations to apply on top of the base schema, run each file in [`supabase/migrations/`](supabase/migrations/) in chronological order (filename prefix determines order).
+5. Copy your Supabase project URL and `anon`/`service_role` keys into `backend/.env` and `frontend/.env.local`.
+
+> **Note:** `schema.sql` assumes Supabase Auth is already enabled — the `auth.users` table is provided automatically by Supabase and does not need to be created manually.
+
 ## Usage
 
 Run the backend and frontend in separate terminals.
