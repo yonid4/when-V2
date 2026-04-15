@@ -624,3 +624,43 @@ Implementation details discovered while writing tests that aren't captured elsew
   http_client = httpx.Client(transport=httpx.HTTPTransport(http2=False))
   service_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY, options={"http_client": http_client})
   ```
+
+---
+
+## Proposed Time Notes & Proposed Times
+
+### Schema
+
+- **`proposed_time_notes.event_uid` is a denormalized column added solely to enable Supabase real-time filtering.**
+  Supabase real-time `filter` expressions cannot span joins — they match on columns that exist directly on the changed row. `proposed_time_notes` has no `event_id` column (it links to `proposed_times.id`). Without `event_uid`, the JS client would receive INSERT events for every note across every event and would have to discard them client-side. Adding `event_uid text not null` to the table allows the filter `event_uid=eq.${uid}` in `useEventSubscriptions`. This column is written by `proposal_notes_service.create_note` and indexed for the real-time query.
+
+- **`proposed_time_notes` RLS select policy requires a two-hop join through `proposed_times` to reach `event_participants`.**
+  The table has no direct `event_id` — it only has `proposed_time_id`. The authenticated-user select policy must join: `proposed_times pt ON pt.id = proposed_time_notes.proposed_time_id` then `event_participants ep ON ep.event_id = pt.event_id WHERE ep.user_id = auth.uid()`. The `anon` realtime policy uses the denormalized `event_uid` column instead to avoid the join entirely. Any RLS policy on a table that is two hops from `event_participants` requires this explicit join chain.
+
+- **Two separate RLS select policies exist on `proposed_time_notes` for different consumers.**
+  `proposed_time_notes_select` (authenticated users): two-hop join through `proposed_times → event_participants`. `proposed_time_notes_realtime_select` (anon role): single join `event_participants ep JOIN events e ON e.id = ep.event_id WHERE e.uid = proposed_time_notes.event_uid`. Both are required — the authenticated policy covers normal reads, the anon policy covers the Supabase real-time subscription which runs as the `anon` role.
+
+### Backend
+
+- **`proposal_notes_service.py` uses `service_client` for all reads and writes even though users only write their own notes.**
+  `proposed_time_notes.user_id` references `auth.users(id)`, not `profiles(id)`. The `anon_client` (user-scoped) cannot compare `auth.uid()` to a column referencing `auth.users` when using the Python client. All DB access goes through `service_client`; ownership is enforced at the Python level: `delete_note` filters with `.eq("user_id", user_id)` and raises 404 if no row is deleted.
+
+- **`_check_proposed_time_belongs_to_event` uses `service_client` in the router, not in a service function.**
+  This is a narrow exception to the "service_client only in services" rule. The path-parameter ownership check (does `proposed_time_id` belong to `event.id`?) is router-level authorization, not business logic. It calls `service_client` directly in the router helper because `proposed_times` RLS requires a join that `anon_client` cannot satisfy. Keep this helper in the router file and do not promote it to a service function.
+
+- **`proposal_notes` router uses `get_event_and_check_access` from `proposal_service` for event lookup and participant auth.**
+  Rather than duplicating the event-fetch-and-participant-check logic, the notes router imports `get_event_and_check_access(uid, user_id)` from `proposal_service`. This function raises 404 if the event does not exist and 403 if the user is not a coordinator or participant. Reuse this pattern in any new router that needs per-event access control.
+
+### Frontend
+
+- **`proposalNotes` query key is scoped to `proposedTimeId`, not `eventUid`.**
+  Each proposed time has its own note list. The query key `['proposalNotes', proposedTimeId]` allows granular invalidation — when a new note arrives via real-time, only the query for the specific proposed time is refetched. The real-time handler reads `payload.new.proposed_time_id` to determine which key to refetch. Scoping to `eventUid` would force all note queries to be invalidated whenever any note is added, even for unrelated proposals.
+
+- **The `proposed_time_notes` subscription is a separate `supabase.channel()` from the main event subscriptions.**
+  The main event channel (`event-subs-${uid}`) consolidates preferred_slots, busy_slots, event_participants, and events under one channel, all filtering by `event.id` (UUID). The notes channel (`proposal-notes-subs-${uid}`) filters on `event_uid` (text) — a different column on a different table. These cannot share a channel since the filter expression targets different column names. Always use a separate channel when the filter key differs from the main event channel's filter key.
+
+- **`ProposedTimeNote` interface does not include `event_uid` — that field is backend-only.**
+  The `event_uid` column exists on the DB row but is not included in the `ProposedTimeNote` TypeScript interface or the `ProposedTimeNoteResponse` Pydantic model. It is an implementation detail of the real-time subscription infrastructure. Callers never need to read it back, so it is intentionally omitted from the API response.
+
+- **`ProposedTime` in `types/index.ts` uses `conflicts: number`, matching the DB column name — not `conflict_count`.**
+  The DB column is `conflicts`. The API's `ProposalResponse` Pydantic model exposes it as `conflict_count` (the modularization renamed it for clarity). The frontend `ProposedTime` interface uses `conflicts` (matching the raw DB shape), while test fixtures that reference `ProposalResponse` use `conflict_count`. These are two different type shapes — do not conflate them.

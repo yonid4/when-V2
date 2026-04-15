@@ -113,6 +113,7 @@ directly (RLS bypass required):
 - notification_service.py — notifications written on behalf of other users
 - event_service.py — event_deleted notifications sent to other users
 - proposal_service.py — reads proposal and event data that requires bypassing RLS for cross-user scoring
+- proposal_notes_service.py — `proposed_time_notes.user_id` references `auth.users`, not `profiles`; service_client is required for all reads and writes
 
 All other reads should use get_authed_client to respect the requesting
 user's RLS scope.
@@ -227,6 +228,9 @@ Active subscriptions:
 - `busy_slots INSERT` (per event participants) → invalidate busySlots query
 - `event_participants INSERT` → invalidate participants query
 - `events UPDATE` (per event) → invalidate event query (catches status → confirmed)
+- `proposed_time_notes INSERT` (per event uid) → refetch `['proposalNotes', payload.new.proposed_time_id]`
+
+Note: `proposed_time_notes` uses a **separate channel** (`proposal-notes-subs-${uid}`) from the main event channel. It filters on `event_uid` (a denormalized text column on the notes table), not `event_id`. This column exists solely to allow Supabase real-time row-level filtering without a cross-table join, which real-time filter expressions do not support.
 
 ---
 

@@ -41,6 +41,7 @@ backend/
 │   │   ├── busy_slots.py        # Get merged busy slots, manual sync trigger
 │   │   ├── preferred_slots.py   # Save/get/delete preferred slots
 │   │   ├── proposals.py         # Get proposals, force refresh (coordinator-only regeneration)
+│   │   ├── proposal_notes.py    # CRUD for per-proposed-time notes
 │   │   ├── finalize.py          # Finalize event, create Google Calendar event
 │   │   └── notifications.py     # Get notifications, mark read, take action
 │   │
@@ -56,6 +57,7 @@ backend/
 │   │   ├── availability_service.py    # Merged availability segment computation
 │   │   ├── finalize_service.py  # Finalization logic, GCal event creation
 │   │   ├── proposal_service.py  # Scheduling algorithm (see algorithm section)
+│   │   ├── proposal_notes_service.py # Notes read/write for proposed times (uses service_client)
 │   │   └── notification_service.py
 │   │
 │   ├── models/                  # Pydantic request/response models
@@ -171,7 +173,8 @@ frontend/
 │   ├── useFinalize.ts
 │   ├── useAvailabilitySegments.ts # Merged availability segment computation
 │   ├── useEventSubscriptions.ts   # Supabase real-time subscription setup per event
-│   └── useProposalFreshness.ts    # Lazy freshness check: triggers regeneration when stale
+│   ├── useProposalFreshness.ts    # Lazy freshness check: triggers regeneration when stale
+│   └── useProposalNotes.ts        # CRUD hooks for notes on proposed times (useProposalNotes, useCreateProposalNote, useDeleteProposalNote)
 │
 ├── stores/                      # Zustand stores
 │   ├── authStore.ts             # { user, token, setUser, clearAuth }
@@ -363,6 +366,7 @@ User opens event detail (any role)
   - `preferred_slots_service.py` — preferred_slots RLS requires service access
   - `event_service.py` — event_deleted notifications sent to other users
   - `proposal_service.py` — reads cross-user data for scoring
+  - `proposal_notes_service.py` — `proposed_time_notes.user_id` references `auth.users`, not `profiles`; requires service_client for all reads and writes
 - Never use service_client in a route directly — only call it from a service function
 - All other service functions receive the current user's ID and use anon_client with RLS
 
