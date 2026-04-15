@@ -65,10 +65,12 @@ Mandatory. Catches entire classes of bugs before runtime, and Claude Code genera
 
 Chosen over Chakra UI (v1 stack) because shadcn components are copy-pasted into your repo (you own the code, not a node_modules black box), Tailwind-based (consistent with the rest of the styling), and highly composable. Easy to customize without fighting the library.
 
-### Styling
-**Tailwind CSS v3**
+Underlying headless primitive layer: **`@base-ui/react`** (replaces Radix UI in shadcn v4+). Components like `Button` and `DropdownMenu` import from `@base-ui/react/*` rather than `@radix-ui/*`.
 
-Utility-first. No separate CSS files. Works seamlessly with shadcn/ui.
+### Styling
+**Tailwind CSS v4**
+
+Utility-first. No separate CSS files. Works seamlessly with shadcn/ui. v4 uses a CSS-first configuration (`@import "tailwindcss"` in globals.css) instead of `tailwind.config.js`.
 
 ### Server state (data fetching + caching)
 **TanStack Query (React Query) v5**
@@ -81,7 +83,7 @@ Key patterns used in this app:
 - Parallel queries on the event page to load all data simultaneously
 
 ### Client state (global UI state)
-**Zustand**
+**Zustand v5**
 
 Used only for state that is not server data:
 - Current authenticated user object (available globally without prop drilling)
