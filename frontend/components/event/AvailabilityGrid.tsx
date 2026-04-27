@@ -156,7 +156,6 @@ export function AvailabilityGrid({
 
           {/* Grid cells */}
           <div className={`flex-1 flex flex-col relative ${isScrollable ? '' : 'min-h-0'}`}>
-            {overlayContent}
             <div className={`grid grid-cols-7 ${isScrollable ? '' : 'flex-1 min-h-0'}`}>
               {days.map((_day, di) => {
                 const colDate = new Date(baseDate)
@@ -374,6 +373,7 @@ export function AvailabilityGrid({
                 )
               })}
             </div>
+            {overlayContent}
           </div>
         </div>
       </div>
