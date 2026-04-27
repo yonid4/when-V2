@@ -1,458 +1,281 @@
--- When. v2 — Database Schema
--- Run this in Supabase SQL Editor (or psql against your Supabase project)
--- Assumes auth.users table already exists (provided by Supabase Auth)
+
+
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+
+COMMENT ON SCHEMA "public" IS 'standard public schema';
+
+
 
 -- ============================================================
 -- EXTENSIONS
 -- ============================================================
-create extension if not exists "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
+
+
+
+
+
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
+
+
+
+
+
+
+CREATE EXTENSION IF NOT EXISTS "supabase_vault" WITH SCHEMA "vault";
+
+
+
+
+
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
+
+
+
+
 
 
 -- ============================================================
 -- ENUMS
 -- ============================================================
-create type event_type_enum as enum ('meeting', 'social', 'birthday', 'other');
-create type event_status_enum as enum ('planning', 'confirmed', 'cancelled');
-create type participant_status_enum as enum ('invited', 'accepted', 'declined', 'maybe');
-create type rsvp_status_enum as enum ('pending', 'going', 'maybe', 'not_going');
-create type invitation_status_enum as enum ('pending', 'accepted', 'declined');
-create type notification_type_enum as enum (
-  'event_invitation',
-  'invite_accepted',
-  'event_finalized',
-  'event_deleted',
-  'event_time_changed'
+CREATE TYPE "public"."event_status_enum" AS ENUM (
+    'planning',
+    'confirmed',
+    'cancelled'
 );
 
 
--- ============================================================
--- profiles
--- ============================================================
-create table profiles (
-  id                        uuid primary key references auth.users(id) on delete cascade,
-  full_name                 varchar(255),
-  avatar_url                text,
-  email_address             varchar(255) unique not null,
-  timezone                  varchar(50) default 'UTC',
-  primary_calendar_provider text default 'google',
-  created_at                timestamptz not null default now(),
-  updated_at                timestamptz not null default now()
+ALTER TYPE "public"."event_status_enum" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."event_type_enum" AS ENUM (
+    'meeting',
+    'social',
+    'birthday',
+    'other'
 );
 
--- Auto-update updated_at
-create or replace function set_updated_at()
-returns trigger language plpgsql as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
 
-create trigger profiles_updated_at
-  before update on profiles
-  for each row execute function set_updated_at();
+ALTER TYPE "public"."event_type_enum" OWNER TO "postgres";
 
 
--- ============================================================
--- events
--- ============================================================
-create table events (
-  id                          uuid primary key default gen_random_uuid(),
-  uid                         varchar(12) unique not null,
-  name                        text not null,
-  description                 text,
-  event_type                  event_type_enum not null default 'meeting',
-  coordinator_id              uuid not null references profiles(id) on delete restrict,
-  earliest_datetime_utc       timestamptz not null,
-  latest_datetime_utc         timestamptz not null,
-  duration_minutes            int not null check (duration_minutes > 0),
-  status                      event_status_enum not null default 'planning',
-  location                    text,
-  video_call_link             text,
-  allow_guest_invites         boolean not null default false,
-  finalized_start_time_utc    timestamptz,
-  finalized_end_time_utc      timestamptz,
-  google_calendar_event_id    text,
-  proposals_needs_regeneration boolean not null default true,
-  proposals_last_generated_at timestamptz,
-  created_at                  timestamptz not null default now(),
-  updated_at                  timestamptz not null default now(),
-  finalized_at                timestamptz,
-  constraint events_window_valid check (latest_datetime_utc > earliest_datetime_utc)
+CREATE TYPE "public"."invitation_status_enum" AS ENUM (
+    'pending',
+    'accepted',
+    'declined'
 );
 
-create index events_coordinator_id_idx on events(coordinator_id);
-create index events_uid_idx on events(uid);
 
-create trigger events_updated_at
-  before update on events
-  for each row execute function set_updated_at();
+ALTER TYPE "public"."invitation_status_enum" OWNER TO "postgres";
 
 
--- ============================================================
--- event_participants
--- ============================================================
-create table event_participants (
-  event_id   uuid not null references events(id) on delete cascade,
-  user_id    uuid not null references profiles(id) on delete cascade,
-  status     participant_status_enum not null default 'invited',
-  rsvp_status rsvp_status_enum,
-  can_invite boolean not null default false,
-  joined_at  timestamptz not null default now(),
-  primary key (event_id, user_id)
+CREATE TYPE "public"."notification_type_enum" AS ENUM (
+    'event_invitation',
+    'event_finalized',
+    'event_deleted',
+    'event_time_changed',
+    'invite_accepted'
 );
 
-create index event_participants_user_id_idx on event_participants(user_id);
+
+ALTER TYPE "public"."notification_type_enum" OWNER TO "postgres";
 
 
--- ============================================================
--- event_invitations
--- ============================================================
-create table event_invitations (
-  id             uuid primary key default gen_random_uuid(),
-  event_id       uuid not null references events(id) on delete cascade,
-  inviter_id     uuid not null references profiles(id) on delete cascade,
-  invitee_id     uuid references profiles(id) on delete set null,
-  invitee_email  varchar(255) not null,
-  status         invitation_status_enum not null default 'pending',
-  created_at     timestamptz not null default now(),
-  updated_at     timestamptz not null default now()
+CREATE TYPE "public"."participant_status_enum" AS ENUM (
+    'invited',
+    'accepted',
+    'declined',
+    'maybe'
 );
 
-create index event_invitations_event_id_idx on event_invitations(event_id);
-create index event_invitations_invitee_email_idx on event_invitations(invitee_email);
-create index event_invitations_invitee_id_idx on event_invitations(invitee_id);
 
-create trigger event_invitations_updated_at
-  before update on event_invitations
-  for each row execute function set_updated_at();
+ALTER TYPE "public"."participant_status_enum" OWNER TO "postgres";
 
 
--- ============================================================
--- calendar_accounts
--- ============================================================
-create table calendar_accounts (
-  id                  uuid primary key default gen_random_uuid(),
-  user_id             uuid not null references profiles(id) on delete cascade,
-  provider            varchar(50) not null default 'google',
-  provider_email      varchar(255) not null,
-  provider_account_id varchar(255) not null,
-  credentials         jsonb not null,
-  connected_at        timestamptz not null default now(),
-  last_synced_at      timestamptz,
-  unique (user_id, provider, provider_account_id)
+CREATE TYPE "public"."rsvp_status_enum" AS ENUM (
+    'going',
+    'maybe',
+    'not_going',
+    'pending'
 );
 
-create index calendar_accounts_user_id_idx on calendar_accounts(user_id);
+
+ALTER TYPE "public"."rsvp_status_enum" OWNER TO "postgres";
 
 
 -- ============================================================
--- calendar_sources
--- ============================================================
-create table calendar_sources (
-  id                uuid primary key default gen_random_uuid(),
-  account_id        uuid not null references calendar_accounts(id) on delete cascade,
-  calendar_id       varchar(255) not null,
-  calendar_name     varchar(255) not null,
-  is_enabled        boolean not null default true,
-  is_write_calendar boolean not null default false,
-  color             varchar(20),
-  created_at        timestamptz not null default now(),
-  updated_at        timestamptz not null default now()
-);
-
-create index calendar_sources_account_id_idx on calendar_sources(account_id);
-alter table calendar_sources add constraint calendar_sources_account_id_calendar_id_key unique (account_id, calendar_id);
-
-create trigger calendar_sources_updated_at
-  before update on calendar_sources
-  for each row execute function set_updated_at();
-
-
--- ============================================================
--- busy_slots
--- NOTE: user_id references auth.users(id), not profiles(id)
--- They share the same UUID — see DATA_MODEL.md for details
--- ============================================================
-create table busy_slots (
-  id                  uuid primary key default gen_random_uuid(),
-  user_id             uuid not null references auth.users(id) on delete cascade,
-  calendar_source_id  uuid not null references calendar_sources(id) on delete cascade,
-  provider_event_id   varchar(255) not null,
-  start_time_utc      timestamptz not null,
-  end_time_utc        timestamptz not null,
-  last_synced_at      timestamptz not null default now(),
-  created_at          timestamptz not null default now(),
-  updated_at          timestamptz not null default now(),
-  unique (provider_event_id, calendar_source_id)
-);
-
-create index busy_slots_user_id_idx on busy_slots(user_id);
-create index busy_slots_time_range_idx on busy_slots(user_id, start_time_utc, end_time_utc);
-
-create trigger busy_slots_updated_at
-  before update on busy_slots
-  for each row execute function set_updated_at();
-
-
--- ============================================================
--- preferred_slots
--- ============================================================
-create table preferred_slots (
-  id             uuid primary key default gen_random_uuid(),
-  user_id        uuid not null references profiles(id) on delete cascade,
-  event_id       uuid not null references events(id) on delete cascade,
-  start_time_utc timestamptz not null,
-  end_time_utc   timestamptz not null,
-  created_at     timestamptz not null default now(),
-  unique (user_id, event_id, start_time_utc, end_time_utc)
-);
-
-create index preferred_slots_event_id_idx on preferred_slots(event_id);
-create index preferred_slots_user_id_idx on preferred_slots(user_id);
-
-
--- ============================================================
--- proposed_times
--- ============================================================
-create table proposed_times (
-  id              uuid primary key default gen_random_uuid(),
-  event_id        uuid not null references events(id) on delete cascade,
-  start_time_utc  timestamptz not null,
-  end_time_utc    timestamptz not null,
-  conflicts       int not null default 0,
-  preferred_count int not null default 0,
-  reasoning       text,
-  rank            int not null,
-  created_at      timestamptz not null default now(),
-  unique (event_id, rank)
-);
-
-create index proposed_times_event_id_idx on proposed_times(event_id);
-
-
--- ============================================================
--- proposed_time_notes
--- ============================================================
-create table proposed_time_notes (
-  id                uuid        primary key default gen_random_uuid(),
-  proposed_time_id  uuid        not null references proposed_times(id) on delete cascade,
-  user_id           uuid        not null references auth.users(id) on delete cascade,
-  content           text        not null,
-  event_uid         text        not null,
-  created_at        timestamptz not null default now()
-);
-
-create index proposed_time_notes_proposed_time_id_idx on proposed_time_notes(proposed_time_id);
-create index proposed_time_notes_user_id_idx          on proposed_time_notes(user_id);
-create index proposed_time_notes_event_uid_idx        on proposed_time_notes(event_uid);
-
-
--- ============================================================
--- notifications
--- ============================================================
-create table notifications (
-  id                uuid primary key default gen_random_uuid(),
-  user_id           uuid not null references profiles(id) on delete cascade,
-  event_id          uuid references events(id) on delete cascade,
-  notification_type notification_type_enum not null,
-  title             text not null,
-  message           text not null,
-  is_read           boolean not null default false,
-  action_taken      boolean not null default false,
-  action_type       varchar(50),
-  metadata          jsonb,
-  created_at        timestamptz not null default now(),
-  read_at           timestamptz,
-  action_at         timestamptz
-);
-
-create index notifications_user_id_idx on notifications(user_id);
-create index notifications_user_unread_idx on notifications(user_id, is_read) where is_read = false;
-
-
--- ============================================================
--- RLS — enable on all tables
--- ============================================================
-alter table profiles            enable row level security;
-alter table events              enable row level security;
-alter table event_participants  enable row level security;
-alter table event_invitations   enable row level security;
-alter table calendar_accounts   enable row level security;
-alter table calendar_sources    enable row level security;
-alter table busy_slots          enable row level security;
-alter table preferred_slots     enable row level security;
-alter table proposed_times          enable row level security;
-alter table proposed_time_notes     enable row level security;
-alter table notifications           enable row level security;
-
-
--- ============================================================
--- RLS POLICIES
+-- FUNCTIONS
 -- ============================================================
 
--- profiles: own row only
-create policy "profiles_select_own" on profiles for select using (auth.uid() = id);
-create policy "profiles_update_own" on profiles for update using (auth.uid() = id);
-
--- Helper: check participation without triggering RLS (breaks mutual recursion)
-create or replace function is_event_participant(p_event_id uuid, p_user_id uuid)
-returns boolean
-language sql
-security definer
-stable
-as $$
-  select exists (
-    select 1 from event_participants
-    where event_id = p_event_id
-      and user_id = p_user_id
+-- Broadcast trigger functions
+CREATE OR REPLACE FUNCTION "public"."broadcast_event_changes"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'event:' || COALESCE(NEW.id, OLD.id)::text,
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    NEW,
+    OLD
   );
-$$;
-
--- events: coordinator or participant can read; only coordinator can write
-create policy "events_select" on events for select using (
-  coordinator_id = auth.uid()
-  or is_event_participant(id, auth.uid())
-);
-create policy "events_insert" on events for insert with check (coordinator_id = auth.uid());
-create policy "events_update" on events for update using (coordinator_id = auth.uid());
-create policy "events_delete" on events for delete using (coordinator_id = auth.uid());
-
--- event_participants: the participant themselves or any co-participant can read
-create policy "event_participants_select" on event_participants for select using (
-  user_id = auth.uid()
-  or is_event_participant(event_id, auth.uid())
-);
--- coordinator can add/remove; self can update RSVP
-create policy "event_participants_insert" on event_participants for insert with check (
-  exists (select 1 from events where events.id = event_id and events.coordinator_id = auth.uid())
-);
-create policy "event_participants_update_self" on event_participants for update using (user_id = auth.uid());
-create policy "event_participants_delete" on event_participants for delete using (
-  exists (select 1 from events where events.id = event_id and events.coordinator_id = auth.uid())
-);
-
--- event_invitations: inviter or invitee can read
-create policy "event_invitations_select" on event_invitations for select using (
-  inviter_id = auth.uid() or invitee_id = auth.uid()
-);
--- coordinator or can_invite participant can insert
-create policy "event_invitations_insert" on event_invitations for insert with check (
-  exists (select 1 from events where events.id = event_id and events.coordinator_id = auth.uid())
-  or exists (
-    select 1 from event_participants
-    where event_participants.event_id = event_invitations.event_id
-      and event_participants.user_id = auth.uid()
-      and event_participants.can_invite = true
-  )
-);
-create policy "event_invitations_update" on event_invitations for update using (
-  inviter_id = auth.uid() or invitee_id = auth.uid()
-);
-
--- calendar_accounts: own rows only
-create policy "calendar_accounts_own" on calendar_accounts for all using (user_id = auth.uid());
-
--- calendar_sources: own rows (via account)
-create policy "calendar_sources_own" on calendar_sources for all using (
-  exists (
-    select 1 from calendar_accounts
-    where calendar_accounts.id = calendar_sources.account_id
-      and calendar_accounts.user_id = auth.uid()
-  )
-);
-
--- busy_slots: own rows only (read); service role writes
-create policy "busy_slots_select_own" on busy_slots for select using (user_id = auth.uid());
-
--- preferred_slots: all event participants can read; own rows only for write
-create policy "preferred_slots_select" on preferred_slots for select using (
-  exists (
-    select 1 from event_participants
-    where event_participants.event_id = preferred_slots.event_id
-      and event_participants.user_id = auth.uid()
-  )
-);
-create policy "preferred_slots_write_own" on preferred_slots for all using (user_id = auth.uid());
-
--- proposed_times: all event participants can read; service role writes
-create policy "proposed_times_select" on proposed_times for select using (
-  exists (
-    select 1 from event_participants
-    where event_participants.event_id = proposed_times.event_id
-      and event_participants.user_id = auth.uid()
-  )
-);
-
--- proposed_time_notes: participants can read; own notes only for write/delete
-create policy "proposed_time_notes_select"
-  on proposed_time_notes for select
-  using (
-    exists (
-      select 1
-      from proposed_times pt
-      join event_participants ep on ep.event_id = pt.event_id
-      where pt.id = proposed_time_notes.proposed_time_id
-        and ep.user_id = auth.uid()
-    )
-  );
-
-create policy "proposed_time_notes_insert"
-  on proposed_time_notes for insert
-  with check (user_id = auth.uid());
-
-create policy "proposed_time_notes_delete"
-  on proposed_time_notes for delete
-  using (user_id = auth.uid());
-
--- Realtime worker select policy — uses denormalized event_uid to avoid cross-table join
-create policy "proposed_time_notes_realtime_select"
-  on proposed_time_notes for select
-  using (
-    exists (
-      select 1
-      from event_participants ep
-      join events e on e.id = ep.event_id
-      where e.uid = proposed_time_notes.event_uid
-        and ep.user_id = auth.uid()
-    )
-  );
-
--- notifications: own rows only (read); service role writes
-create policy "notifications_select_own" on notifications for select using (user_id = auth.uid());
-create policy "notifications_update_own" on notifications for update using (user_id = auth.uid());
-
-
--- ============================================================
--- FUNCTION: clear_write_calendar_for_user
--- Called by update_calendar_source() to enforce is_write_calendar exclusivity.
--- Clears is_write_calendar on all sources owned by p_user_id except p_exclude_source_id.
--- ============================================================
-create or replace function public.clear_write_calendar_for_user(
-    p_user_id uuid,
-    p_exclude_source_id uuid
-)
-returns void
-language sql
-security definer
-as $$
-    update calendar_sources cs
-    set is_write_calendar = false
-    from calendar_accounts ca
-    where cs.account_id = ca.id
-      and ca.user_id = p_user_id
-      and cs.id != p_exclude_source_id;
+  RETURN NULL;
+END;
 $$;
 
 
--- ============================================================
--- FUNCTION: handle_new_user
+ALTER FUNCTION "public"."broadcast_event_changes"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."broadcast_notification_changes"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'user:' || COALESCE(NEW.user_id, OLD.user_id)::text,
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    NEW,
+    OLD
+  );
+  RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."broadcast_notification_changes"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."broadcast_participant_changes"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text,
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    NEW,
+    OLD
+  );
+  RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."broadcast_participant_changes"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."broadcast_preferred_slots_changes"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  PERFORM realtime.broadcast_changes(
+    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text,
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    NEW,
+    OLD
+  );
+  RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."broadcast_preferred_slots_changes"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."busy_slots_broadcast_trigger"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  _topic text;
+BEGIN
+  _topic := 'user:' || COALESCE(NEW.user_id, OLD.user_id)::text || ':busy_slots';
+
+  PERFORM realtime.broadcast_changes(
+    _topic,
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    COALESCE(NEW, OLD),
+    OLD
+  );
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."busy_slots_broadcast_trigger"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") RETURNS "void"
+    LANGUAGE "sql" SECURITY DEFINER
+    AS $$
+    UPDATE calendar_sources cs
+    SET is_write_calendar = false
+    FROM calendar_accounts ca
+    WHERE cs.account_id = ca.id
+      AND ca.user_id = p_user_id
+      AND cs.id != p_exclude_source_id;
+$$;
+
+
+ALTER FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."event_participants_broadcast_trigger"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  _topic text;
+BEGIN
+  _topic := 'event:' || COALESCE(NEW.event_id, OLD.event_id)::text || ':participants';
+
+  PERFORM realtime.broadcast_changes(
+    _topic,
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    COALESCE(NEW, OLD),
+    OLD
+  );
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."event_participants_broadcast_trigger"() OWNER TO "postgres";
+
+
 -- Auto-creates a profile row when a new auth.users row is inserted
--- Register as: Auth > Hooks > "After sign-up" in Supabase dashboard,
--- or as a trigger on auth.users if using service role migrations.
--- ============================================================
-create or replace function handle_new_user()
-returns trigger language plpgsql security definer as $$
+CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
 begin
   insert into profiles (id, full_name, avatar_url, email_address)
   values (
@@ -466,220 +289,1272 @@ begin
 end;
 $$;
 
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute function handle_new_user();
+
+ALTER FUNCTION "public"."handle_new_user"() OWNER TO "postgres";
 
 
-
--- Replica identity for realtime
-ALTER TABLE preferred_slots REPLICA IDENTITY FULL;
-ALTER TABLE event_participants REPLICA IDENTITY FULL;
-ALTER TABLE busy_slots REPLICA IDENTITY FULL;
-ALTER TABLE notifications REPLICA IDENTITY FULL;
-ALTER TABLE events REPLICA IDENTITY FULL;
-ALTER TABLE proposed_time_notes REPLICA IDENTITY FULL;
-
--- Realtime publication
-ALTER PUBLICATION supabase_realtime ADD TABLE
-  preferred_slots, event_participants, busy_slots, notifications, events, proposed_time_notes;
-
--- Anon RLS policies for realtime
-CREATE POLICY "anon can select preferred_slots"
-ON public.preferred_slots FOR SELECT TO anon USING (true);
-
-CREATE POLICY "anon can select event_participants"
-ON public.event_participants FOR SELECT TO anon USING (true);
-
-CREATE POLICY "anon can select events"
-ON public.events FOR SELECT TO anon USING (true);
-
-CREATE POLICY "anon can select notifications"
-ON public.notifications FOR SELECT TO anon USING (true);
-
-CREATE POLICY "anon can select busy_slots"
-ON public.busy_slots FOR SELECT TO anon USING (true);
-
--- RLS policies for realtime.messages
-CREATE POLICY "anon can receive broadcasts"
-ON realtime.messages FOR SELECT TO anon USING (true);
-
-CREATE POLICY "anon can send broadcasts"
-ON realtime.messages FOR INSERT TO anon WITH CHECK (true);
-
-CREATE POLICY "anon can select proposed_time_notes"
-ON public.proposed_time_notes FOR SELECT TO anon USING (true);
+-- Cross-schema trigger: fires handle_new_user on every new auth signup
+-- (pg_dump cannot capture auth-schema triggers; added manually)
+CREATE TRIGGER "on_auth_user_created"
+  AFTER INSERT ON "auth"."users"
+  FOR EACH ROW EXECUTE FUNCTION "public"."handle_new_user"();
 
 
--- ============================================================
--- NOTIFICATIONS RLS FIX
--- Run this block in the Supabase SQL editor if the integration
--- test test_user_cannot_read_another_users_notification fails
--- (Alice can read Bob's notification). This re-creates the
--- select policy and ensures it is correctly scoped.
--- ============================================================
-alter table notifications enable row level security;
-
-drop policy if exists "notifications_select_own" on notifications;
-create policy "notifications_select_own"
-  on notifications for select
-  using (auth.uid() = user_id);
-
--- Also drop and recreate the anon realtime policy with explicit TO anon
--- to ensure it does not inadvertently allow authenticated users to read
--- other users' notifications.
-drop policy if exists "anon can select notifications" on public.notifications;
-create policy "anon can select notifications"
-  on public.notifications for select to anon
-  using (true);
-
-
--- ============================================================
--- BROADCAST TRIGGER FUNCTIONS
--- These were created via the Supabase dashboard and are captured
--- here for completeness. They power realtime broadcast channels.
--- ============================================================
-
-CREATE OR REPLACE FUNCTION public.broadcast_event_changes() RETURNS trigger
-    LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION "public"."handle_preferred_slots_broadcast"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
 BEGIN
   PERFORM realtime.broadcast_changes(
-    'event:' || COALESCE(NEW.id, OLD.id)::text,
-    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
-  );
-  RETURN NULL;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.broadcast_notification_changes() RETURNS trigger
-    LANGUAGE plpgsql AS $$
-BEGIN
-  PERFORM realtime.broadcast_changes(
-    'user:' || COALESCE(NEW.user_id, OLD.user_id)::text,
-    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
-  );
-  RETURN NULL;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.broadcast_participant_changes() RETURNS trigger
-    LANGUAGE plpgsql AS $$
-BEGIN
-  PERFORM realtime.broadcast_changes(
-    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text,
-    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
-  );
-  RETURN NULL;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.broadcast_preferred_slots_changes() RETURNS trigger
-    LANGUAGE plpgsql AS $$
-BEGIN
-  PERFORM realtime.broadcast_changes(
-    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text,
-    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
-  );
-  RETURN NULL;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.busy_slots_broadcast_trigger() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  _topic text;
-BEGIN
-  _topic := 'user:' || COALESCE(NEW.user_id, OLD.user_id)::text || ':busy_slots';
-  PERFORM realtime.broadcast_changes(
-    _topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
+    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text || ':preferred_slots',
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    NEW,
+    OLD
   );
   RETURN COALESCE(NEW, OLD);
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.event_participants_broadcast_trigger() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  _topic text;
-BEGIN
-  _topic := 'event:' || COALESCE(NEW.event_id, OLD.event_id)::text || ':participants';
-  PERFORM realtime.broadcast_changes(
-    _topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
+
+ALTER FUNCTION "public"."handle_preferred_slots_broadcast"() OWNER TO "postgres";
+
+
+-- Helper: check participation without triggering RLS (avoids mutual recursion)
+CREATE OR REPLACE FUNCTION "public"."is_event_participant"("p_event_id" "uuid", "p_user_id" "uuid") RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    AS $$
+  select exists (
+    select 1 from event_participants
+    where event_id = p_event_id
+      and user_id = p_user_id
   );
-  RETURN COALESCE(NEW, OLD);
-END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.notifications_broadcast_trigger() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER AS $$
+
+ALTER FUNCTION "public"."is_event_participant"("p_event_id" "uuid", "p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."notifications_broadcast_trigger"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
 DECLARE
   _topic text;
 BEGIN
   _topic := 'user:' || COALESCE(NEW.user_id, OLD.user_id)::text || ':notifications';
+
   PERFORM realtime.broadcast_changes(
-    _topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
+    _topic,
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    COALESCE(NEW, OLD),
+    OLD
   );
+
   RETURN COALESCE(NEW, OLD);
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.preferred_slots_broadcast_trigger() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER AS $$
+
+ALTER FUNCTION "public"."notifications_broadcast_trigger"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."preferred_slots_broadcast_trigger"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
 DECLARE
   _topic text;
 BEGIN
   _topic := 'event:' || COALESCE(NEW.event_id, OLD.event_id)::text || ':preferred_slots';
+
   PERFORM realtime.broadcast_changes(
-    _topic, TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
+    _topic,
+    TG_OP,
+    TG_OP,
+    TG_TABLE_NAME,
+    TG_TABLE_SCHEMA,
+    COALESCE(NEW, OLD),
+    OLD
   );
+
   RETURN COALESCE(NEW, OLD);
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.handle_preferred_slots_broadcast() RETURNS trigger
-    LANGUAGE plpgsql AS $$
+
+ALTER FUNCTION "public"."preferred_slots_broadcast_trigger"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."proposed_time_notes_broadcast_trigger"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
 BEGIN
   PERFORM realtime.broadcast_changes(
-    'event:' || COALESCE(NEW.event_id, OLD.event_id)::text || ':preferred_slots',
-    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, NEW, OLD
+    'event:' || COALESCE(NEW.event_uid, OLD.event_uid)::text || ':proposed_time_notes',
+    TG_OP, TG_OP, TG_TABLE_NAME, TG_TABLE_SCHEMA, COALESCE(NEW, OLD), OLD
   );
   RETURN COALESCE(NEW, OLD);
 END;
 $$;
 
 
+ALTER FUNCTION "public"."proposed_time_notes_broadcast_trigger"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."set_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."set_updated_at"() OWNER TO "postgres";
+
 -- ============================================================
--- BROADCAST TRIGGERS
+-- TABLES
 -- ============================================================
 
-CREATE OR REPLACE TRIGGER broadcast_events
-  AFTER INSERT OR UPDATE OR DELETE ON public.events
-  FOR EACH ROW EXECUTE FUNCTION public.broadcast_event_changes();
+SET default_tablespace = '';
 
-CREATE OR REPLACE TRIGGER broadcast_notifications
-  AFTER INSERT OR UPDATE OR DELETE ON public.notifications
-  FOR EACH ROW EXECUTE FUNCTION public.broadcast_notification_changes();
+SET default_table_access_method = "heap";
 
-CREATE OR REPLACE TRIGGER broadcast_participants
-  AFTER INSERT OR UPDATE OR DELETE ON public.event_participants
-  FOR EACH ROW EXECUTE FUNCTION public.broadcast_participant_changes();
 
-CREATE OR REPLACE TRIGGER broadcast_preferred_slots
-  AFTER INSERT OR UPDATE OR DELETE ON public.preferred_slots
-  FOR EACH ROW EXECUTE FUNCTION public.broadcast_preferred_slots_changes();
+CREATE TABLE IF NOT EXISTS "public"."busy_slots" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "calendar_source_id" "uuid" NOT NULL,
+    "provider_event_id" character varying(255) NOT NULL,
+    "start_time_utc" timestamp with time zone NOT NULL,
+    "end_time_utc" timestamp with time zone NOT NULL,
+    "last_synced_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
 
-CREATE OR REPLACE TRIGGER busy_slots_broadcast
-  AFTER INSERT OR UPDATE OR DELETE ON public.busy_slots
-  FOR EACH ROW EXECUTE FUNCTION public.busy_slots_broadcast_trigger();
+ALTER TABLE ONLY "public"."busy_slots" REPLICA IDENTITY FULL;
 
-CREATE OR REPLACE TRIGGER event_participants_broadcast
-  AFTER INSERT OR UPDATE OR DELETE ON public.event_participants
-  FOR EACH ROW EXECUTE FUNCTION public.event_participants_broadcast_trigger();
 
-CREATE OR REPLACE TRIGGER notifications_broadcast
-  AFTER INSERT OR UPDATE OR DELETE ON public.notifications
-  FOR EACH ROW EXECUTE FUNCTION public.notifications_broadcast_trigger();
+ALTER TABLE "public"."busy_slots" OWNER TO "postgres";
 
-CREATE OR REPLACE TRIGGER preferred_slots_broadcast
-  AFTER INSERT OR UPDATE OR DELETE ON public.preferred_slots
-  FOR EACH ROW EXECUTE FUNCTION public.handle_preferred_slots_broadcast();
+
+CREATE TABLE IF NOT EXISTS "public"."calendar_accounts" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "provider" character varying(50) DEFAULT 'google'::character varying NOT NULL,
+    "provider_email" character varying(255) NOT NULL,
+    "provider_account_id" character varying(255) NOT NULL,
+    "credentials" "jsonb" NOT NULL,
+    "connected_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "last_synced_at" timestamp with time zone
+);
+
+
+ALTER TABLE "public"."calendar_accounts" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."calendar_sources" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "account_id" "uuid" NOT NULL,
+    "calendar_id" character varying(255) NOT NULL,
+    "calendar_name" character varying(255) NOT NULL,
+    "is_enabled" boolean DEFAULT true NOT NULL,
+    "is_write_calendar" boolean DEFAULT false NOT NULL,
+    "color" character varying(20),
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."calendar_sources" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."event_invitations" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "event_id" "uuid" NOT NULL,
+    "inviter_id" "uuid" NOT NULL,
+    "invitee_id" "uuid",
+    "invitee_email" character varying(255) NOT NULL,
+    "status" "public"."invitation_status_enum" DEFAULT 'pending'::"public"."invitation_status_enum" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."event_invitations" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."event_participants" (
+    "event_id" "uuid" NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "status" "public"."participant_status_enum" DEFAULT 'invited'::"public"."participant_status_enum" NOT NULL,
+    "rsvp_status" "public"."rsvp_status_enum",
+    "can_invite" boolean DEFAULT false NOT NULL,
+    "joined_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+ALTER TABLE ONLY "public"."event_participants" REPLICA IDENTITY FULL;
+
+
+ALTER TABLE "public"."event_participants" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."events" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "uid" character varying(12) NOT NULL,
+    "name" "text" NOT NULL,
+    "description" "text",
+    "event_type" "public"."event_type_enum" DEFAULT 'meeting'::"public"."event_type_enum" NOT NULL,
+    "coordinator_id" "uuid" NOT NULL,
+    "earliest_datetime_utc" timestamp with time zone NOT NULL,
+    "latest_datetime_utc" timestamp with time zone NOT NULL,
+    "duration_minutes" integer NOT NULL,
+    "status" "public"."event_status_enum" DEFAULT 'planning'::"public"."event_status_enum" NOT NULL,
+    "location" "text",
+    "video_call_link" "text",
+    "finalized_start_time_utc" timestamp with time zone,
+    "finalized_end_time_utc" timestamp with time zone,
+    "google_calendar_event_id" "text",
+    "proposals_needs_regeneration" boolean DEFAULT true NOT NULL,
+    "proposals_last_generated_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "finalized_at" timestamp with time zone,
+    "allow_guest_invites" boolean DEFAULT false NOT NULL,
+    CONSTRAINT "events_duration_minutes_check" CHECK (("duration_minutes" > 0)),
+    CONSTRAINT "events_window_valid" CHECK (("latest_datetime_utc" > "earliest_datetime_utc"))
+);
+
+ALTER TABLE ONLY "public"."events" REPLICA IDENTITY FULL;
+
+
+ALTER TABLE "public"."events" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."notifications" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "event_id" "uuid",
+    "notification_type" "public"."notification_type_enum" NOT NULL,
+    "title" "text" NOT NULL,
+    "message" "text" NOT NULL,
+    "is_read" boolean DEFAULT false NOT NULL,
+    "action_taken" boolean DEFAULT false NOT NULL,
+    "action_type" character varying(50),
+    "metadata" "jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "read_at" timestamp with time zone,
+    "action_at" timestamp with time zone
+);
+
+ALTER TABLE ONLY "public"."notifications" REPLICA IDENTITY FULL;
+
+
+ALTER TABLE "public"."notifications" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."preferred_slots" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "event_id" "uuid" NOT NULL,
+    "start_time_utc" timestamp with time zone NOT NULL,
+    "end_time_utc" timestamp with time zone NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+ALTER TABLE ONLY "public"."preferred_slots" REPLICA IDENTITY FULL;
+
+
+ALTER TABLE "public"."preferred_slots" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."profiles" (
+    "id" "uuid" NOT NULL,
+    "full_name" character varying(255),
+    "avatar_url" "text",
+    "email_address" character varying(255) NOT NULL,
+    "timezone" character varying(50) DEFAULT 'UTC'::character varying,
+    "primary_calendar_provider" "text" DEFAULT 'google'::"text",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."profiles" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."proposed_time_notes" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "proposed_time_id" "uuid" NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "content" "text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "event_uid" "text" NOT NULL
+);
+
+ALTER TABLE ONLY "public"."proposed_time_notes" REPLICA IDENTITY FULL;
+
+
+ALTER TABLE "public"."proposed_time_notes" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."proposed_times" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "event_id" "uuid" NOT NULL,
+    "start_time_utc" timestamp with time zone NOT NULL,
+    "end_time_utc" timestamp with time zone NOT NULL,
+    "conflicts" integer DEFAULT 0 NOT NULL,
+    "reasoning" "text",
+    "rank" integer NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "preferred_count" integer DEFAULT 0 NOT NULL
+);
+
+
+ALTER TABLE "public"."proposed_times" OWNER TO "postgres";
+
+
+-- ============================================================
+-- PRIMARY KEYS & UNIQUE CONSTRAINTS
+-- ============================================================
+
+ALTER TABLE ONLY "public"."busy_slots"
+    ADD CONSTRAINT "busy_slots_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."busy_slots"
+    ADD CONSTRAINT "busy_slots_provider_event_id_calendar_source_id_key" UNIQUE ("provider_event_id", "calendar_source_id");
+
+
+
+ALTER TABLE ONLY "public"."calendar_accounts"
+    ADD CONSTRAINT "calendar_accounts_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."calendar_accounts"
+    ADD CONSTRAINT "calendar_accounts_user_id_provider_provider_account_id_key" UNIQUE ("user_id", "provider", "provider_account_id");
+
+
+
+ALTER TABLE ONLY "public"."calendar_sources"
+    ADD CONSTRAINT "calendar_sources_account_id_calendar_id_key" UNIQUE ("account_id", "calendar_id");
+
+
+
+ALTER TABLE ONLY "public"."calendar_sources"
+    ADD CONSTRAINT "calendar_sources_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."event_invitations"
+    ADD CONSTRAINT "event_invitations_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."event_participants"
+    ADD CONSTRAINT "event_participants_pkey" PRIMARY KEY ("event_id", "user_id");
+
+
+
+ALTER TABLE ONLY "public"."events"
+    ADD CONSTRAINT "events_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."events"
+    ADD CONSTRAINT "events_uid_key" UNIQUE ("uid");
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."preferred_slots"
+    ADD CONSTRAINT "preferred_slots_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."preferred_slots"
+    ADD CONSTRAINT "preferred_slots_user_id_event_id_start_time_utc_end_time_ut_key" UNIQUE ("user_id", "event_id", "start_time_utc", "end_time_utc");
+
+
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_email_address_key" UNIQUE ("email_address");
+
+
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."proposed_time_notes"
+    ADD CONSTRAINT "proposed_time_notes_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."proposed_times"
+    ADD CONSTRAINT "proposed_times_event_id_rank_key" UNIQUE ("event_id", "rank");
+
+
+
+ALTER TABLE ONLY "public"."proposed_times"
+    ADD CONSTRAINT "proposed_times_pkey" PRIMARY KEY ("id");
+
+
+
+-- ============================================================
+-- INDEXES
+-- ============================================================
+
+CREATE INDEX "busy_slots_time_range_idx" ON "public"."busy_slots" USING "btree" ("user_id", "start_time_utc", "end_time_utc");
+
+
+
+CREATE INDEX "busy_slots_user_id_idx" ON "public"."busy_slots" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "calendar_accounts_user_id_idx" ON "public"."calendar_accounts" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "calendar_sources_account_id_idx" ON "public"."calendar_sources" USING "btree" ("account_id");
+
+
+
+CREATE INDEX "event_invitations_event_id_idx" ON "public"."event_invitations" USING "btree" ("event_id");
+
+
+
+CREATE INDEX "event_invitations_invitee_email_idx" ON "public"."event_invitations" USING "btree" ("invitee_email");
+
+
+
+CREATE INDEX "event_invitations_invitee_id_idx" ON "public"."event_invitations" USING "btree" ("invitee_id");
+
+
+
+CREATE INDEX "event_participants_user_id_idx" ON "public"."event_participants" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "events_coordinator_id_idx" ON "public"."events" USING "btree" ("coordinator_id");
+
+
+
+CREATE INDEX "events_uid_idx" ON "public"."events" USING "btree" ("uid");
+
+
+
+CREATE INDEX "notifications_user_id_idx" ON "public"."notifications" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "notifications_user_unread_idx" ON "public"."notifications" USING "btree" ("user_id", "is_read") WHERE ("is_read" = false);
+
+
+
+CREATE INDEX "preferred_slots_event_id_idx" ON "public"."preferred_slots" USING "btree" ("event_id");
+
+
+
+CREATE INDEX "preferred_slots_user_id_idx" ON "public"."preferred_slots" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "proposed_time_notes_event_uid_idx" ON "public"."proposed_time_notes" USING "btree" ("event_uid");
+
+
+
+CREATE INDEX "proposed_time_notes_proposed_time_id_idx" ON "public"."proposed_time_notes" USING "btree" ("proposed_time_id");
+
+
+
+CREATE INDEX "proposed_time_notes_user_id_idx" ON "public"."proposed_time_notes" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "proposed_times_event_id_idx" ON "public"."proposed_times" USING "btree" ("event_id");
+
+
+
+-- ============================================================
+-- TRIGGERS
+-- ============================================================
+
+CREATE OR REPLACE TRIGGER "broadcast_events" AFTER INSERT OR DELETE OR UPDATE ON "public"."events" FOR EACH ROW EXECUTE FUNCTION "public"."broadcast_event_changes"();
+
+
+
+CREATE OR REPLACE TRIGGER "broadcast_notifications" AFTER INSERT OR DELETE OR UPDATE ON "public"."notifications" FOR EACH ROW EXECUTE FUNCTION "public"."broadcast_notification_changes"();
+
+
+
+CREATE OR REPLACE TRIGGER "broadcast_participants" AFTER INSERT OR DELETE OR UPDATE ON "public"."event_participants" FOR EACH ROW EXECUTE FUNCTION "public"."broadcast_participant_changes"();
+
+
+
+CREATE OR REPLACE TRIGGER "broadcast_preferred_slots" AFTER INSERT OR DELETE OR UPDATE ON "public"."preferred_slots" FOR EACH ROW EXECUTE FUNCTION "public"."broadcast_preferred_slots_changes"();
+
+
+
+CREATE OR REPLACE TRIGGER "busy_slots_broadcast" AFTER INSERT OR DELETE OR UPDATE ON "public"."busy_slots" FOR EACH ROW EXECUTE FUNCTION "public"."busy_slots_broadcast_trigger"();
+
+
+
+CREATE OR REPLACE TRIGGER "busy_slots_updated_at" BEFORE UPDATE ON "public"."busy_slots" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "calendar_sources_updated_at" BEFORE UPDATE ON "public"."calendar_sources" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "event_invitations_updated_at" BEFORE UPDATE ON "public"."event_invitations" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "event_participants_broadcast" AFTER INSERT OR DELETE OR UPDATE ON "public"."event_participants" FOR EACH ROW EXECUTE FUNCTION "public"."event_participants_broadcast_trigger"();
+
+
+
+CREATE OR REPLACE TRIGGER "events_updated_at" BEFORE UPDATE ON "public"."events" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "notifications_broadcast" AFTER INSERT OR DELETE OR UPDATE ON "public"."notifications" FOR EACH ROW EXECUTE FUNCTION "public"."notifications_broadcast_trigger"();
+
+
+
+CREATE OR REPLACE TRIGGER "preferred_slots_broadcast" AFTER INSERT OR DELETE OR UPDATE ON "public"."preferred_slots" FOR EACH ROW EXECUTE FUNCTION "public"."handle_preferred_slots_broadcast"();
+
+
+
+CREATE OR REPLACE TRIGGER "profiles_updated_at" BEFORE UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "proposed_time_notes_broadcast" AFTER INSERT OR DELETE OR UPDATE ON "public"."proposed_time_notes" FOR EACH ROW EXECUTE FUNCTION "public"."proposed_time_notes_broadcast_trigger"();
+
+
+
+-- ============================================================
+-- FOREIGN KEYS
+-- ============================================================
+
+ALTER TABLE ONLY "public"."busy_slots"
+    ADD CONSTRAINT "busy_slots_calendar_source_id_fkey" FOREIGN KEY ("calendar_source_id") REFERENCES "public"."calendar_sources"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."busy_slots"
+    ADD CONSTRAINT "busy_slots_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."calendar_accounts"
+    ADD CONSTRAINT "calendar_accounts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."calendar_sources"
+    ADD CONSTRAINT "calendar_sources_account_id_fkey" FOREIGN KEY ("account_id") REFERENCES "public"."calendar_accounts"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."event_invitations"
+    ADD CONSTRAINT "event_invitations_event_id_fkey" FOREIGN KEY ("event_id") REFERENCES "public"."events"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."event_invitations"
+    ADD CONSTRAINT "event_invitations_invitee_id_fkey" FOREIGN KEY ("invitee_id") REFERENCES "public"."profiles"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."event_invitations"
+    ADD CONSTRAINT "event_invitations_inviter_id_fkey" FOREIGN KEY ("inviter_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."event_participants"
+    ADD CONSTRAINT "event_participants_event_id_fkey" FOREIGN KEY ("event_id") REFERENCES "public"."events"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."event_participants"
+    ADD CONSTRAINT "event_participants_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."events"
+    ADD CONSTRAINT "events_coordinator_id_fkey" FOREIGN KEY ("coordinator_id") REFERENCES "public"."profiles"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_event_id_fkey" FOREIGN KEY ("event_id") REFERENCES "public"."events"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."preferred_slots"
+    ADD CONSTRAINT "preferred_slots_event_id_fkey" FOREIGN KEY ("event_id") REFERENCES "public"."events"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."preferred_slots"
+    ADD CONSTRAINT "preferred_slots_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."proposed_time_notes"
+    ADD CONSTRAINT "proposed_time_notes_proposed_time_id_fkey" FOREIGN KEY ("proposed_time_id") REFERENCES "public"."proposed_times"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."proposed_time_notes"
+    ADD CONSTRAINT "proposed_time_notes_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."proposed_times"
+    ADD CONSTRAINT "proposed_times_event_id_fkey" FOREIGN KEY ("event_id") REFERENCES "public"."events"("id") ON DELETE CASCADE;
+
+
+
+-- ============================================================
+-- RLS — enable on all tables
+-- ============================================================
+
+-- ============================================================
+-- RLS POLICIES
+-- ============================================================
+
+CREATE POLICY "anon can select busy_slots" ON "public"."busy_slots" FOR SELECT TO "anon" USING (true);
+
+
+
+CREATE POLICY "anon can select event_participants" ON "public"."event_participants" FOR SELECT TO "anon" USING (true);
+
+
+
+CREATE POLICY "anon can select events" ON "public"."events" FOR SELECT TO "anon" USING (true);
+
+
+
+CREATE POLICY "anon can select notifications" ON "public"."notifications" FOR SELECT TO "anon" USING (true);
+
+
+
+CREATE POLICY "anon can select preferred_slots" ON "public"."preferred_slots" FOR SELECT TO "anon" USING (true);
+
+
+
+CREATE POLICY "anon can select proposed_time_notes" ON "public"."proposed_time_notes" FOR SELECT TO "anon" USING (true);
+
+
+
+ALTER TABLE "public"."busy_slots" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "busy_slots_select_own" ON "public"."busy_slots" FOR SELECT USING (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."calendar_accounts" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "calendar_accounts_own" ON "public"."calendar_accounts" USING (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."calendar_sources" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "calendar_sources_own" ON "public"."calendar_sources" USING ((EXISTS ( SELECT 1
+   FROM "public"."calendar_accounts"
+  WHERE (("calendar_accounts"."id" = "calendar_sources"."account_id") AND ("calendar_accounts"."user_id" = "auth"."uid"())))));
+
+
+
+ALTER TABLE "public"."event_invitations" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "event_invitations_insert" ON "public"."event_invitations" FOR INSERT WITH CHECK (((EXISTS ( SELECT 1
+   FROM "public"."events"
+  WHERE (("events"."id" = "event_invitations"."event_id") AND ("events"."coordinator_id" = "auth"."uid"())))) OR (EXISTS ( SELECT 1
+   FROM "public"."event_participants"
+  WHERE (("event_participants"."event_id" = "event_invitations"."event_id") AND ("event_participants"."user_id" = "auth"."uid"()) AND ("event_participants"."can_invite" = true))))));
+
+
+
+CREATE POLICY "event_invitations_select" ON "public"."event_invitations" FOR SELECT USING ((("inviter_id" = "auth"."uid"()) OR ("invitee_id" = "auth"."uid"())));
+
+
+
+CREATE POLICY "event_invitations_update" ON "public"."event_invitations" FOR UPDATE USING ((("inviter_id" = "auth"."uid"()) OR ("invitee_id" = "auth"."uid"())));
+
+
+
+ALTER TABLE "public"."event_participants" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "event_participants_delete" ON "public"."event_participants" FOR DELETE USING ((EXISTS ( SELECT 1
+   FROM "public"."events"
+  WHERE (("events"."id" = "event_participants"."event_id") AND ("events"."coordinator_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "event_participants_insert" ON "public"."event_participants" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."events"
+  WHERE (("events"."id" = "event_participants"."event_id") AND ("events"."coordinator_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "event_participants_select" ON "public"."event_participants" FOR SELECT USING ((("user_id" = "auth"."uid"()) OR "public"."is_event_participant"("event_id", "auth"."uid"())));
+
+
+
+CREATE POLICY "event_participants_update_self" ON "public"."event_participants" FOR UPDATE USING (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."events" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "events_delete" ON "public"."events" FOR DELETE USING (("coordinator_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "events_insert" ON "public"."events" FOR INSERT WITH CHECK (("coordinator_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "events_select" ON "public"."events" FOR SELECT USING ((("coordinator_id" = "auth"."uid"()) OR "public"."is_event_participant"("id", "auth"."uid"())));
+
+
+
+CREATE POLICY "events_update" ON "public"."events" FOR UPDATE USING (("coordinator_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."notifications" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "notifications_select_own" ON "public"."notifications" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "notifications_update_own" ON "public"."notifications" FOR UPDATE USING (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."preferred_slots" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "preferred_slots_select" ON "public"."preferred_slots" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."event_participants"
+  WHERE (("event_participants"."event_id" = "preferred_slots"."event_id") AND ("event_participants"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "preferred_slots_write_own" ON "public"."preferred_slots" USING (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "profiles_select_own" ON "public"."profiles" FOR SELECT USING (("auth"."uid"() = "id"));
+
+
+
+CREATE POLICY "profiles_update_own" ON "public"."profiles" FOR UPDATE USING (("auth"."uid"() = "id"));
+
+
+
+ALTER TABLE "public"."proposed_time_notes" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "proposed_time_notes_delete" ON "public"."proposed_time_notes" FOR DELETE USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "proposed_time_notes_insert" ON "public"."proposed_time_notes" FOR INSERT WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "proposed_time_notes_realtime_select" ON "public"."proposed_time_notes" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM ("public"."event_participants" "ep"
+     JOIN "public"."events" "e" ON (("e"."id" = "ep"."event_id")))
+  WHERE ((("e"."uid")::"text" = "proposed_time_notes"."event_uid") AND ("ep"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "proposed_time_notes_select" ON "public"."proposed_time_notes" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM ("public"."proposed_times" "pt"
+     JOIN "public"."event_participants" "ep" ON (("ep"."event_id" = "pt"."event_id")))
+  WHERE (("pt"."id" = "proposed_time_notes"."proposed_time_id") AND ("ep"."user_id" = "auth"."uid"())))));
+
+
+
+ALTER TABLE "public"."proposed_times" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "proposed_times_select" ON "public"."proposed_times" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."event_participants"
+  WHERE (("event_participants"."event_id" = "proposed_times"."event_id") AND ("event_participants"."user_id" = "auth"."uid"())))));
+
+
+
+
+
+-- ============================================================
+-- REALTIME — replica identity, publication, cross-schema policies
+-- ============================================================
+
+ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
+
+
+
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."busy_slots";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."event_participants";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."events";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."notifications";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."preferred_slots";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."proposed_time_notes";
+
+
+
+-- RLS policies for realtime.messages (pg_dump cannot capture cross-schema objects)
+CREATE POLICY "anon can receive broadcasts"
+  ON "realtime"."messages" FOR SELECT TO "anon" USING (true);
+
+CREATE POLICY "anon can send broadcasts"
+  ON "realtime"."messages" FOR INSERT TO "anon" WITH CHECK (true);
+
+
+
+-- ============================================================
+-- GRANTS
+-- ============================================================
+
+GRANT USAGE ON SCHEMA "public" TO "postgres";
+GRANT USAGE ON SCHEMA "public" TO "anon";
+GRANT USAGE ON SCHEMA "public" TO "authenticated";
+GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+GRANT ALL ON FUNCTION "public"."broadcast_event_changes"() TO "anon";
+GRANT ALL ON FUNCTION "public"."broadcast_event_changes"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."broadcast_event_changes"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."broadcast_notification_changes"() TO "anon";
+GRANT ALL ON FUNCTION "public"."broadcast_notification_changes"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."broadcast_notification_changes"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."broadcast_participant_changes"() TO "anon";
+GRANT ALL ON FUNCTION "public"."broadcast_participant_changes"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."broadcast_participant_changes"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."broadcast_preferred_slots_changes"() TO "anon";
+GRANT ALL ON FUNCTION "public"."broadcast_preferred_slots_changes"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."broadcast_preferred_slots_changes"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."busy_slots_broadcast_trigger"() TO "anon";
+GRANT ALL ON FUNCTION "public"."busy_slots_broadcast_trigger"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."busy_slots_broadcast_trigger"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."event_participants_broadcast_trigger"() TO "anon";
+GRANT ALL ON FUNCTION "public"."event_participants_broadcast_trigger"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."event_participants_broadcast_trigger"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "anon";
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."handle_preferred_slots_broadcast"() TO "anon";
+GRANT ALL ON FUNCTION "public"."handle_preferred_slots_broadcast"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."handle_preferred_slots_broadcast"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."is_event_participant"("p_event_id" "uuid", "p_user_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."is_event_participant"("p_event_id" "uuid", "p_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."is_event_participant"("p_event_id" "uuid", "p_user_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."notifications_broadcast_trigger"() TO "anon";
+GRANT ALL ON FUNCTION "public"."notifications_broadcast_trigger"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."notifications_broadcast_trigger"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."preferred_slots_broadcast_trigger"() TO "anon";
+GRANT ALL ON FUNCTION "public"."preferred_slots_broadcast_trigger"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."preferred_slots_broadcast_trigger"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."proposed_time_notes_broadcast_trigger"() TO "anon";
+GRANT ALL ON FUNCTION "public"."proposed_time_notes_broadcast_trigger"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."proposed_time_notes_broadcast_trigger"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."set_updated_at"() TO "anon";
+GRANT ALL ON FUNCTION "public"."set_updated_at"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_updated_at"() TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+GRANT ALL ON TABLE "public"."busy_slots" TO "anon";
+GRANT ALL ON TABLE "public"."busy_slots" TO "authenticated";
+GRANT ALL ON TABLE "public"."busy_slots" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."calendar_accounts" TO "anon";
+GRANT ALL ON TABLE "public"."calendar_accounts" TO "authenticated";
+GRANT ALL ON TABLE "public"."calendar_accounts" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."calendar_sources" TO "anon";
+GRANT ALL ON TABLE "public"."calendar_sources" TO "authenticated";
+GRANT ALL ON TABLE "public"."calendar_sources" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."event_invitations" TO "anon";
+GRANT ALL ON TABLE "public"."event_invitations" TO "authenticated";
+GRANT ALL ON TABLE "public"."event_invitations" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."event_participants" TO "anon";
+GRANT ALL ON TABLE "public"."event_participants" TO "authenticated";
+GRANT ALL ON TABLE "public"."event_participants" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."events" TO "anon";
+GRANT ALL ON TABLE "public"."events" TO "authenticated";
+GRANT ALL ON TABLE "public"."events" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."notifications" TO "anon";
+GRANT ALL ON TABLE "public"."notifications" TO "authenticated";
+GRANT ALL ON TABLE "public"."notifications" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."preferred_slots" TO "anon";
+GRANT ALL ON TABLE "public"."preferred_slots" TO "authenticated";
+GRANT ALL ON TABLE "public"."preferred_slots" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."profiles" TO "anon";
+GRANT ALL ON TABLE "public"."profiles" TO "authenticated";
+GRANT ALL ON TABLE "public"."profiles" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."proposed_time_notes" TO "anon";
+GRANT ALL ON TABLE "public"."proposed_time_notes" TO "authenticated";
+GRANT ALL ON TABLE "public"."proposed_time_notes" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."proposed_times" TO "anon";
+GRANT ALL ON TABLE "public"."proposed_times" TO "authenticated";
+GRANT ALL ON TABLE "public"."proposed_times" TO "service_role";
+
+
+
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
