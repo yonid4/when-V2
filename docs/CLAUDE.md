@@ -238,7 +238,6 @@ Note: `proposed_time_notes` uses a **separate channel** (`proposal-notes-subs-${
 
 - Do not use Gemini or any AI API for proposals — use the deterministic algorithm only
 - Do not add Microsoft OAuth, Microsoft Graph API, or Teams integration — deferred to a future version
-- Do not use Docker — local dev only for now
 - Do not use SQLAlchemy or any ORM — use the Supabase Python client directly
 - Do not put secrets in frontend code — only `NEXT_PUBLIC_*` vars are safe to expose
 - Do not bypass RLS by using service_client in a route handler
