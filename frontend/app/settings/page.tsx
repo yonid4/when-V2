@@ -1,5 +1,7 @@
 'use client'
 
+export const dynamic = 'force-dynamic'
+
 import { useSearchParams } from 'next/navigation'
 import { Calendar, Plus, Trash2, RefreshCw, X } from 'lucide-react'
 import { useState } from 'react'
