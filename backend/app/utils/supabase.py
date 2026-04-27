@@ -4,15 +4,20 @@ from app.config import settings
 
 
 def _force_http1(client: Client) -> Client:
-    """Replace the postgrest session's transport with an HTTP/1.1-only client.
+    """Replace the postgrest session transport with HTTP/1.1.
 
-    supabase-py 2.x uses httpx internally via postgrest-py. When the h2 package
-    is installed httpx defaults to HTTP/2, which causes Supabase's PostgREST to
-    drop connections mid-stream (RemoteProtocolError). Forcing HTTP/1.1 here
-    prevents that without touching any router or service code.
+    postgrest-py hardcodes http2=True in create_session. When h2 is installed
+    Supabase's PostgREST drops connections mid-stream (RemoteProtocolError).
+    We rebuild the session with http2=False, preserving base_url and headers.
     """
-    http1_client = httpx.Client(http2=False)
-    client.postgrest._session = http1_client
+    old = client.postgrest.session
+    client.postgrest.session = httpx.Client(
+        base_url=old.base_url,
+        headers=dict(old.headers),
+        timeout=old.timeout,
+        follow_redirects=True,
+        http2=False,
+    )
     return client
 
 
