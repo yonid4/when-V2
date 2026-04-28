@@ -451,7 +451,8 @@ CREATE TABLE IF NOT EXISTS "public"."calendar_accounts" (
     "provider_account_id" character varying(255) NOT NULL,
     "credentials" "jsonb" NOT NULL,
     "connected_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "last_synced_at" timestamp with time zone
+    "last_synced_at" timestamp with time zone,
+    "needs_reauth" boolean DEFAULT false NOT NULL
 );
 
 

@@ -1,9 +1,10 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
+from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 
-from app.utils.google_auth import credentials_from_dict
+from app.utils.google_auth import credentials_from_dict, mark_account_needs_reauth
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -45,12 +46,21 @@ def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
             logger.error("Failed to build calendar service for account %s: %s", account["id"], exc)
             continue
 
-        for source in account.get("calendar_sources") or []:
-            if not source["is_enabled"]:
-                continue
-            total += _sync_source(
-                user_id, source["id"], source["calendar_id"], cal_service, time_min, time_max
+        try:
+            for source in account.get("calendar_sources") or []:
+                if not source["is_enabled"]:
+                    continue
+                total += _sync_source(
+                    user_id, source["id"], source["calendar_id"], cal_service, time_min, time_max
+                )
+        except RefreshError as exc:
+            logger.warning(
+                "Google refresh token invalid for account %s — marking needs_reauth: %s",
+                account["id"],
+                exc,
             )
+            mark_account_needs_reauth(account["id"])
+            continue
 
         # Persist refreshed credentials if the token was renewed during the API call
         if credentials.token and credentials.token != original_token:
@@ -168,6 +178,9 @@ def _sync_source(
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
+    except RefreshError:
+        # Bubble up so _sync_user can mark the account as needs_reauth.
+        raise
     except Exception as exc:
         logger.error("Failed to fetch events for calendar %s: %s", calendar_id, exc)
         return 0

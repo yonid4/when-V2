@@ -35,7 +35,8 @@ def post_finalize(
         if exc.status_code == 502:
             raise HTTPException(status_code=502, detail="calendar_create_failed")
         if exc.status_code == 422:
-            raise HTTPException(status_code=422, detail="no_write_calendar")
+            # Preserve specific detail (no_write_calendar vs calendar_credentials_expired)
+            raise HTTPException(status_code=422, detail=exc.detail or "no_write_calendar")
         raise
     return updated_event
 
