@@ -8,6 +8,7 @@ import { User } from '@/types'
 
 function AuthRehydrator() {
   const setUser = useAuthStore((s) => s.setUser)
+  const clearAuth = useAuthStore((s) => s.clearAuth)
   const user = useAuthStore((s) => s.user)
 
   useEffect(() => {
@@ -17,7 +18,7 @@ function AuthRehydrator() {
     api.get<User>('/auth/me').then((fetchedUser) => {
       setUser(fetchedUser, token)
     }).catch(() => {
-      localStorage.removeItem('token')
+      clearAuth()
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

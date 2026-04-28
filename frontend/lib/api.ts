@@ -1,5 +1,7 @@
 'use client'
 
+import { useAuthStore } from '@/stores/authStore'
+
 const API_BASE = '/api'
 
 function getToken(): string | null {
@@ -25,7 +27,7 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown): Pro
   })
 
   if (res.status === 401) {
-    localStorage.removeItem('token')
+    useAuthStore.getState().clearAuth()
     if (window.location.pathname !== '/') {
       window.location.href = '/'
     }
@@ -34,7 +36,10 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown): Pro
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: 'Request failed' }))
-    throw new Error(error.detail ?? 'Request failed')
+    const detail = error.detail ?? 'Request failed'
+    const err = new Error(detail) as Error & { detail?: string }
+    err.detail = detail
+    throw err
   }
 
   // Handle 204 No Content
