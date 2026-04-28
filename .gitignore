@@ -49,3 +49,7 @@ Thumbs.db
 
 # Supabase CLI
 supabase/.temp/
+
+# Claude
+.claude/worktrees/
+.claude/settings.local.json
