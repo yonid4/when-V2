@@ -113,6 +113,7 @@ export interface CalendarAccount {
   provider_account_id: string
   connected_at: string
   last_synced_at: string | null
+  needs_reauth: boolean
   sources: CalendarSource[]
 }
 

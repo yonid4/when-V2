@@ -3,9 +3,10 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
-import { Settings, LogOut } from 'lucide-react'
+import { Settings, LogOut, AlertTriangle } from 'lucide-react'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { useAuthStore } from '@/stores/authStore'
+import { useCalendarAccounts, useConnectCalendarAccount } from '@/hooks/useCalendarAccounts'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -16,6 +17,19 @@ export function Navbar() {
   const router = useRouter()
   const user = useAuthStore((s) => s.user)
   const clearAuth = useAuthStore((s) => s.clearAuth)
+  const { data: accounts = [] } = useCalendarAccounts()
+  const connectCalendar = useConnectCalendarAccount()
+  const staleAccounts = accounts.filter((a) => a.needs_reauth)
+  const showReauthPill = user && staleAccounts.length > 0
+  const reauthLabel = staleAccounts.length > 1 ? 'Reconnect Calendars' : 'Reconnect Calendar'
+
+  async function handleReauthClick() {
+    if (staleAccounts.length > 1) {
+      router.push('/settings')
+      return
+    }
+    await connectCalendar()
+  }
 
   const avatarLetter = user
     ? (user.full_name?.trim() || user.email_address).charAt(0).toUpperCase()
@@ -45,6 +59,21 @@ export function Navbar() {
           <img src="/navbar_logo.png" alt="When." className="h-13 w-auto object-contain" />
         </Link>
         <div className="flex items-center gap-3">
+          {showReauthPill && (
+            <button
+              type="button"
+              onClick={handleReauthClick}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-error-container text-on-error-container text-xs font-semibold hover:opacity-90 transition-opacity"
+              title={
+                staleAccounts.length > 1
+                  ? 'Multiple calendars need reconnection — open Settings'
+                  : `Reconnect ${staleAccounts[0]?.provider_email ?? 'calendar'}`
+              }
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              {reauthLabel}
+            </button>
+          )}
           <NotificationBell />
           {user && (
             <DropdownMenu>
