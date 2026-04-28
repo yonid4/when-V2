@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { X, CalendarCheck, Plus } from 'lucide-react'
+import { X, CalendarCheck, Plus, RotateCw } from 'lucide-react'
 import { useFinalize } from '@/hooks/useFinalize'
+import { useConnectCalendarAccount } from '@/hooks/useCalendarAccounts'
 import { formatDayLabel, formatTime } from '@/lib/dates'
 import type { Event, Participant, ProposalResponse } from '@/types'
 
@@ -30,8 +31,10 @@ export function FinalizeCard({
   const [location, setLocation] = useState(event.location ?? '')
   const [videoCallLink, setVideoCallLink] = useState(event.video_call_link ?? '')
   const [apiError, setApiError] = useState<string | null>(null)
+  const [showReconnect, setShowReconnect] = useState(false)
 
   const { mutate: finalize, isPending } = useFinalize(event.uid)
+  const connectCalendar = useConnectCalendarAccount()
 
   function toggleParticipant(userId: string) {
     setExcludedUserIds((prev) => {
@@ -67,6 +70,7 @@ export function FinalizeCard({
     if (!selectedProposalId) return
     if (!name.trim()) return
     setApiError(null)
+    setShowReconnect(false)
     finalize(
       {
         proposed_time_id: selectedProposalId,
@@ -84,7 +88,10 @@ export function FinalizeCard({
         },
         onError: (err: unknown) => {
           const detail = (err as { detail?: string })?.detail
-          if (detail === 'calendar_create_failed') {
+          if (detail === 'calendar_credentials_expired') {
+            setApiError('Your Google Calendar connection expired. Please reconnect and try again.')
+            setShowReconnect(true)
+          } else if (detail === 'calendar_create_failed') {
             setApiError('Could not create calendar event — check your calendar connection and try again')
           } else if (detail === 'no_write_calendar') {
             setApiError('No write calendar configured — go to Settings to set one')
@@ -286,7 +293,19 @@ export function FinalizeCard({
 
           {/* Error */}
           {apiError && (
-            <p className="text-sm text-error font-medium">{apiError}</p>
+            <div className="space-y-2">
+              <p className="text-sm text-error font-medium">{apiError}</p>
+              {showReconnect && (
+                <button
+                  type="button"
+                  onClick={() => connectCalendar()}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-on-primary text-sm font-semibold hover:opacity-90 transition-opacity"
+                >
+                  <RotateCw className="w-4 h-4" />
+                  Reconnect Google Calendar
+                </button>
+              )}
+            </div>
           )}
         </div>
 

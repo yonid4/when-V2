@@ -3,7 +3,7 @@
 export const dynamic = 'force-dynamic'
 
 import { useSearchParams } from 'next/navigation'
-import { Calendar, Plus, Trash2, RefreshCw, X } from 'lucide-react'
+import { Calendar, Plus, Trash2, RefreshCw, X, AlertTriangle, RotateCw } from 'lucide-react'
 import { useState } from 'react'
 import { useCalendarAccounts, useDisconnectCalendarAccount, useUpdateCalendarSource, useConnectCalendarAccount } from '@/hooks/useCalendarAccounts'
 import { formatDateTime } from '@/lib/dates'
@@ -72,16 +72,33 @@ export default function SettingsPage() {
                       <div>
                         <h3 className="font-bold text-lg capitalize">{account.provider} Calendar</h3>
                         <p className="text-sm text-on-surface-variant">{account.provider_email}</p>
+                        {account.needs_reauth && (
+                          <p className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-error">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            Reconnection required
+                          </p>
+                        )}
                       </div>
                     </div>
-                    <button
-                      onClick={() => disconnect.mutate(account.id)}
-                      disabled={disconnect.isPending}
-                      className="px-5 py-2 text-sm font-semibold text-error bg-error-container/30 hover:bg-error-container/50 rounded-full transition-colors duration-300 disabled:opacity-60 flex items-center gap-2"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Disconnect
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {account.needs_reauth && (
+                        <button
+                          onClick={handleConnectCalendar}
+                          className="px-5 py-2 text-sm font-semibold text-on-primary bg-primary hover:opacity-90 rounded-full transition-opacity duration-300 flex items-center gap-2"
+                        >
+                          <RotateCw className="w-4 h-4" />
+                          Reconnect
+                        </button>
+                      )}
+                      <button
+                        onClick={() => disconnect.mutate(account.id)}
+                        disabled={disconnect.isPending}
+                        className="px-5 py-2 text-sm font-semibold text-error bg-error-container/30 hover:bg-error-container/50 rounded-full transition-colors duration-300 disabled:opacity-60 flex items-center gap-2"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Disconnect
+                      </button>
+                    </div>
                   </div>
 
                   {/* Calendar sources */}

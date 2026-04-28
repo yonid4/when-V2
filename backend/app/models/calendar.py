@@ -27,6 +27,7 @@ class CalendarAccountResponse(BaseModel):
     provider_account_id: str
     connected_at: str | None = None
     last_synced_at: str | None = None
+    needs_reauth: bool = False
     sources: list[CalendarSourceResponse] = []
 
 

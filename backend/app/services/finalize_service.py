@@ -3,11 +3,16 @@
 import logging
 
 from fastapi import HTTPException
+from google.auth.exceptions import RefreshError
 
 from app.models.user import User
 from app.services.event_service import fetch_event_by_uid
 from app.utils.notifications import create_notifications
-from app.utils.google_auth import create_calendar_event, credentials_from_dict
+from app.utils.google_auth import (
+    create_calendar_event,
+    credentials_from_dict,
+    mark_account_needs_reauth,
+)
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -159,6 +164,7 @@ def finalize_event(
         raise HTTPException(status_code=422, detail="no_write_calendar")
 
     creds_data = creds_result.data.get("credentials") or {}
+    calendar_account_id = creds_result.data["id"]
     credentials = credentials_from_dict(creds_data)
 
     # 6. Build attendees list.
@@ -238,6 +244,14 @@ def finalize_event(
     # 7. Create Google Calendar event — DO NOT update DB if this fails
     try:
         google_event_id = create_calendar_event(credentials, write_calendar["calendar_id"], event_body)
+    except RefreshError as exc:
+        logger.warning(
+            "Google refresh token invalid during finalization for account %s: %s",
+            calendar_account_id,
+            exc,
+        )
+        mark_account_needs_reauth(calendar_account_id)
+        raise HTTPException(status_code=422, detail="calendar_credentials_expired")
     except Exception as exc:
         logger.error("Google Calendar API error during finalization: %s", exc)
         raise HTTPException(status_code=502, detail="calendar_create_failed")

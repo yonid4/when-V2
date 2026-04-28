@@ -49,6 +49,7 @@ def connect_google_account(
                     "access_token": credentials.token,
                     "refresh_token": credentials.refresh_token,
                 },
+                "needs_reauth": False,
             },
             on_conflict="user_id,provider,provider_account_id",
         )

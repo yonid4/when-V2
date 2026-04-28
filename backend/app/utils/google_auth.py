@@ -1,10 +1,14 @@
 """Shared Google OAuth and Calendar API helpers used across services."""
 
+import logging
+
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 SCOPES = [
     "openid",
@@ -69,3 +73,19 @@ def credentials_from_dict(creds_data: dict) -> Credentials:
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
     )
+
+
+def mark_account_needs_reauth(account_id: str) -> None:
+    """Flip needs_reauth=true on a calendar_accounts row.
+
+    Called when Google refuses to refresh the access token (revoked grant,
+    expired refresh token, password change, etc).
+    """
+    from app.utils.supabase import service_client
+
+    try:
+        service_client.table("calendar_accounts").update(
+            {"needs_reauth": True}
+        ).eq("id", account_id).execute()
+    except Exception as exc:
+        logger.error("Failed to mark account %s as needs_reauth: %s", account_id, exc)
