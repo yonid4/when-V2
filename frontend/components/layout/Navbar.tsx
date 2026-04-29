@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { Settings, LogOut, AlertTriangle } from 'lucide-react'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { useAuthStore } from '@/stores/authStore'
-import { useCalendarAccounts, useConnectCalendarAccount } from '@/hooks/useCalendarAccounts'
+import { useCalendarAccounts } from '@/hooks/useCalendarAccounts'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -18,17 +18,12 @@ export function Navbar() {
   const user = useAuthStore((s) => s.user)
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const { data: accounts = [] } = useCalendarAccounts()
-  const connectCalendar = useConnectCalendarAccount()
   const staleAccounts = accounts.filter((a) => a.needs_reauth)
   const showReauthPill = user && staleAccounts.length > 0
   const reauthLabel = staleAccounts.length > 1 ? 'Reconnect Calendars' : 'Reconnect Calendar'
 
-  async function handleReauthClick() {
-    if (staleAccounts.length > 1) {
-      router.push('/settings')
-      return
-    }
-    await connectCalendar()
+  function handleReauthClick() {
+    router.push('/settings')
   }
 
   const avatarLetter = user
@@ -63,7 +58,7 @@ export function Navbar() {
             <button
               type="button"
               onClick={handleReauthClick}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-error-container text-on-error-container text-xs font-semibold hover:opacity-90 transition-opacity"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-error-container text-on-error-container text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
               title={
                 staleAccounts.length > 1
                   ? 'Multiple calendars need reconnection — open Settings'
