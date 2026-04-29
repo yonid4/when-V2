@@ -766,6 +766,10 @@ CREATE INDEX "notifications_user_unread_idx" ON "public"."notifications" USING "
 
 
 
+CREATE UNIQUE INDEX IF NOT EXISTS "notifications_unique_pending_invitation" ON "public"."notifications" ("user_id", "event_id") WHERE ("notification_type" = 'event_invitation' AND "action_taken" = false);
+
+
+
 CREATE INDEX "preferred_slots_event_id_idx" ON "public"."preferred_slots" USING "btree" ("event_id");
 
 

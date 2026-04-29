@@ -10,6 +10,7 @@ confirming the policy fires correctly.
 """
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -76,6 +77,84 @@ class TestNotificationsRLS:
             assert injected.data == [], "Alice should not be able to insert notifications for Bob"
         except Exception:
             pass  # Any exception is also acceptable — RLS blocked the write
+
+    def test_unique_index_blocks_duplicate_pending_invite(
+        self, alice: IntegrationUser, bob: IntegrationUser
+    ):
+        """The notifications_unique_pending_invitation partial index must reject
+        a second event_invitation row for the same (user_id, event_id) while
+        action_taken is still false.
+
+        Requires the migration in
+        supabase/migrations/20260429210451_notifications_unique_pending_invitation.sql
+        to be applied to the test database.
+        """
+        now = datetime.now(timezone.utc)
+        event_uid = uuid.uuid4().hex[:10]
+        event = service_client.table("events").insert({
+            "uid": event_uid,
+            "name": "Unique Index Test",
+            "event_type": "meeting",
+            "coordinator_id": alice.id,
+            "earliest_datetime_utc": now.isoformat(),
+            "latest_datetime_utc": (now + timedelta(days=7)).isoformat(),
+            "duration_minutes": 30,
+            "status": "planning",
+            "proposals_needs_regeneration": False,
+        }).execute().data[0]
+        event_id = event["id"]
+
+        try:
+            # First insert succeeds
+            service_client.table("notifications").insert({
+                "user_id": bob.id,
+                "event_id": event_id,
+                "notification_type": "event_invitation",
+                "title": "First invite",
+                "message": "First",
+                "is_read": False,
+                "action_taken": False,
+            }).execute()
+
+            # Second insert with same (user_id, event_id) must fail with 23505
+            duplicate_blocked = False
+            try:
+                service_client.table("notifications").insert({
+                    "user_id": bob.id,
+                    "event_id": event_id,
+                    "notification_type": "event_invitation",
+                    "title": "Duplicate invite",
+                    "message": "Duplicate",
+                    "is_read": False,
+                    "action_taken": False,
+                }).execute()
+            except Exception as exc:
+                # PostgREST surfaces unique violations as 23505 / "duplicate key"
+                msg = str(exc)
+                duplicate_blocked = "23505" in msg or "duplicate" in msg.lower() or "unique" in msg.lower()
+
+            assert duplicate_blocked, (
+                "Duplicate pending event_invitation should be rejected by "
+                "notifications_unique_pending_invitation index"
+            )
+
+            # After actioning the first row, a re-invitation IS allowed
+            service_client.table("notifications").update(
+                {"action_taken": True, "action_type": "decline"}
+            ).eq("user_id", bob.id).eq("event_id", event_id).execute()
+
+            service_client.table("notifications").insert({
+                "user_id": bob.id,
+                "event_id": event_id,
+                "notification_type": "event_invitation",
+                "title": "Re-invite",
+                "message": "Re-invited",
+                "is_read": False,
+                "action_taken": False,
+            }).execute()  # should NOT raise
+        finally:
+            # Clean up event — notifications cascade via FK on event_id
+            service_client.table("events").delete().eq("id", event_id).execute()
 
 
 # ─── Calendar accounts ────────────────────────────────────────────────────────
