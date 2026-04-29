@@ -1,6 +1,7 @@
 """Shared Google OAuth and Calendar API helpers used across services."""
 
 import logging
+from datetime import datetime, timezone
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -72,7 +73,27 @@ def credentials_from_dict(creds_data: dict) -> Credentials:
         token_uri="https://oauth2.googleapis.com/token",
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
+        expiry=_parse_expiry(creds_data.get("expiry")),
     )
+
+
+def _parse_expiry(value):
+    """Parse a stored expiry string into a naive UTC datetime.
+
+    The Google library compares expiry against ``datetime.utcnow()`` (naive),
+    so any tz-aware value must be normalised to naive UTC before being passed
+    to the ``Credentials`` constructor.
+    """
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        logger.warning("Could not parse stored credential expiry %r: %s", value, exc)
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 def mark_account_needs_reauth(account_id: str) -> None:

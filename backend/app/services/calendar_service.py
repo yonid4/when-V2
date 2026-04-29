@@ -48,6 +48,7 @@ def connect_google_account(
                 "credentials": {
                     "access_token": credentials.token,
                     "refresh_token": credentials.refresh_token,
+                    "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
                 },
                 "needs_reauth": False,
             },
