@@ -13,6 +13,7 @@ export function useSyncCalendar(uid: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: eventBusySlotsKey(uid) })
       queryClient.invalidateQueries({ queryKey: availabilitySegmentsKey(uid) })
+      queryClient.invalidateQueries({ queryKey: ['calendar-accounts'] })
     },
   })
 }
@@ -24,6 +25,7 @@ export function useSyncMyCalendar() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['busy-slots'] })
       queryClient.invalidateQueries({ queryKey: ['availability-segments'] })
+      queryClient.invalidateQueries({ queryKey: ['calendar-accounts'] })
     },
   })
 }
