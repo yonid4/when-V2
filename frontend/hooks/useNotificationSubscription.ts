@@ -1,10 +1,8 @@
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
-import { useNotificationStore } from '@/stores/notificationStore'
 
 export function useNotificationSubscription(userId: string | undefined) {
-  const { increment } = useNotificationStore()
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -16,7 +14,10 @@ export function useNotificationSubscription(userId: string | undefined) {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
         () => {
-          increment()
+          // Single source of truth: refetch and let NotificationBell's effect
+          // recompute the unread count from the server payload. Avoids the
+          // double-counting that an optimistic increment + refetch would cause
+          // (especially under React StrictMode in dev where effects run twice).
           queryClient.invalidateQueries({ queryKey: ['notifications'] })
         },
       )
@@ -25,5 +26,5 @@ export function useNotificationSubscription(userId: string | undefined) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [userId, increment, queryClient])
+  }, [userId, queryClient])
 }

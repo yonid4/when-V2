@@ -17,18 +17,29 @@ vi.mock('@/stores/authStore', () => ({
   useAuthStore: vi.fn(),
 }))
 
+// Capture the channel handler so a test can simulate a realtime INSERT.
+const capturedChannelHandlers: Array<(...args: any[]) => void> = []
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {
-    channel: vi.fn(() => ({
-      on: vi.fn().mockReturnThis(),
-      subscribe: vi.fn(),
-    })),
+    channel: vi.fn(() => {
+      const ch: any = {
+        on: vi.fn((_event: string, _filter: any, handler: (...args: any[]) => void) => {
+          capturedChannelHandlers.push(handler)
+          return ch
+        }),
+        subscribe: vi.fn(() => ch),
+      }
+      return ch
+    }),
     removeChannel: vi.fn(),
   },
 }))
 
+const mockInvalidateQueries = vi.fn()
+
 vi.mock('@tanstack/react-query', () => ({
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
   useQuery: vi.fn(),
   useMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }))
@@ -80,6 +91,7 @@ describe('NotificationBell — unread count initialization', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    capturedChannelHandlers.length = 0
     vi.mocked(useAuthStore).mockReturnValue({ id: 'user-1', email_address: 'alice@example.com' } as any)
     vi.mocked(useNotificationStore).mockReturnValue({
       unreadCount: 0,
@@ -122,5 +134,25 @@ describe('NotificationBell — unread count initialization', () => {
 
     // The useEffect guards on `if (!notifications) return`
     expect(mockSetCount).not.toHaveBeenCalled()
+  })
+
+  it('realtime INSERT callback invalidates the query but does NOT call increment (avoids double-count under StrictMode)', () => {
+    vi.mocked(useNotifications).mockReturnValue({ data: [], isLoading: false } as any)
+
+    render(<NotificationBell />)
+
+    // The subscription effect ran and registered exactly one handler
+    expect(capturedChannelHandlers.length).toBeGreaterThanOrEqual(1)
+    const handler = capturedChannelHandlers[0]
+
+    mockInvalidateQueries.mockClear()
+    mockIncrement.mockClear()
+
+    // Simulate a realtime INSERT payload
+    handler({ eventType: 'INSERT', new: { id: 'new-notif', is_read: false } })
+
+    // Refetch is the single source of truth — increment must not be called
+    expect(mockIncrement).not.toHaveBeenCalled()
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['notifications'] })
   })
 })
