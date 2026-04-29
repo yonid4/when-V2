@@ -144,12 +144,19 @@ def _upsert_calendar_account(user_id: str, user_info: dict, credentials: Credent
 
 
 def _process_pending_invitations(user_id: str, email: str) -> None:
-    """Find pending event_invitations by email, link the new user and notify them."""
+    """Find pending event_invitations by email, link the new user and notify them.
+
+    Only processes invitations where invitee_id is NULL — i.e. ones we have not
+    linked to a user yet. After the first run for a given invite, invitee_id is
+    populated and the row is excluded from subsequent calls, which makes this
+    function idempotent across re-logins while the invitation is still pending.
+    """
     pending = (
         service_client.table("event_invitations")
         .select("*, events(name)")
         .eq("invitee_email", email)
         .eq("status", "pending")
+        .is_("invitee_id", "null")
         .execute()
     )
     if not pending.data:
@@ -165,7 +172,11 @@ def _process_pending_invitations(user_id: str, email: str) -> None:
                 "notification_type": "event_invitation",
                 "title": "You have been invited",
                 "message": f"You have been invited to {invite['events']['name']}.",
-                "metadata": {"event_id": invite["event_id"], "inviter_id": invite["inviter_id"]},
+                "metadata": {
+                    "event_id": invite["event_id"],
+                    "inviter_id": invite["inviter_id"],
+                    "invitation_id": invite["id"],
+                },
             }
         ).execute()
 

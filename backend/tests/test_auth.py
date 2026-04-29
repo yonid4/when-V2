@@ -265,8 +265,9 @@ def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
 
         if table_name == "event_invitations":
             # SELECT returns the pending invite
+            # Chain: select(...).eq(invitee_email).eq(status).is_(invitee_id, null).execute()
             select_chain = MagicMock()
-            select_chain.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+            select_chain.eq.return_value.eq.return_value.is_.return_value.execute.return_value = MagicMock(
                 data=[pending_invite]
             )
             tbl.select.return_value = select_chain
@@ -332,12 +333,98 @@ def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
     assert notif["notification_type"] == "event_invitation"
     assert notif["user_id"] == "new-invited-user-uuid"
     assert notif["event_id"] == "event-uuid-1"
+    # invitation_id must be in metadata so Accept/Decline buttons can resolve it
+    assert notif["metadata"]["invitation_id"] == "invite-uuid-1"
 
     # Invitation status is NOT changed — remains pending
     assert pending_invite["status"] == "pending"
 
     # No participant row is created automatically
     assert len(participants_upserted) == 0
+
+
+# ─── 10b. test_pending_invitations_no_duplicate_on_relogin ───────────────────
+
+@patch("app.services.auth_service.service_client")
+@patch("app.services.auth_service.build_oauth_flow")
+def test_pending_invitations_no_duplicate_on_relogin(mock_build_flow, mock_svc):
+    """Re-login while an invitation is still pending must NOT create a duplicate
+    notification. _process_pending_invitations filters on invitee_id IS NULL,
+    so once linked the row is excluded from the next sweep.
+
+    We simulate this by having the SELECT return an empty list (mirroring the
+    DB behaviour where invitee_id is already populated and therefore excluded
+    by the .is_("invitee_id", "null") filter).
+    """
+    user_info = {
+        "id": "google-account-id",
+        "email": "invited@example.com",
+        "name": "Invited User",
+        "picture": None,
+    }
+
+    mock_flow = MagicMock()
+    mock_flow.credentials = Credentials(token="tok", refresh_token="ref")
+    mock_build_flow.return_value = mock_flow
+
+    notifications_inserted = []
+    invitations_updated = []
+
+    def make_table(table_name):
+        tbl = MagicMock()
+
+        if table_name == "event_invitations":
+            # The is_ filter excludes already-linked rows, so SELECT returns empty
+            select_chain = MagicMock()
+            select_chain.eq.return_value.eq.return_value.is_.return_value.execute.return_value = MagicMock(
+                data=[]
+            )
+            tbl.select.return_value = select_chain
+
+            def capture_update(data):
+                invitations_updated.append(data)
+                chain = MagicMock()
+                chain.eq.return_value.execute.return_value = MagicMock(data=[])
+                return chain
+
+            tbl.update.side_effect = capture_update
+
+        elif table_name == "notifications":
+            def capture_insert(data):
+                notifications_inserted.append(data)
+                chain = MagicMock()
+                chain.execute.return_value = MagicMock(data=[])
+                return chain
+
+            tbl.insert.side_effect = capture_insert
+
+        elif table_name == "profiles":
+            def profile_upsert(data, **kwargs):
+                chain = MagicMock()
+                chain.execute.return_value = MagicMock(data=[])
+                return chain
+
+            tbl.upsert.side_effect = profile_upsert
+
+        else:
+            tbl.upsert.return_value.execute.return_value = MagicMock(data=[])
+            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+        return tbl
+
+    mock_svc.table.side_effect = make_table
+
+    with patch("app.services.auth_service._fetch_google_user_info", return_value=user_info):
+        existing_auth_user = MagicMock()
+        existing_auth_user.user.id = "existing-invited-user-uuid"
+        mock_svc.auth.admin.create_user.return_value = existing_auth_user
+
+        auth_service.exchange_code_and_upsert_user("fake-code")
+
+    # No duplicate notification — invitee_id is already set so the row is excluded
+    assert notifications_inserted == []
+    # No second invitee_id update either
+    assert invitations_updated == []
 
 
 # ─── 11. test_jwt_contains_expected_claims ────────────────────────────────────
