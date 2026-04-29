@@ -96,6 +96,11 @@ def finalize_event(
         raise HTTPException(status_code=404, detail="Event not found")
     event = event_result.data
 
+    # Idempotency guard: refuse to re-finalize an already-confirmed event so we
+    # don't create a second Google Calendar event or duplicate notifications.
+    if event["status"] == "confirmed":
+        raise HTTPException(status_code=409, detail="event_already_finalized")
+
     if event["coordinator_id"] != current_user.id:
         raise HTTPException(status_code=403, detail="Coordinator only")
 

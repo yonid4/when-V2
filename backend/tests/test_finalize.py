@@ -349,6 +349,57 @@ def test_finalize_403_not_coordinator(mock_dep_svc, mock_svc_svc, mock_create_ca
 @patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
+def test_finalize_409_already_confirmed(mock_dep_svc, mock_svc_svc, mock_create_cal):
+    """Returns 409 if the event is already confirmed — no second Google Calendar
+    event is created and no duplicate notifications are inserted."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row(status="confirmed", google_calendar_event_id="gcal-existing-123")
+    notifications_inserted = []
+
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=event_row
+            )
+        elif name == "notifications":
+            def capture_insert(data):
+                notifications_inserted.append(data)
+                chain = MagicMock()
+                chain.execute.return_value = MagicMock(data=[])
+                return chain
+            tbl.insert.side_effect = capture_insert
+        return tbl
+
+    mock_svc_svc.table.side_effect = make_table
+
+    response = client.post(
+        "/api/events/event-uid-1/finalize",
+        json={
+            "proposed_time_id": "pt-uuid-1",
+            "name": "Team Lunch",
+            "note": "",
+            "excluded_user_ids": [],
+            "extra_emails": [],
+            "location": "",
+            "video_call_link": "",
+        },
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "event_already_finalized"
+    # No second Google Calendar event created
+    assert mock_create_cal.call_count == 0
+    # No duplicate notifications inserted
+    assert notifications_inserted == []
+
+
+@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
 def test_finalize_422_no_write_calendar(mock_dep_svc, mock_svc_svc, mock_create_cal):
     """Returns 422 when coordinator has no write calendar configured."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
