@@ -270,6 +270,8 @@ When committing changes:
 
 5. **After approval** — stage each group individually and commit in order. Never use `git add .` or `git add -A`.
 
+6. **Never push unless explicitly told to** — `git push` is never automatic. After committing, stop and wait. Only run `git push` when the user says "push", "push the changes", or similar. Do not push as part of any commit, merge, or "wrap up" step.
+
 ---
 
 ## Reference docs
