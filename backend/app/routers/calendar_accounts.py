@@ -9,7 +9,7 @@ from app.config import settings
 from app.dependencies import get_current_user
 from app.models.calendar import CalendarAccountResponse
 from app.models.user import User
-from app.services import calendar_service
+from app.services import calendar_service, sync_service
 from app.utils.google_auth import build_calendar_flow
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,11 @@ def google_calendar_callback(code: str, state: str):
         return RedirectResponse(
             url=f"{settings.frontend_url}/settings?error=calendar_save_failed"
         )
+
+    try:
+        sync_service.sync_busy_slots(state)
+    except Exception as exc:
+        logger.warning("Auto-sync after calendar connect failed for user %s: %s", state, exc)
 
     return RedirectResponse(url=f"{settings.frontend_url}/settings?connected=true")
 
