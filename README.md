@@ -4,13 +4,14 @@ Group scheduling without the back-and-forth. Create an event, invite participant
 
 ## Key Features
 
-- **Google Calendar sync** — participants connect their Google account once; busy slots are pulled automatically and refreshed hourly in the background
+- **Google Calendar sync** — participants connect their Google account once; busy slots are pulled automatically on connect and refreshed hourly in the background
 - **Availability heatmap** — interactive grid shows where everyone is free across the scheduling window
 - **Preferred-slot marking** — participants swipe to highlight their ideal times, not just their open ones
 - **Smart proposal ranking** — algorithm scores candidate windows by conflict count (ascending) and preferred-slot overlap (descending), surfaces the top 5
 - **Email invitations** — coordinator invites participants by email; invitees receive a join link and RSVP flow
 - **Real-time updates** — Supabase Realtime pushes participant changes, busy-slot syncs, and proposal refreshes live to all viewers
 - **Event finalization** — coordinator picks the winning proposal and closes the event
+- **Credential expiry detection** — expired Google Calendar tokens are detected and the UI prompts the user to reconnect without disrupting other participants
 
 ## Tech Stack
 
@@ -23,10 +24,25 @@ Group scheduling without the back-and-forth. Create an event, invite participant
 
 - Python 3.12
 - Node.js 18+
+- Docker & Docker Compose (optional, for containerised dev)
 - A Supabase project (PostgreSQL database + Realtime enabled)
 - A Google Cloud project with OAuth 2.0 credentials and the Calendar API enabled
 
 ### Installation
+
+**Option A — Docker Compose (recommended)**
+
+Copy the env files, then run a single command:
+
+```bash
+cp backend/.env.example backend/.env   # fill in Supabase keys, Google OAuth credentials, JWT secret
+cp frontend/.env.example frontend/.env # fill in NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
+docker compose up --build
+```
+
+Both services start automatically; the frontend is available at [http://localhost:3000](http://localhost:3000) and the API at [http://localhost:8000](http://localhost:8000).
+
+**Option B — local dev servers**
 
 **Backend**
 
@@ -60,7 +76,13 @@ The project uses Supabase (PostgreSQL). To build the database from scratch:
 
 ## Usage
 
-Run the backend and frontend in separate terminals.
+**Docker Compose**
+
+```bash
+docker compose up --build
+```
+
+**Local dev servers** (two terminals)
 
 ```bash
 # Terminal 1 — API server (port 8000)
@@ -96,7 +118,7 @@ source venv/bin/activate
 pytest tests/ -v
 ```
 
-**Frontend**
+**Frontend** (Vitest)
 
 ```bash
 cd frontend
