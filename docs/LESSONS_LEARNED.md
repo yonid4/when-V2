@@ -786,3 +786,8 @@ Lessons surfaced while fixing React errors `#418` ("hydration failed") and `#423
 
 - **`docker compose down && docker compose up` does NOT rebuild the image.**
   It just restarts the existing container with the same image. To pick up code changes you need an explicit `docker compose build --no-cache <service>` before `up`, OR use `docker compose up --build`. Verify the rebuild actually happened with `docker compose images <service>` — the `CREATED` column should read seconds-ago, not hours-ago. When troubleshooting "I changed the file but the container doesn't see it," this is almost always the cause; the second-most-likely is a stale browser bundle (open DevTools → Network → tick "Disable cache" → reload).
+
+### Frontend — Overlay DOM order
+
+- **`overlayContent` must be rendered AFTER the grid `<div>` in `AvailabilityGrid`, not before it.**
+  In `frontend/components/event/AvailabilityGrid.tsx`, the overlay container is a sibling of the grid div, both inside a `position: relative` parent. DOM order determines stacking context for `position: absolute` siblings — a later sibling naturally paints on top. When `{overlayContent}` was placed before `<div className="grid ...">`, the grid cells were rendered after the overlay and covered it. Moving `{overlayContent}` to after the grid div makes it stack on top without needing any `z-index`. Apply this rule anywhere an overlay must render above a sibling: place it after the sibling in the JSX, not before.
