@@ -42,10 +42,22 @@ describe('middleware', () => {
     expect(res.status).toBe(200)
   })
 
+  it('passes through when accessing /privacy (public path) with no token', () => {
+    const req = makeRequest('/privacy')
+    const res = middleware(req)
+    expect(res.status).toBe(200)
+  })
+
   it('redirects to /dashboard when accessing / with a valid token', () => {
     const req = makeRequest('/', 'some-jwt-token')
     const res = middleware(req)
     expect(res.status).toBe(307)
     expect(res.headers.get('location')).toContain('/dashboard')
+  })
+
+  it('does not redirect when accessing /privacy with a valid token', () => {
+    const req = makeRequest('/privacy', 'some-jwt-token')
+    const res = middleware(req)
+    expect(res.status).toBe(200)
   })
 })

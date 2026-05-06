@@ -42,11 +42,6 @@ vi.mock('next/headers', () => ({
   cookies: vi.fn().mockResolvedValue({ get: () => ({ value: 'test-token' }) }),
 }))
 
-vi.mock('@/app/dashboard/fetchers', () => ({
-  fetchEvents: vi.fn(),
-  fetchCalendarAccounts: vi.fn().mockResolvedValue([]),
-}))
-
 vi.mock('@/components/layout/Navbar', () => ({
   Navbar: () => React.createElement('nav', null, 'Navbar'),
 }))
@@ -74,7 +69,7 @@ vi.mock('@/hooks/useParticipants', () => ({
 
 import { useNotifications } from '@/hooks/useNotifications'
 import { useParticipants } from '@/hooks/useParticipants'
-import { fetchEvents, fetchCalendarAccounts } from '@/app/dashboard/fetchers'
+import { useEvents } from '@/hooks/useEvent'
 import { NotificationList } from '@/components/notifications/NotificationList'
 import { ProposalList } from '@/app/events/[uid]/ProposalList'
 import { ParticipantList } from '@/components/event/ParticipantList'
@@ -92,11 +87,10 @@ function makeWrapper() {
 describe('DashboardPage — empty and error states', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(fetchCalendarAccounts).mockResolvedValue([])
   })
 
   it('shows empty state when no events', async () => {
-    vi.mocked(fetchEvents).mockResolvedValue([])
+    vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useEvents>)
     const jsx = await DashboardPage()
     render(jsx, { wrapper: makeWrapper() })
     expect(screen.getByText('No events yet')).toBeInTheDocument()
@@ -122,7 +116,10 @@ describe('DashboardPage — empty and error states', () => {
       allow_guest_invites: false,
       participants: [],
     }
-    vi.mocked(fetchEvents).mockResolvedValue([mockEvent] as unknown as EventWithParticipants[])
+    vi.mocked(useEvents).mockReturnValue({
+      data: [mockEvent] as unknown as EventWithParticipants[],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useEvents>)
     const jsx = await DashboardPage()
     render(jsx, { wrapper: makeWrapper() })
     expect(screen.getByText('Team Lunch')).toBeInTheDocument()
