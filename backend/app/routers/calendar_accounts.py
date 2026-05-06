@@ -10,7 +10,7 @@ from app.dependencies import get_current_user
 from app.models.calendar import CalendarAccountResponse
 from app.models.user import User
 from app.services import calendar_service, sync_service
-from app.utils.google_auth import build_calendar_flow
+from app.utils.google_auth import TokenRevocationError, build_calendar_flow
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +33,6 @@ def connect_google_url(current_user: User = Depends(get_current_user)):
         include_granted_scopes="false",
     )
     return {"url": auth_url}
-
-
-@router.get("/connect")
-def connect_google(current_user: User = Depends(get_current_user)):
-    flow = build_calendar_flow()
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        prompt="consent",
-        state=current_user.id,
-    )
-    return RedirectResponse(url=auth_url)
 
 
 @router.get("/callback")
@@ -96,6 +85,13 @@ def google_calendar_callback(code: str, state: str):
 
 @router.delete("/{account_id}", status_code=204)
 def disconnect_account(account_id: str, current_user: User = Depends(get_current_user)):
-    ok = calendar_service.disconnect_account(account_id, current_user.id)
+    try:
+        ok = calendar_service.disconnect_account(account_id, current_user.id)
+    except TokenRevocationError as exc:
+        logger.warning("Aborting disconnect for account %s: %s", account_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Could not revoke Google access — please try again in a moment.",
+        )
     if not ok:
         raise HTTPException(status_code=403, detail="Calendar account not found or access denied")

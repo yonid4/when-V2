@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime, timezone
 
+import httpx
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -10,6 +11,12 @@ from googleapiclient.discovery import build
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class TokenRevocationError(Exception):
+    """Raised when Google refuses to revoke a token for a non-recoverable reason
+    (5xx, network timeout, unknown response). The caller must NOT delete the
+    stored credentials — the token may still be valid at Google."""
 
 SCOPES = [
     "openid",
@@ -94,6 +101,40 @@ def _parse_expiry(value):
     if dt.tzinfo is not None:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
+
+
+def revoke_google_token(refresh_token: str | None) -> None:
+    """Revoke a Google OAuth refresh token at the issuer.
+
+    Returns silently if Google confirms the token is revoked or already invalid.
+    Raises :class:`TokenRevocationError` if the response is uncertain — in that
+    case the caller MUST NOT delete the stored credentials, because the token
+    may still be valid at Google and we'd otherwise lose the only way to revoke.
+
+    Args:
+        refresh_token: The refresh token to revoke. ``None`` or empty string
+            is treated as a no-op (nothing to revoke).
+    """
+    if not refresh_token:
+        return
+    try:
+        resp = httpx.post(
+            "https://oauth2.googleapis.com/revoke",
+            params={"token": refresh_token},
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            timeout=10.0,
+        )
+    except httpx.RequestError as exc:
+        raise TokenRevocationError(f"Network error contacting Google revoke: {exc}") from exc
+
+    if resp.status_code == 200:
+        return
+    if resp.status_code == 400 and "invalid_token" in resp.text:
+        logger.info("Token already invalid at Google — treating as revoked.")
+        return
+    raise TokenRevocationError(
+        f"Google revoke failed: status={resp.status_code} body={resp.text!r}"
+    )
 
 
 def mark_account_needs_reauth(account_id: str) -> None:

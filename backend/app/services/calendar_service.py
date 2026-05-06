@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from fastapi import HTTPException, status
 from google.oauth2.credentials import Credentials
@@ -10,7 +9,7 @@ from app.models.calendar import (
     CalendarSourceResponse,
     CalendarSourceUpdate,
 )
-from app.config import settings
+from app.utils.google_auth import revoke_google_token
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -92,15 +91,24 @@ def connect_google_account(
 
 
 def disconnect_account(account_id: str, user_id: str) -> bool:
+    """Disconnect a calendar account.
+
+    Revokes the Google refresh token at the issuer BEFORE deleting the row.
+    If revocation fails for an uncertain reason (network/5xx), raises
+    :class:`TokenRevocationError` and leaves the database untouched so the
+    user can retry — never strands a valid token without a way to revoke it.
+    """
     result = (
         service_client.table("calendar_accounts")
-        .select("id")
+        .select("id, credentials")
         .eq("id", account_id)
         .eq("user_id", user_id)
         .execute()
     )
     if not result.data:
         return False
+    refresh_token = (result.data[0].get("credentials") or {}).get("refresh_token")
+    revoke_google_token(refresh_token)
     service_client.table("calendar_accounts").delete().eq("id", account_id).execute()
     return True
 
@@ -155,25 +163,6 @@ def update_calendar_source(
         .execute()
     )
     return CalendarSourceResponse(**updated.data[0])
-
-
-def get_credentials_for_account(account_id: str) -> Optional[Credentials]:
-    result = (
-        service_client.table("calendar_accounts")
-        .select("credentials")
-        .eq("id", account_id)
-        .execute()
-    )
-    if not result.data:
-        return None
-    creds_data = result.data[0].get("credentials") or {}
-    return Credentials(
-        token=creds_data.get("access_token"),
-        refresh_token=creds_data.get("refresh_token"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=settings.google_client_id,
-        client_secret=settings.google_client_secret,
-    )
 
 
 def _source_from_row(row: dict) -> CalendarSourceResponse:
