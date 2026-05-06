@@ -1,3 +1,5 @@
+import Link from 'next/link'
+
 export const metadata = {
   title: 'Privacy Policy | When.',
 }
@@ -5,6 +7,21 @@ export const metadata = {
 export default function PrivacyPage() {
   return (
     <main className="min-h-screen bg-surface text-on-surface">
+      <nav className="sticky top-0 z-50 border-b border-outline-variant/20 bg-surface/80 backdrop-blur-md">
+        <div className="mx-auto flex w-full max-w-4xl items-center justify-between px-6 py-4">
+          <Link href="/" className="text-2xl font-bold tracking-tight text-primary font-headline">
+            When.
+          </Link>
+          <div className="flex items-center gap-6 text-sm font-medium text-on-surface-variant">
+            <Link href="/privacy" className="text-primary">
+              Privacy
+            </Link>
+            <Link href="/terms" className="hover:text-primary transition-colors">
+              Terms
+            </Link>
+          </div>
+        </div>
+      </nav>
       <div className="mx-auto max-w-4xl px-6 py-16 md:py-20">
         <h1 className="text-4xl font-headline font-extrabold tracking-tight text-primary md:text-5xl">
           Privacy Policy

@@ -1,20 +1,37 @@
+import Link from 'next/link'
+
 export const metadata = {
-    title: 'Terms of Service | When.',
-  }
+  title: 'Terms of Service | When.',
+}
+
+export default function TermsPage() {
+  return (
+    <main className="min-h-screen bg-surface text-on-surface">
+      <nav className="sticky top-0 z-50 border-b border-outline-variant/20 bg-surface/80 backdrop-blur-md">
+        <div className="mx-auto flex w-full max-w-4xl items-center justify-between px-6 py-4">
+          <Link href="/" className="text-2xl font-bold tracking-tight text-primary font-headline">
+            When.
+          </Link>
+          <div className="flex items-center gap-6 text-sm font-medium text-on-surface-variant">
+            <Link href="/privacy" className="hover:text-primary transition-colors">
+              Privacy
+            </Link>
+            <Link href="/terms" className="text-primary">
+              Terms
+            </Link>
+          </div>
+        </div>
+      </nav>
+      <div className="mx-auto max-w-4xl px-6 py-16 md:py-20">
+        <h1 className="text-4xl font-headline font-extrabold tracking-tight text-primary md:text-5xl">
+          Terms of Service
+        </h1>
+        <p className="mt-3 text-sm text-on-surface-variant">Effective Date: May 6, 2026</p>
+        <p className="text-sm text-on-surface-variant">Last Updated: May 6, 2026</p>
+        <p className="text-sm text-on-surface-variant">Application: When. (https://when-now.com)</p>
   
-  export default function TermsPage() {
-    return (
-      <main className="min-h-screen bg-surface text-on-surface">
-        <div className="mx-auto max-w-4xl px-6 py-16 md:py-20">
-          <h1 className="text-4xl font-headline font-extrabold tracking-tight text-primary md:text-5xl">
-            Terms of Service
-          </h1>
-          <p className="mt-3 text-sm text-on-surface-variant">Effective Date: May 6, 2026</p>
-          <p className="text-sm text-on-surface-variant">Last Updated: May 6, 2026</p>
-          <p className="text-sm text-on-surface-variant">Application: When. (https://when-now.com)</p>
-  
-          <article
-            className="mt-10 max-w-none rounded-2xl border border-outline-variant/20 bg-surface-container-low p-6 text-on-surface md:p-8
+        <article
+          className="mt-10 max-w-none rounded-2xl border border-outline-variant/20 bg-surface-container-low p-6 text-on-surface md:p-8
             [&_h2]:mt-10 [&_h2]:mb-4 [&_h2]:text-2xl [&_h2]:font-extrabold [&_h2]:tracking-tight
             [&_h3]:mt-8 [&_h3]:mb-3 [&_h3]:text-lg [&_h3]:font-bold
             [&_p]:my-4 [&_p]:text-sm [&_p]:leading-7
@@ -25,7 +42,7 @@ export const metadata = {
             [&_th]:border [&_th]:border-outline-variant/30 [&_th]:bg-surface-container [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-bold
             [&_td]:border [&_td]:border-outline-variant/30 [&_td]:px-3 [&_td]:py-2
             [&_a]:font-semibold [&_a]:underline"
-          >
+        >
             <h2>1. Agreement to Terms</h2>
             <p>
               By accessing or using When. (&quot;the Service&quot;), you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use the Service.
@@ -108,8 +125,8 @@ export const metadata = {
               {' '}
               <a href="mailto:whenapp.now@gmail.com">whenapp.now@gmail.com</a>.
             </p>
-          </article>
-        </div>
-      </main>
-    )
-  }
+        </article>
+      </div>
+    </main>
+  )
+}
