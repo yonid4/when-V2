@@ -1,6 +1,18 @@
 'use client'
 
 import { ArrowRight, RefreshCw, Sparkles } from 'lucide-react'
+import Link from 'next/link'
+
+type FooterLink = {
+  label: string
+  href?: string
+}
+
+const footerLinks: FooterLink[] = [
+  { label: 'Privacy', href: '/privacy' },
+  { label: 'Terms' },
+  { label: 'Support' },
+]
 
 export default function LandingPage() {
   const handleGoogleSignIn = () => {
@@ -296,15 +308,25 @@ export default function LandingPage() {
             </p>
           </div>
           <div className="flex flex-wrap justify-center gap-8 md:gap-12">
-            {['Privacy', 'Terms', 'Support'].map((link) => (
-              <button
-                key={link}
-                type="button"
-                className="font-body tracking-wider text-xs uppercase text-on-surface-variant hover:text-primary transition-opacity"
-              >
-                {link}
-              </button>
-            ))}
+            {footerLinks.map((link) =>
+              link.href ? (
+                <Link
+                  key={link.label}
+                  href={link.href}
+                  className="font-body tracking-wider text-xs uppercase text-on-surface-variant hover:text-primary transition-opacity"
+                >
+                  {link.label}
+                </Link>
+              ) : (
+                <button
+                  key={link.label}
+                  type="button"
+                  className="font-body tracking-wider text-xs uppercase text-on-surface-variant hover:text-primary transition-opacity"
+                >
+                  {link.label}
+                </button>
+              )
+            )}
           </div>
         </div>
       </footer>

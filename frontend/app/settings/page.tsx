@@ -10,6 +10,7 @@ import { formatDateTime } from '@/lib/dates'
 import { Navbar } from '@/components/layout/Navbar'
 import { useSyncMyCalendar } from '@/hooks/useBusySlots'
 import { SourceRow } from '@/components/settings/SourceRow'
+import { DeleteAccountModal } from '@/components/settings/DeleteAccountModal'
 
 export default function SettingsPage() {
   const { data: accounts = [], isLoading } = useCalendarAccounts()
@@ -19,6 +20,7 @@ export default function SettingsPage() {
   const connectCalendar = useConnectCalendarAccount()
   const searchParams = useSearchParams()
   const [bannerDismissed, setBannerDismissed] = useState(false)
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false)
   const showCalendarBanner = searchParams.get('connect_calendar') === 'true' && !bannerDismissed
 
   async function handleConnectCalendar() {
@@ -137,6 +139,31 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Danger Zone */}
+          <section className="space-y-6">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-error" />
+              <h2 className="text-xl font-bold text-on-surface">Danger Zone</h2>
+            </div>
+
+            <div className="bg-surface-container-low rounded-xl p-8 flex items-center justify-between flex-wrap gap-4">
+              <div>
+                <h3 className="font-bold text-on-surface">Delete your account</h3>
+                <p className="text-sm text-on-surface-variant mt-1 max-w-prose">
+                  Permanently removes your profile, calendar connections, busy slots, and personal data.
+                  Confirmed events you coordinated will remain visible to other participants without your name.
+                </p>
+              </div>
+              <button
+                onClick={() => setDeleteAccountOpen(true)}
+                className="px-5 py-2 text-sm font-semibold text-error bg-error-container/30 hover:bg-error-container/50 rounded-full transition-colors duration-300 flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete my account
+              </button>
+            </div>
+          </section>
+
           {/* Footer */}
           <footer className="mt-4 pt-8 border-t border-outline-variant/10 flex justify-between items-center flex-wrap gap-4">
             <p className="text-sm text-on-surface-variant">
@@ -155,6 +182,10 @@ export default function SettingsPage() {
           </footer>
         </div>
       </main>
+
+      {deleteAccountOpen && (
+        <DeleteAccountModal onClose={() => setDeleteAccountOpen(false)} />
+      )}
     </>
   )
 }
