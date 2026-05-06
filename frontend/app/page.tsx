@@ -10,7 +10,7 @@ type FooterLink = {
 
 const footerLinks: FooterLink[] = [
   { label: 'Privacy', href: '/privacy' },
-  { label: 'Terms' },
+  { label: 'Terms', href: '/terms' },
   { label: 'Support' },
 ]
 
