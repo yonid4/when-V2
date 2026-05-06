@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import (
+    account,
     auth,
     busy_slots,
     calendar_accounts,
@@ -65,3 +66,4 @@ app.include_router(preferred_slots.router)
 app.include_router(proposals.router)
 app.include_router(proposal_notes.router)
 app.include_router(finalize.router)
+app.include_router(account.router)
