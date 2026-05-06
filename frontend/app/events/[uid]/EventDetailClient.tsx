@@ -40,6 +40,7 @@ import { ProposedTimeOverlay } from '@/components/event/ProposedTimeOverlay'
 import { computeMerge } from '@/lib/editModeUtils'
 import type { PendingSlot } from '@/types'
 import type { EditSaveResult } from './editEventUtils'
+import EventNotFound from './not-found'
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -52,16 +53,42 @@ const EMPTY_PREFERRED_SLOTS: PreferredSlot[] = []
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
-export default function EventDetailClient({
-  event: initialEvent,
-}: {
-  event: EventWithParticipants
-}) {
+export default function EventDetailClient({ uid }: { uid: string }) {
+  const { data: event, isLoading, error } = useEvent(uid)
+  if (error) return <EventNotFound />
+  if (isLoading || !event) return <EventDetailSkeleton />
+  return <EventDetailLoaded event={event} />
+}
+
+function EventDetailSkeleton() {
+  return (
+    <div className="h-screen flex flex-col overflow-hidden">
+      <Navbar />
+      <main className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
+        <section className="flex-1 min-h-0 flex flex-col overflow-hidden p-4 md:p-6 lg:p-8 bg-surface">
+          <div className="flex flex-col flex-1 gap-4 min-h-0">
+            <div className="h-8 w-48 rounded bg-surface-container-high animate-pulse" />
+            <div className="flex-1 min-h-0 rounded-lg bg-surface-container-low animate-pulse" />
+          </div>
+        </section>
+        <section className="w-full md:w-[400px] shrink-0 lg:w-[456px] xl:w-[504px] md:h-full overflow-y-auto bg-surface-container-low p-4 md:p-6 flex flex-col gap-6">
+          <div className="bg-surface-container-lowest p-6 rounded-lg space-y-3">
+            <div className="h-4 w-24 rounded bg-surface-container-high animate-pulse" />
+            <div className="h-8 w-3/4 rounded bg-surface-container-high animate-pulse" />
+            <div className="h-4 w-1/2 rounded bg-surface-container-high animate-pulse" />
+          </div>
+          <div className="h-12 rounded-xl bg-surface-container-high animate-pulse" />
+          <div className="h-32 rounded-xl bg-surface-container-high animate-pulse" />
+        </section>
+      </main>
+    </div>
+  )
+}
+
+function EventDetailLoaded({ event }: { event: EventWithParticipants }) {
   const { user } = useAuthStore()
   const currentUserId = user?.id ?? ''
 
-  const { data: liveEvent } = useEvent(initialEvent.uid)
-  const event = liveEvent ?? initialEvent
   const [participantsKey, setParticipantsKey] = useState(0)
 
   const isCoordinator = !!user?.id && user.id === event.coordinator_id
@@ -92,12 +119,12 @@ export default function EventDetailClient({
 
   function handleSave(result: EditSaveResult) {
     if (result.infoChanged || result.timeRangeChanged) {
-      queryClient.invalidateQueries({ queryKey: ['events', initialEvent.uid] })
+      queryClient.invalidateQueries({ queryKey: ['events', event.uid] })
     }
     if (result.timeRangeChanged) {
-      queryClient.refetchQueries({ queryKey: ['busy-slots', 'event', initialEvent.uid] })
-      queryClient.refetchQueries({ queryKey: ['preferred-slots', initialEvent.uid] })
-      queryClient.refetchQueries({ queryKey: ['availability-segments', initialEvent.uid] })
+      queryClient.refetchQueries({ queryKey: ['busy-slots', 'event', event.uid] })
+      queryClient.refetchQueries({ queryKey: ['preferred-slots', event.uid] })
+      queryClient.refetchQueries({ queryKey: ['availability-segments', event.uid] })
     }
     if (result.guestInvitesChanged) {
       setParticipantsKey((k) => k + 1)
