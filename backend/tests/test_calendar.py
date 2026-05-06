@@ -6,6 +6,7 @@ Tests the calendar_accounts and calendar_sources routers with mocked Supabase/Go
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
@@ -147,6 +148,108 @@ def test_disconnect_account_forbidden(mock_dep_svc, mock_cal_svc):
     response = client.delete("/api/calendar-accounts/account-uuid-1", headers=_auth_headers())
 
     assert response.status_code == 403
+
+
+# ─── 5b. Token revocation on disconnect (Phase 2) ────────────────────────────
+
+def _make_response(status_code: int, text: str = "") -> MagicMock:
+    """Construct a fake httpx.Response with the given status and body text."""
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = status_code
+    resp.text = text
+    return resp
+
+
+@patch("app.utils.google_auth.httpx.post")
+@patch("app.services.calendar_service.service_client")
+@patch("app.dependencies.service_client")
+def test_disconnect_revokes_token_then_deletes_row(mock_dep_svc, mock_cal_svc, mock_httpx):
+    """200 OK from Google revoke → DB row is deleted, response is 204."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+
+    account = {**_make_account_row(), "credentials": {"refresh_token": "rt-123"}}
+    mock_cal_svc.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[account])
+    mock_cal_svc.table.return_value.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+    mock_httpx.return_value = _make_response(200)
+
+    response = client.delete("/api/calendar-accounts/account-uuid-1", headers=_auth_headers())
+
+    assert response.status_code == 204
+    mock_httpx.assert_called_once()
+    args, kwargs = mock_httpx.call_args
+    assert args[0] == "https://oauth2.googleapis.com/revoke"
+    assert kwargs["params"] == {"token": "rt-123"}
+    mock_cal_svc.table.return_value.delete.return_value.eq.assert_called_with("id", "account-uuid-1")
+
+
+@patch("app.utils.google_auth.httpx.post")
+@patch("app.services.calendar_service.service_client")
+@patch("app.dependencies.service_client")
+def test_disconnect_treats_invalid_token_as_revoked(mock_dep_svc, mock_cal_svc, mock_httpx):
+    """400 invalid_token → already-dead at Google, safe to delete the DB row."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+
+    account = {**_make_account_row(), "credentials": {"refresh_token": "rt-stale"}}
+    mock_cal_svc.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[account])
+    mock_cal_svc.table.return_value.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+    mock_httpx.return_value = _make_response(400, '{"error":"invalid_token"}')
+
+    response = client.delete("/api/calendar-accounts/account-uuid-1", headers=_auth_headers())
+
+    assert response.status_code == 204
+    assert mock_cal_svc.table.return_value.delete.called
+
+
+@patch("app.utils.google_auth.httpx.post")
+@patch("app.services.calendar_service.service_client")
+@patch("app.dependencies.service_client")
+def test_disconnect_aborts_on_revoke_500(mock_dep_svc, mock_cal_svc, mock_httpx):
+    """5xx from Google → unknown state → keep the row, return 502."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+
+    account = {**_make_account_row(), "credentials": {"refresh_token": "rt-live"}}
+    mock_cal_svc.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[account])
+    mock_httpx.return_value = _make_response(500, "Internal Server Error")
+
+    response = client.delete("/api/calendar-accounts/account-uuid-1", headers=_auth_headers())
+
+    assert response.status_code == 502
+    assert not mock_cal_svc.table.return_value.delete.called
+
+
+@patch("app.utils.google_auth.httpx.post")
+@patch("app.services.calendar_service.service_client")
+@patch("app.dependencies.service_client")
+def test_disconnect_aborts_on_revoke_network_error(mock_dep_svc, mock_cal_svc, mock_httpx):
+    """Network error contacting Google → keep the row, return 502."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+
+    account = {**_make_account_row(), "credentials": {"refresh_token": "rt-live"}}
+    mock_cal_svc.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[account])
+    mock_httpx.side_effect = httpx.ConnectError("DNS failure")
+
+    response = client.delete("/api/calendar-accounts/account-uuid-1", headers=_auth_headers())
+
+    assert response.status_code == 502
+    assert not mock_cal_svc.table.return_value.delete.called
+
+
+@patch("app.utils.google_auth.httpx.post")
+@patch("app.services.calendar_service.service_client")
+@patch("app.dependencies.service_client")
+def test_disconnect_skips_revoke_when_no_refresh_token(mock_dep_svc, mock_cal_svc, mock_httpx):
+    """No refresh_token stored → no revoke call, DB row still deleted."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+
+    account = {**_make_account_row(), "credentials": {}}
+    mock_cal_svc.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[account])
+    mock_cal_svc.table.return_value.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    response = client.delete("/api/calendar-accounts/account-uuid-1", headers=_auth_headers())
+
+    assert response.status_code == 204
+    mock_httpx.assert_not_called()
+    assert mock_cal_svc.table.return_value.delete.called
 
 
 # ─── 6. test_update_source_toggle_enabled ────────────────────────────────────

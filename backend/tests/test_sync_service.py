@@ -48,22 +48,148 @@ def _make_account(account_id: str = "acct-1", user_id: str = "user-1", sources=N
 
 # ─── 1. Time range ────────────────────────────────────────────────────────────
 
+def _stub_no_active_events(mock_svc) -> None:
+    """Make `_earliest_active_event_start` return its default by stubbing every
+    query it issues to return empty data. Use this when the test doesn't care
+    about the widening logic."""
+    empty = MagicMock(data=[])
+    # events.select().eq("coordinator_id",...).in_("status",...).execute()
+    mock_svc.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value = empty
+    # event_participants.select().eq("user_id",...).neq("status",...).execute()
+    mock_svc.table.return_value.select.return_value.eq.return_value.neq.return_value.execute.return_value = empty
+    # events.select().in_("id",...).in_("status",...).execute()  — guarded by event_ids being non-empty,
+    # so not strictly required when participant_rows is empty, but harmless.
+    mock_svc.table.return_value.select.return_value.in_.return_value.in_.return_value.execute.return_value = empty
+    # calendar_accounts.select().eq("user_id",...).execute() — for _sync_user
+    mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = empty
+
+
 @patch("app.services.sync_service.build")
 @patch("app.services.sync_service.service_client")
 def test_sync_busy_slots_uses_90_day_window(mock_svc, mock_build):
-    """sync_busy_slots passes a time window of now → now+90 days to Google Calendar."""
-    # No accounts → we just check the time calculation doesn't crash and returns 0
-    mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(
-        data=[]
-    )
+    """sync_busy_slots passes a time window of now → now+90 days to Google Calendar
+    when the user is in no active past-starting events."""
+    _stub_no_active_events(mock_svc)
 
-    before = datetime.now(timezone.utc)
     result = sync_service.sync_busy_slots("user-1")
-    after = datetime.now(timezone.utc)
 
     assert result == 0
-    # Verify service_client was asked for calendar_accounts (not something wrong)
-    mock_svc.table.assert_called_with("calendar_accounts")
+    # Verify the calendar_accounts query was issued
+    assert any(c == call("calendar_accounts") for c in mock_svc.table.call_args_list)
+
+
+# ─── 1b. Widened sync window when user is in past-starting active events ─────
+
+def _stub_widening_queries(
+    mock_svc,
+    coord_event_starts: list[str] = None,
+    participant_event_ids: list[str] = None,
+    participant_event_starts: list[str] = None,
+) -> None:
+    """Configure the mock to return data for the three queries inside
+    `_earliest_active_event_start`. Pass ISO strings for the *_starts lists."""
+    coord_event_starts = coord_event_starts or []
+    participant_event_ids = participant_event_ids or []
+    participant_event_starts = participant_event_starts or []
+
+    # events.select().eq("coordinator_id", uid).in_("status", [...]).execute()
+    mock_svc.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"earliest_datetime_utc": s} for s in coord_event_starts]
+    )
+
+    # event_participants.select("event_id").eq("user_id", uid).neq("status", "declined").execute()
+    mock_svc.table.return_value.select.return_value.eq.return_value.neq.return_value.execute.return_value = MagicMock(
+        data=[{"event_id": eid} for eid in participant_event_ids]
+    )
+
+    # events.select().in_("id", ...).in_("status", [...]).execute()  — participant-events query
+    mock_svc.table.return_value.select.return_value.in_.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"earliest_datetime_utc": s} for s in participant_event_starts]
+    )
+
+    # calendar_accounts query: empty so we don't actually try to call Google
+    mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+
+@patch("app.services.sync_service._sync_user")
+@patch("app.services.sync_service.service_client")
+def test_widens_window_when_coordinator_event_starts_in_past(mock_svc, mock_sync_user):
+    """If the user coordinates an active event whose earliest is in the past,
+    time_min is widened back to that event's earliest."""
+    now = datetime.now(timezone.utc)
+    past = now - timedelta(days=10)
+    _stub_widening_queries(mock_svc, coord_event_starts=[past.isoformat()])
+    mock_sync_user.return_value = 0
+
+    sync_service.sync_busy_slots("user-1")
+
+    args, _ = mock_sync_user.call_args
+    user_id_arg, time_min_arg, time_max_arg = args
+    assert user_id_arg == "user-1"
+    assert abs((time_min_arg - past).total_seconds()) < 2, (
+        f"time_min {time_min_arg} should equal past {past}"
+    )
+    # time_max should still be ~90 days from now
+    assert (time_max_arg - now) >= timedelta(days=89)
+    assert (time_max_arg - now) <= timedelta(days=91)
+
+
+@patch("app.services.sync_service._sync_user")
+@patch("app.services.sync_service.service_client")
+def test_widens_window_when_participant_event_starts_in_past(mock_svc, mock_sync_user):
+    """If the user is a non-declined participant in an active event whose
+    earliest is in the past, time_min is widened back to that event's earliest."""
+    now = datetime.now(timezone.utc)
+    past = now - timedelta(days=5)
+    _stub_widening_queries(
+        mock_svc,
+        participant_event_ids=["evt-A"],
+        participant_event_starts=[past.isoformat()],
+    )
+    mock_sync_user.return_value = 0
+
+    sync_service.sync_busy_slots("user-1")
+
+    args, _ = mock_sync_user.call_args
+    _, time_min_arg, _ = args
+    assert abs((time_min_arg - past).total_seconds()) < 2
+
+
+@patch("app.services.sync_service._sync_user")
+@patch("app.services.sync_service.service_client")
+def test_does_not_widen_when_active_events_are_all_in_future(mock_svc, mock_sync_user):
+    """If every active event the user is in starts in the future, time_min
+    stays at NOW (we never push it forward)."""
+    now = datetime.now(timezone.utc)
+    future = now + timedelta(days=2)
+    _stub_widening_queries(mock_svc, coord_event_starts=[future.isoformat()])
+    mock_sync_user.return_value = 0
+
+    sync_service.sync_busy_slots("user-1")
+
+    args, _ = mock_sync_user.call_args
+    _, time_min_arg, _ = args
+    # time_min should still equal NOW, not the future event's start
+    assert abs((time_min_arg - now).total_seconds()) < 2
+
+
+@patch("app.services.sync_service._sync_user")
+@patch("app.services.sync_service.service_client")
+def test_widening_ignores_declined_participation(mock_svc, mock_sync_user):
+    """If the user's participation status is 'declined', that event must not
+    contribute to time_min — the .neq('status','declined') filter excludes it
+    from the participant_rows query, so participant_event_ids is empty."""
+    now = datetime.now(timezone.utc)
+    # Caller does not include declined-event ids in participant_event_ids — that
+    # mirrors what the .neq() filter does in production.
+    _stub_widening_queries(mock_svc, participant_event_ids=[])
+    mock_sync_user.return_value = 0
+
+    sync_service.sync_busy_slots("user-1")
+
+    args, _ = mock_sync_user.call_args
+    _, time_min_arg, _ = args
+    assert abs((time_min_arg - now).total_seconds()) < 2
 
 
 @patch("app.services.sync_service.build")
