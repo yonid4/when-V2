@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { User } from '@/types'
 import { addDays } from '@/lib/dates'
+import { supabase } from '@/lib/supabase'
 
 interface AuthState {
   user: User | null
@@ -24,11 +25,18 @@ export const useAuthStore = create<AuthState>((set) => ({
   setUser: (user, token) => {
     localStorage.setItem('token', token)
     setCookie('token', token, 7)
+    // Trigger the realtime client to re-read the token via its accessToken
+    // callback (defined in lib/supabase.ts) and re-authenticate any open
+    // channels. Calling setAuth() with no args uses the callback path —
+    // passing a token explicitly would override and disable the callback.
+    supabase.realtime.setAuth()
     set({ user, token })
   },
   clearAuth: () => {
     localStorage.removeItem('token')
     deleteCookie('token')
+    // Same — let the callback observe the now-empty localStorage.
+    supabase.realtime.setAuth()
     set({ user: null, token: null })
   },
 }))

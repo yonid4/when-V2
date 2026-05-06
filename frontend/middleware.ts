@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const PUBLIC_ONLY_PATHS = ['/', '/auth/callback']
+const PUBLIC_ONLY_PATHS = ['/']
+const PUBLIC_PATHS = [...PUBLIC_ONLY_PATHS, '/auth/callback', '/privacy']
 
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl
@@ -13,7 +14,7 @@ export function middleware(req: NextRequest): NextResponse {
 
   // Allow public paths and Next.js internals through without auth check
   if (
-    PUBLIC_ONLY_PATHS.includes(pathname) ||
+    PUBLIC_PATHS.includes(pathname) ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
     pathname.startsWith('/favicon')
