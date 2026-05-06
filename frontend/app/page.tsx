@@ -11,7 +11,7 @@ type FooterLink = {
 const footerLinks: FooterLink[] = [
   { label: 'Privacy', href: '/privacy' },
   { label: 'Terms', href: '/terms' },
-  { label: 'Support' },
+  { label: 'Support', href: "mailto:whenapp.now@gmail.com" },
 ]
 
 export default function LandingPage() {
