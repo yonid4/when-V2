@@ -124,7 +124,7 @@ Implementation details discovered while writing tests that aren't captured elsew
   The middleware test for "passes through `/` with a valid token" became "redirects to `/dashboard` with a valid token" (status 307, location `/dashboard`). Any time middleware behavior changes for public paths, audit `middleware.test.ts` immediately.
 
 - **Calendar connect via `<a href>` strips the Authorization header — use a fetch-then-redirect pattern.**
-  Browser anchor navigation does not send the `Authorization: Bearer` header. The fix: add a `GET /api/calendar-accounts/connect-url` endpoint that returns `{ url }` as JSON, then redirect from the frontend using `window.location.href = url` after fetching with `api.get(...)`. The original `/connect` endpoint is kept but unused by the frontend.
+  Browser anchor navigation does not send the `Authorization: Bearer` header. The fix: add a `GET /api/calendar-accounts/connect-url` endpoint that returns `{ url }` as JSON, then redirect from the frontend using `window.location.href = url` after fetching with `api.get(...)`. The original redirect-based `/connect` endpoint was retained for one cycle and removed in the post-launch cleanup pass once it was confirmed to have no remaining callers.
 
 - **Login flow must request identity scopes only — calendar scopes belong to the explicit connect flow.**
   Including `calendar.readonly` and `calendar.events` in the login OAuth flow causes users to see calendar permission requests at sign-in. Auth scopes must be `openid`, `email`, `profile` only. Calendar credentials are obtained separately during the explicit calendar connect flow and stored in `calendar_accounts`.
@@ -664,3 +664,125 @@ Implementation details discovered while writing tests that aren't captured elsew
 
 - **`ProposedTime` in `types/index.ts` uses `conflicts: number`, matching the DB column name — not `conflict_count`.**
   The DB column is `conflicts`. The API's `ProposalResponse` Pydantic model exposes it as `conflict_count` (the modularization renamed it for clarity). The frontend `ProposedTime` interface uses `conflicts` (matching the raw DB shape), while test fixtures that reference `ProposalResponse` use `conflict_count`. These are two different type shapes — do not conflate them.
+
+---
+
+## Production Deploy & Post-Launch Fixes
+
+Lessons surfaced during the late-April 2026 production-stabilisation push (Docker rollout, calendar reauth flow, dedup hardening, finalize idempotency).
+
+### Backend — Calendar credential refresh
+
+- **Persist and re-hydrate `credentials.expiry`, otherwise `googleapiclient` never refreshes.**
+  `credentials_from_dict` must populate `Credentials(..., expiry=_parse_expiry(creds_data.get("expiry")))`. Without it, `credentials.expired` is permanently `False`, googleapiclient skips the refresh attempt, a revoked refresh token never raises `RefreshError`, and `needs_reauth` never trips — the user silently sees stale availability. The expiry must also be persisted on the initial OAuth connect (`credentials.expiry.isoformat()` into `calendar_accounts.credentials`) so the very first sync has the same refresh-detection behaviour as subsequent syncs. The Google library compares expiry against `datetime.utcnow()` (naive UTC), so any tz-aware stored value must be normalised to naive UTC in `_parse_expiry` before being passed to `Credentials`.
+
+- **Catch `google.auth.exceptions.RefreshError` in both `sync_service` and `finalize_service`.**
+  When the refresh token is revoked or expired, googleapiclient raises `RefreshError` mid-call. `sync_service._sync_user` must catch it, call `mark_account_needs_reauth(account_id)`, and continue to the next account so other calendars still sync. `finalize_service.finalize_event` must catch it, mark the account, and raise `HTTPException(422, detail="calendar_credentials_expired")` — the frontend distinguishes this from `no_write_calendar` to show a "Reconnect" prompt instead of "Pick a write calendar".
+
+- **Auto-sync busy slots inside the OAuth callback after persisting the row.**
+  `calendar_accounts.google_calendar_callback` calls `sync_service.sync_busy_slots(state)` after `connect_google_account` succeeds. Wrap it in `try/except` and log-and-continue — the connect flow must not fail on a downstream sync hiccup. Users land on Settings with availability already populated and `last_synced_at` set, which removes the "did the connect actually work?" doubt loop.
+
+### Backend — Notifications & invitations dedup
+
+- **`_process_pending_invitations` must filter `is_("invitee_id", "null")` for re-login idempotency.**
+  Without this filter, every login re-creates an `event_invitation` notification for every still-pending invite belonging to the user's email, because the function looks up invites by email and the email match alone doesn't change between logins. After the first run, `invitee_id` is populated and the row is excluded from the query, making the function safely idempotent across re-logins until the invitation transitions out of `pending`.
+
+- **A partial unique index blocks duplicate pending invitation notifications at the DB layer.**
+  The application-level idempotency above is the primary defence, but a partial unique index `notifications_unique_pending_invitation ON (user_id, event_id) WHERE notification_type = 'event_invitation' AND action_taken = false` is the safety net. The `WHERE action_taken = false` clause is critical — without it, a user who declined an invite could never receive a fresh one for the same event. With it, only the *pending* slot is unique-constrained.
+
+### Backend — Finalize idempotency
+
+- **`finalize_event` must early-return 409 when `event['status'] == 'confirmed'`.**
+  Without the guard, double-clicking the finalize button creates a second Google Calendar event, sends duplicate "event confirmed" notifications, and overwrites `finalized_*_utc` fields. The check must run *before* the GCal write — checking only at the DB-update step is too late, the GCal side-effect already fired.
+
+### Backend — HTTP / supabase client
+
+- **Forcing HTTP/1.1 on the postgrest client must preserve `base_url`, `headers`, and `timeout`.**
+  The HTTP/2 cascade-500 workaround (rebuilding the inner `httpx.Client` with `http2=False`) silently breaks every request if the new client is constructed without the original `base_url` (request goes to `httpbin.org`-equivalent — i.e., nowhere), `headers` (missing `apikey` and `Authorization` → 401 on every call), or `timeout` (default of 5s causes spurious read timeouts on slower endpoints). Read the originals off the auto-built session and pass them through.
+
+### Frontend — API error handling
+
+- **`lib/api.ts` must attach `.detail` (and any structured fields) onto thrown `Error` objects.**
+  Backend returns `{ "detail": "calendar_credentials_expired" }` on 422. Consumers like `FinalizeCard` branch on `err.detail === 'calendar_credentials_expired'` to show a reconnect button. Plain `throw new Error(message)` strips the structured payload — the consumer's `if (err.detail === ...)` branch never fires and the user sees a generic toast. Mutate the Error before throwing: `const err = new Error(detail); (err as any).detail = detail; throw err`.
+
+- **The 401 handler must clear both `localStorage` and the `token` cookie via `clearAuth()`.**
+  Clearing only `localStorage` leaves the cookie behind; the middleware reads the cookie on the next navigation, decides the user is authorised, and routes them back into the app — where `lib/api.ts` immediately 401s again because the bearer token in `localStorage` is gone. The user is stuck in a redirect loop. `useAuthStore.getState().clearAuth()` wipes both and triggers the realtime client to drop its `accessToken` callback's now-empty token.
+
+### Frontend — Realtime notifications
+
+- **The `notifications` realtime INSERT handler must NOT call `notificationStore.increment()`.**
+  Refetch the unread count from the server instead. Under React StrictMode the effect's setup runs twice in development; an optimistic `increment()` double-counts and the badge drifts off the server-truth value until the next manual refetch. A single `queryClient.invalidateQueries({ queryKey: ['notifications', 'unread-count'] })` is authoritative and StrictMode-safe.
+
+### Frontend — Reconnect UX
+
+- **The navbar reauth pill always routes to `/settings`, never to a deep link.**
+  The pill is a global "you have an account that needs attention" signal. Deep-linking to `/settings#account-${id}` is fragile when the user has multiple connected accounts and one of them just got disconnected — the anchor target may not exist on first render. `/settings` is stable; the per-account "Reconnect" button on that page handles the specific account.
+
+- **Invalidate `['calendar-accounts']` after a successful sync.**
+  `last_synced_at` and `needs_reauth` are read off the calendar-accounts cache. Without invalidation after a `useSyncMyCalendar` mutation, the Settings page still shows the pre-sync `last_synced_at`, the user assumes the sync silently failed, and they click again.
+
+### Docker / Next.js standalone output
+
+- **Pages that read fresh request-time data need `export const dynamic = 'force-dynamic'`.**
+  Auth callback (`/auth/callback`), `/settings` (reads `?connect_calendar=true`), and `/events/new` (reads server cookies) must opt out of static generation. In Next.js standalone-output mode they're prerendered at build time by default; the query string and cookies are then permanently empty in the deployed bundle.
+
+- **`NEXT_PUBLIC_*` env vars are inlined at build time, not runtime.**
+  Setting them in docker-compose's `environment:` block has no effect on the Next.js bundle — they need to be passed as `--build-arg` to the frontend Dockerfile, with corresponding `ARG` and `ENV` lines. In docker-compose this is `args:` under `build:`. Symptom of getting it wrong: the deployed app has `undefined` for `NEXT_PUBLIC_SUPABASE_URL` and the realtime client crashes at module load.
+
+- **The frontend `/api/*` proxy target must be derived from a server-side env var.**
+  Hardcoding `http://localhost:8000` in `next.config.js` rewrites works in local dev and breaks in docker-compose (where the backend is reachable as `http://backend:8000`). Read it off `process.env.API_URL` (a server-only var, no `NEXT_PUBLIC_` prefix) so the proxy target can be swapped per environment without rebuilding.
+
+### Schema
+
+- **`schema.sql` is now a `pg_dump` snapshot, not hand-written DDL.**
+  Editing it directly is a footgun — the next regeneration will overwrite the edit. Schema changes belong in Supabase migrations (`supabase/migrations/`) and the snapshot is regenerated from the live DB afterwards.
+
+## Hydration Mismatches & TZ-Dependent SSR Rendering
+
+Lessons surfaced while fixing React errors `#418` ("hydration failed") and `#423` ("recovered by client-rendering the entire root") that appeared on the event detail page first and the dashboard immediately after.
+
+### Frontend — SSR rendering of locale/TZ-dependent strings
+
+- **Any component that renders `toLocaleDateString` / `toLocaleTimeString` from inside an SSR'd tree will mismatch on hydration.**
+  `lib/dates.ts` helpers (`formatDateWindow`, `formatTime`, `formatLongDate`, etc.) all funnel into `toLocaleDateString('en-US', ...)`. The server runs in UTC; the client runs in the user's local timezone. Identical input UTC timestamps produce different formatted strings — e.g. a Jun 14 23:00 UTC stamp shows as "Jun 14" on the server and "Jun 15" in any +01:00 or later timezone. React detects the divergence on hydrate, throws away the SSR'd HTML, and re-renders the entire root client-side. The user sees a flash and console errors; you lose the SSR perf benefit anyway.
+
+- **The fix: SSR a TZ-neutral skeleton; let the client render the real data after hydrate.**
+  Pattern: convert the page file to a *thin* server component that only does request-time things (cookies, redirects) and renders a sibling client component. The client component uses TanStack Query (`useEvent`, `useEvents`, etc.) and branches: `isLoading || !data → <Skeleton />` and `data → <Loaded data={data} />`. The server emits the skeleton (no dates, no `toLocale*`); the client hydrates the same skeleton (matches exactly); then the query resolves and the real UI renders only in the browser, with the user's actual timezone. Applied to `app/events/[uid]/page.tsx` first, then `app/dashboard/page.tsx`.
+
+- **`page.tsx` after the fix should contain almost nothing — just the auth check.**
+  ```tsx
+  // app/dashboard/page.tsx
+  export default async function DashboardPage() {
+    const cookieStore = await cookies()
+    const token = cookieStore.get('token')?.value
+    if (!token) redirect('/')
+    return <DashboardClient />
+  }
+  ```
+  No data fetching, no `<EventCard>`, no date helpers. If you find yourself adding a `fetchX` import here, you're re-introducing the SSR rendering path that caused the bug.
+
+- **Delete the corresponding `fetchers.ts` after the migration.**
+  When `app/<route>/page.tsx` stops fetching, the per-route `fetchers.ts` becomes dead code. Leaving it around invites future server components to import it again. After the dashboard fix, `app/dashboard/fetchers.ts` was removed. Verify with `grep -rln "fetchEvents\|fetchCalendarAccounts" frontend/` before deleting.
+
+- **Tests for the page need to mock the hooks, not the fetchers.**
+  Pre-fix, `EmptyStates.test.tsx` mocked `fetchEvents`/`fetchCalendarAccounts` and called `await DashboardPage()` to exercise the SSR render. Post-fix, `DashboardPage()` returns `<DashboardClient />`, so the test must `vi.mock('@/hooks/useEvent', () => ({ useEvents: vi.fn() }))` and set `vi.mocked(useEvents).mockReturnValue({ data: [...], isLoading: false })`. The `await DashboardPage()` call still works because the page is async, but the assertions now run against the client component's render of the mocked hook data.
+
+### Backend — JWT claims required by Supabase services
+
+- **The JWT signed in `_create_jwt` must include `"role": "authenticated"`.**
+  Without this claim, PostgREST falls back to the default `anon` role and `TO authenticated` RLS policies don't apply; Supabase Realtime's `postgres_changes` rejects the channel join entirely (channel sits in `joining` state forever, no error message visible to the user). The conftest's integration-test JWT had this claim from day one — production was missing it, which is why the realtime breakage only surfaced once `realtime.messages` policies were tightened from `TO anon` to `TO authenticated` and unmasked the latent missing-role bug. Symptom in the browser console: `supabase.realtime.channels.forEach(c => console.log(c.topic, c.state))` shows every channel as `joining` despite `connectionState() === 'open'`.
+
+### Frontend — Supabase Realtime authentication
+
+- **Use `createClient(url, key, { realtime: { accessToken: () => Promise<string|null> } })`, not `setAuth(token)` after-the-fact.**
+  In supabase-js v2.101+ `setAuth` is `async` and returns a `Promise<void>`. Calling it without `await` is fire-and-forget; React continues rendering, dashboard components mount, channels call `.subscribe()` with whatever auth the client currently has — which is the bare anon key. The `phx_join` frame goes out unauthenticated and the Realtime server holds it in limbo. The `accessToken` callback option is invoked on-demand by the realtime client at connect time, on every channel join, and after `setAuth()` is called with no args — eliminating the race entirely. The auth store calls `supabase.realtime.setAuth()` (no args) on `setUser` / `clearAuth` to trigger a re-auth of any open channels using the now-updated callback.
+
+### Database — Cascade triggers under `supabase_auth_admin` role
+
+- **Triggers without `SECURITY DEFINER` will fail when fired by `auth.admin.delete_user`.**
+  Cascades from `auth.users` → `profiles` → `event_participants` (etc.) execute under the `supabase_auth_admin` role, not `service_role`. Triggers that aren't `SECURITY DEFINER` inherit that role's RLS context. After tightening `realtime.messages` to `TO authenticated`, broadcast triggers like `broadcast_event_changes`, `broadcast_participant_changes`, `broadcast_preferred_slots_changes`, `broadcast_notification_changes` (none of which are `SECURITY DEFINER`) silently fail to write to `realtime.messages` from inside `delete_user`'s cascade — the auth API returns the unhelpful `Database error deleting user`. Fix: in `account_service.delete_account`, **explicitly** purge user-owned rows under `service_role` (which has BYPASSRLS) before calling `auth.admin.delete_user`. The remaining cascade then has nothing to UPDATE/DELETE for those tables, so no triggers fire under the failing role context. Tables that *do* have `SECURITY DEFINER` broadcast triggers (`busy_slots`, `event_participants_broadcast_trigger`, `notifications_broadcast_trigger`, `proposed_time_notes_broadcast_trigger`) are fine to let the cascade clean up.
+
+### Docker — Build cache fooling `--no-cache` rebuilds
+
+- **`docker compose down && docker compose up` does NOT rebuild the image.**
+  It just restarts the existing container with the same image. To pick up code changes you need an explicit `docker compose build --no-cache <service>` before `up`, OR use `docker compose up --build`. Verify the rebuild actually happened with `docker compose images <service>` — the `CREATED` column should read seconds-ago, not hours-ago. When troubleshooting "I changed the file but the container doesn't see it," this is almost always the cause; the second-most-likely is a stale browser bundle (open DevTools → Network → tick "Disable cache" → reload).

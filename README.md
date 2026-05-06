@@ -12,6 +12,8 @@ Group scheduling without the back-and-forth. Create an event, invite participant
 - **Real-time updates** — Supabase Realtime pushes participant changes, busy-slot syncs, and proposal refreshes live to all viewers
 - **Event finalization** — coordinator picks the winning proposal and closes the event
 - **Credential expiry detection** — expired Google Calendar tokens are detected and the UI prompts the user to reconnect without disrupting other participants
+- **Account deletion** — authenticated users can permanently delete their account and all owned data (events, calendar tokens, preferences) from the Settings page; Google OAuth tokens are revoked server-side before any data is removed
+- **Privacy Policy** — hosted at `/privacy`; covers data collection, retention, deletion rights, and third-party integrations
 
 ## Tech Stack
 
