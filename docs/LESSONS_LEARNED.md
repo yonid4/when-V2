@@ -791,3 +791,18 @@ Lessons surfaced while fixing React errors `#418` ("hydration failed") and `#423
 
 - **`overlayContent` must be rendered AFTER the grid `<div>` in `AvailabilityGrid`, not before it.**
   In `frontend/components/event/AvailabilityGrid.tsx`, the overlay container is a sibling of the grid div, both inside a `position: relative` parent. DOM order determines stacking context for `position: absolute` siblings — a later sibling naturally paints on top. When `{overlayContent}` was placed before `<div className="grid ...">`, the grid cells were rendered after the overlay and covered it. Moving `{overlayContent}` to after the grid div makes it stack on top without needing any `z-index`. Apply this rule anywhere an overlay must render above a sibling: place it after the sibling in the JSX, not before.
+
+---
+
+## Legal Pages — Privacy & Terms
+
+### Frontend
+
+- **Legal pages should use the same top-level brand header pattern as the rest of the app.**
+  The standalone `/privacy` and `/terms` pages initially rendered content without a navigation/header, which felt disconnected from the landing and authenticated surfaces. Add a sticky top header with the `When.` brand (linking to `/`) and legal cross-links (`/privacy`, `/terms`) so users can navigate between legal docs and back to home without relying on browser history.
+
+- **Highlight the active legal route in the shared legal header.**
+  Use the same header markup on both pages, but mark the current route (`Privacy` on `/privacy`, `Terms` on `/terms`) with the active text style to avoid ambiguous navigation state.
+
+- **Docker Compose frontend builds must use `context: ./frontend` with this Dockerfile layout.**
+  When `docker-compose.yml` sets frontend build context to repo root (`context: .`) while `frontend/Dockerfile` does `COPY package.json package-lock.json ./`, local builds fail with `"/package.json": not found`. Set frontend build context to `./frontend` and dockerfile path to `Dockerfile` to match the expected file layout and keep local behavior aligned with deploy environments that build from the `frontend` directory.

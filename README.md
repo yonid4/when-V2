@@ -14,6 +14,7 @@ Group scheduling without the back-and-forth. Create an event, invite participant
 - **Credential expiry detection** — expired Google Calendar tokens are detected and the UI prompts the user to reconnect without disrupting other participants
 - **Account deletion** — authenticated users can permanently delete their account and all owned data (events, calendar tokens, preferences) from the Settings page; Google OAuth tokens are revoked server-side before any data is removed
 - **Privacy Policy** — hosted at `/privacy`; covers data collection, retention, deletion rights, and third-party integrations
+- **Terms of Service** — hosted at `/terms`; defines usage terms, liability limits, and Google API Services policy alignment
 
 ## Tech Stack
 
