@@ -127,22 +127,6 @@ def _upsert_profile(user_info: dict, credentials: Credentials) -> dict:
     return profile_data
 
 
-def _upsert_calendar_account(user_id: str, user_info: dict, credentials: Credentials) -> None:
-    service_client.table("calendar_accounts").upsert(
-        {
-            "user_id": user_id,
-            "provider": "google",
-            "provider_email": user_info["email"],
-            "provider_account_id": user_info["id"],
-            "credentials": {
-                "access_token": credentials.token,
-                "refresh_token": credentials.refresh_token,
-            },
-        },
-        on_conflict="user_id,provider,provider_account_id",
-    ).execute()
-
-
 def _process_pending_invitations(user_id: str, email: str) -> None:
     """Find pending event_invitations by email, link the new user and notify them.
 
@@ -183,7 +167,12 @@ def _process_pending_invitations(user_id: str, email: str) -> None:
 
 def _create_jwt(user_id: str, email: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
-    payload = {"sub": user_id, "email": email, "exp": expire}
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "role": "authenticated",
+        "exp": expire,
+    }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
