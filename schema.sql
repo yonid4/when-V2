@@ -511,7 +511,7 @@ CREATE TABLE IF NOT EXISTS "public"."events" (
     "name" "text" NOT NULL,
     "description" "text",
     "event_type" "public"."event_type_enum" DEFAULT 'meeting'::"public"."event_type_enum" NOT NULL,
-    "coordinator_id" "uuid" NOT NULL,
+    "coordinator_id" "uuid",
     "earliest_datetime_utc" timestamp with time zone NOT NULL,
     "latest_datetime_utc" timestamp with time zone NOT NULL,
     "duration_minutes" integer NOT NULL,
@@ -904,7 +904,7 @@ ALTER TABLE ONLY "public"."event_participants"
 
 
 ALTER TABLE ONLY "public"."events"
-    ADD CONSTRAINT "events_coordinator_id_fkey" FOREIGN KEY ("coordinator_id") REFERENCES "public"."profiles"("id") ON DELETE RESTRICT;
+    ADD CONSTRAINT "events_coordinator_id_fkey" FOREIGN KEY ("coordinator_id") REFERENCES "public"."profiles"("id") ON DELETE SET NULL;
 
 
 
@@ -955,30 +955,6 @@ ALTER TABLE ONLY "public"."proposed_times"
 -- ============================================================
 -- RLS POLICIES
 -- ============================================================
-
-CREATE POLICY "anon can select busy_slots" ON "public"."busy_slots" FOR SELECT TO "anon" USING (true);
-
-
-
-CREATE POLICY "anon can select event_participants" ON "public"."event_participants" FOR SELECT TO "anon" USING (true);
-
-
-
-CREATE POLICY "anon can select events" ON "public"."events" FOR SELECT TO "anon" USING (true);
-
-
-
-CREATE POLICY "anon can select notifications" ON "public"."notifications" FOR SELECT TO "anon" USING (true);
-
-
-
-CREATE POLICY "anon can select preferred_slots" ON "public"."preferred_slots" FOR SELECT TO "anon" USING (true);
-
-
-
-CREATE POLICY "anon can select proposed_time_notes" ON "public"."proposed_time_notes" FOR SELECT TO "anon" USING (true);
-
-
 
 ALTER TABLE "public"."busy_slots" ENABLE ROW LEVEL SECURITY;
 
@@ -1171,11 +1147,11 @@ ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."proposed_time_not
 
 
 -- RLS policies for realtime.messages (pg_dump cannot capture cross-schema objects)
-CREATE POLICY "anon can receive broadcasts"
-  ON "realtime"."messages" FOR SELECT TO "anon" USING (true);
+CREATE POLICY "authenticated can receive broadcasts"
+  ON "realtime"."messages" FOR SELECT TO "authenticated" USING (true);
 
-CREATE POLICY "anon can send broadcasts"
-  ON "realtime"."messages" FOR INSERT TO "anon" WITH CHECK (true);
+CREATE POLICY "authenticated can send broadcasts"
+  ON "realtime"."messages" FOR INSERT TO "authenticated" WITH CHECK (true);
 
 
 
