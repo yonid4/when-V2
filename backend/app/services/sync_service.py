@@ -18,11 +18,67 @@ def _to_utc(dt_str: str) -> str:
 
 def sync_busy_slots(user_id: str) -> int:
     """Sync busy slots for all enabled calendar sources belonging to user_id.
-    Returns the number of slots upserted."""
+
+    The forward end of the window is fixed at NOW + 90 days. The start of the
+    window normally is NOW, but if the user is part of any active event whose
+    ``earliest_datetime_utc`` is in the past, the start is widened backwards
+    so we still sync the user's busy data covering that event's window.
+
+    Returns the number of slots upserted.
+    """
     now = datetime.now(timezone.utc)
-    time_min = now
+    time_min = _earliest_active_event_start(user_id, default=now)
     time_max = now + timedelta(days=90)
     return _sync_user(user_id, time_min, time_max)
+
+
+def _earliest_active_event_start(user_id: str, default: datetime) -> datetime:
+    """Return the earliest ``earliest_datetime_utc`` across active (planning or
+    confirmed) events the user is in — either as coordinator or as a
+    non-declined participant — but never later than ``default``.
+
+    If the user is in no such events, returns ``default``.
+    """
+    candidates: list[datetime] = [default]
+
+    coord = (
+        service_client.table("events")
+        .select("earliest_datetime_utc")
+        .eq("coordinator_id", user_id)
+        .in_("status", ["planning", "confirmed"])
+        .execute()
+    )
+    for row in coord.data or []:
+        candidates.append(_parse_iso_utc(row["earliest_datetime_utc"]))
+
+    participant_rows = (
+        service_client.table("event_participants")
+        .select("event_id")
+        .eq("user_id", user_id)
+        .neq("status", "declined")
+        .execute()
+    )
+    event_ids = [r["event_id"] for r in (participant_rows.data or [])]
+    if event_ids:
+        participant_events = (
+            service_client.table("events")
+            .select("earliest_datetime_utc")
+            .in_("id", event_ids)
+            .in_("status", ["planning", "confirmed"])
+            .execute()
+        )
+        for row in participant_events.data or []:
+            candidates.append(_parse_iso_utc(row["earliest_datetime_utc"]))
+
+    return min(candidates)
+
+
+def _parse_iso_utc(value: str) -> datetime:
+    """Parse an ISO datetime string and normalise to tz-aware UTC."""
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
@@ -80,15 +136,6 @@ def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
             ).eq("id", account["id"]).execute()
 
     return total
-
-
-def sync_event_participants(event_id: str) -> dict[str, int]:
-    """Sync busy slots for all accepted/invited participants of an event (global 90-day window).
-    Returns a dict of {user_id: slots_upserted}."""
-    now = datetime.now(timezone.utc)
-    time_min = now
-    time_max = now + timedelta(days=90)
-    return _sync_participants_in_range(event_id, time_min, time_max)
 
 
 def sync_event_participants_scoped(
