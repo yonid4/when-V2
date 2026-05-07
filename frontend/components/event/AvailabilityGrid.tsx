@@ -40,7 +40,12 @@ export function AvailabilityGrid({
   currentUserId: string
   deletingSlotId: string | null
   slotsToDelete: string[]
-  overlayContent?: React.ReactNode
+  overlayContent?: React.ReactNode | ((context: {
+    columnDates: Date[]
+    eventStart: Date
+    isScrollable: boolean
+    totalRows: number
+  }) => React.ReactNode)
   onCellMouseDown: (dayIndex: number, rowIndex: number, cellStartUtc: Date) => void
   onCellMouseEnter: (dayIndex: number, rowIndex: number, cellStartUtc: Date) => void
   onPendingSlotEdgeMouseDown: (edge: 'top' | 'bottom', e: React.MouseEvent) => void
@@ -72,6 +77,13 @@ export function AvailabilityGrid({
   const dayOfWeek = baseDate.getDay()
   const offsetToMonday = (dayOfWeek + 6) % 7
   baseDate.setDate(baseDate.getDate() - offsetToMonday + weekOffset * 7)
+  baseDate.setHours(0, 0, 0, 0)
+
+  const columnDates = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(baseDate)
+    d.setDate(d.getDate() + i)
+    return d
+  })
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(baseDate)
@@ -373,7 +385,14 @@ export function AvailabilityGrid({
                 )
               })}
             </div>
-            {overlayContent}
+            {typeof overlayContent === 'function'
+              ? overlayContent({
+                  columnDates,
+                  eventStart: earliestDate,
+                  isScrollable,
+                  totalRows,
+                })
+              : overlayContent}
           </div>
         </div>
       </div>
