@@ -67,3 +67,8 @@ app.include_router(proposals.router)
 app.include_router(proposal_notes.router)
 app.include_router(finalize.router)
 app.include_router(account.router)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
