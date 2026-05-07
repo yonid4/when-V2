@@ -37,6 +37,7 @@ import { EditModal } from '@/components/event/EditModal'
 import { DeleteModal } from '@/components/event/DeleteModal'
 import { AvailabilityGrid } from '@/components/event/AvailabilityGrid'
 import { ProposedTimeOverlay } from '@/components/event/ProposedTimeOverlay'
+import { FinalizedSlotOverlay } from '@/components/event/FinalizedSlotOverlay'
 import { computeMerge } from '@/lib/editModeUtils'
 import type { PendingSlot } from '@/types'
 import type { EditSaveResult } from './editEventUtils'
@@ -422,14 +423,26 @@ function EventDetailLoaded({ event }: { event: EventWithParticipants }) {
                 deletingSlotId={deletingSlotId}
                 slotsToDelete={slotsToDelete}
                 overlayContent={({ columnDates, eventStart, isScrollable, totalRows }) => (
-                  <ProposedTimeOverlay
-                    proposals={proposals ?? []}
-                    visible={showProposedOverlay && event.status !== 'confirmed'}
-                    eventStart={eventStart}
-                    columnDates={columnDates}
-                    isScrollable={isScrollable}
-                    totalRows={totalRows}
-                  />
+                  <>
+                    <ProposedTimeOverlay
+                      proposals={proposals ?? []}
+                      visible={showProposedOverlay && event.status !== 'confirmed'}
+                      eventStart={eventStart}
+                      columnDates={columnDates}
+                      isScrollable={isScrollable}
+                      totalRows={totalRows}
+                    />
+                    {event.status === 'confirmed' && event.finalized_start_time_utc && event.finalized_end_time_utc && (
+                      <FinalizedSlotOverlay
+                        startTimeUtc={event.finalized_start_time_utc}
+                        endTimeUtc={event.finalized_end_time_utc}
+                        eventStart={eventStart}
+                        columnDates={columnDates}
+                        isScrollable={isScrollable}
+                        totalRows={totalRows}
+                      />
+                    )}
+                  </>
                 )}
                 onCellMouseDown={handleCellMouseDown}
                 onCellMouseEnter={handleCellMouseEnter}
