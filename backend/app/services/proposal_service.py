@@ -1,11 +1,14 @@
 """Scheduling algorithm service — generates ranked time proposals for an event."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 
 from app.services.event_service import fetch_event_by_uid
 from app.utils.supabase import service_client
+
+logger = logging.getLogger(__name__)
 
 
 def get_event_and_check_access(uid: str, user_id: str, coordinator_only: bool = False) -> dict:
@@ -65,6 +68,98 @@ def _parse_dt(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
+def _snap_forward(t: datetime, duration: timedelta, seg_end: datetime) -> list[datetime]:
+    """Snap t to the next 30-min boundary and collect all stride slots until seg_end."""
+    minute_mod = t.minute % 30
+    if minute_mod != 0:
+        t += timedelta(minutes=(30 - minute_mod))
+    t = t.replace(second=0, microsecond=0)
+
+    slots: list[datetime] = []
+    stride = timedelta(minutes=30)
+    while t + duration <= seg_end:
+        slots.append(t)
+        t += stride
+    return slots
+
+
+def _build_day_candidates(
+    start_date: datetime.date,
+    end_date: datetime.date,
+    start_hour: int,
+    end_hour: int,
+    duration: timedelta,
+    earliest_dt: datetime,
+) -> list[datetime]:
+    """Build candidate start times for each day in [start_date, end_date].
+
+    Handles both normal (start_hour < end_hour) and wrap-around
+    (start_hour >= end_hour, e.g. 20:00–03:00) UTC windows.
+
+    - Normal: each day has one segment [start_hour, end_hour).
+    - Wrap: each day has two segments [start_hour, midnight) and [midnight, end_hour).
+      The wrap segment that trails into the next calendar day is attached to the
+      *previous* day's iteration so scoring/conflict logic stays per-event-day.
+    - Every segment is clamped to now so past slots are never generated.
+    - First day: also clamped to earliest_dt.
+    - Last day: only segments that fall within the event window are included.
+    """
+    now = datetime.now(timezone.utc)
+    candidates: list[datetime] = []
+
+    # end_hour == 0 with a wrap means end at midnight (full wrap to end of day)
+    wraps = (end_hour != 0 and end_hour <= start_hour) or (end_hour == 0 and start_hour > 0)
+
+    day = start_date
+    while day <= end_date:
+        is_first = day == start_date
+        is_last = day == end_date
+
+        midnight = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        next_midnight = midnight + timedelta(days=1)
+
+        if wraps:
+            # Segment 1: start_hour → midnight of this day
+            seg1_start = datetime(day.year, day.month, day.day, start_hour, 0, tzinfo=timezone.utc)
+            seg1_end = next_midnight
+
+            # Segment 2: midnight → end_hour (overnight tail into next calendar day)
+            if end_hour == 0:
+                seg2_start = seg2_end = next_midnight  # no tail segment
+            else:
+                seg2_start = next_midnight
+                seg2_end = next_midnight.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+
+            # Clamp both segment starts to now (and earliest_dt for seg1 on first day)
+            t1 = seg1_start
+            if is_first:
+                t1 = max(t1, earliest_dt)
+            t1 = max(t1, now)
+            candidates.extend(_snap_forward(t1, duration, seg1_end))
+
+            # Tail segment: only add if next day is still within the event window
+            if not is_last and end_hour != 0:
+                candidates.extend(_snap_forward(max(seg2_start, now), duration, seg2_end))
+
+        else:
+            # Normal window: start_hour → end_hour (or midnight if end_hour == 0)
+            seg_start = datetime(day.year, day.month, day.day, start_hour, 0, tzinfo=timezone.utc)
+            if end_hour == 0:
+                seg_end = next_midnight
+            else:
+                seg_end = datetime(day.year, day.month, day.day, end_hour, 0, tzinfo=timezone.utc)
+
+            t = seg_start
+            if is_first:
+                t = max(t, earliest_dt)
+            t = max(t, now)
+            candidates.extend(_snap_forward(t, duration, seg_end))
+
+        day += timedelta(days=1)
+
+    return candidates
+
+
 def generate_proposals(event_id: str, db=None) -> list[dict]:
     """Generate ranked time proposals for an event and persist them.
 
@@ -75,9 +170,10 @@ def generate_proposals(event_id: str, db=None) -> list[dict]:
     4. Generate candidate 30-min-stride windows of duration_minutes length.
     5. Score each candidate (conflict_count, preferred_count).
     6. Rank: conflict_count ASC, preferred_count DESC, start_time ASC — take top 5.
-    7. Delete old proposed_times rows for this event, insert new ones.
-    8. Update event: proposals_last_generated_at, proposals_needs_regeneration=false.
-    9. Return inserted rows.
+    7. If no candidates, log a warning and return [] without touching existing proposals or flags.
+    8. Delete old proposed_times rows, insert new ones.
+    9. Update event: proposals_last_generated_at, proposals_needs_regeneration=false.
+    10. Return inserted rows.
     """
     client = db if db is not None else service_client
 
@@ -94,8 +190,13 @@ def generate_proposals(event_id: str, db=None) -> list[dict]:
         return []
 
     duration_min = int(event["duration_minutes"])
-    window_start = _parse_dt(event["earliest_datetime_utc"])
-    window_end = _parse_dt(event["latest_datetime_utc"])
+    earliest_dt = _parse_dt(event["earliest_datetime_utc"])
+    latest_dt = _parse_dt(event["latest_datetime_utc"])
+
+    start_date = earliest_dt.date()
+    end_date = latest_dt.date()
+    start_hour = earliest_dt.hour
+    end_hour = latest_dt.hour
 
     # 2. Fetch accepted participants
     participants_result = (
@@ -133,14 +234,16 @@ def generate_proposals(event_id: str, db=None) -> list[dict]:
         )
         preferred_slots = pref_result.data or []
 
-    # 5. Generate candidate windows
-    stride = timedelta(minutes=30)
+    # 5. Generate candidate windows day-by-day within the configured hour window
     duration = timedelta(minutes=duration_min)
-    candidates = []
-    t = window_start
-    while t + duration <= window_end:
-        candidates.append(t)
-        t += stride
+    candidates = _build_day_candidates(
+        start_date=start_date,
+        end_date=end_date,
+        start_hour=start_hour,
+        end_hour=end_hour,
+        duration=duration,
+        earliest_dt=earliest_dt,
+    )
 
     # 6. Score each candidate
     scored = []
@@ -182,10 +285,13 @@ def generate_proposals(event_id: str, db=None) -> list[dict]:
     scored.sort(key=lambda x: (x["conflict_count"], -x["preferred_count"], x["start"]))
     top5 = scored[:5]
 
-    # 8. Delete old proposed_times rows for this event
+    if not top5:
+        logger.warning("generate_proposals: no candidates found for event %s — keeping existing proposals", event_id)
+        return []
+
+    # 8. Delete old proposed_times rows and insert new ones
     client.table("proposed_times").delete().eq("event_id", event_id).execute()
 
-    # 9. Insert new rows
     now_iso = datetime.now(timezone.utc).isoformat()
     rows_to_insert = []
     for rank, item in enumerate(top5, start=1):
@@ -199,16 +305,14 @@ def generate_proposals(event_id: str, db=None) -> list[dict]:
             "rank": rank,
         })
 
-    inserted = []
-    if rows_to_insert:
-        insert_result = (
-            client.table("proposed_times")
-            .insert(rows_to_insert)
-            .execute()
-        )
-        inserted = insert_result.data or []
+    insert_result = (
+        client.table("proposed_times")
+        .insert(rows_to_insert)
+        .execute()
+    )
+    inserted = insert_result.data or []
 
-    # 10. Update event metadata
+    # 9. Update event metadata only on success
     client.table("events").update({
         "proposals_last_generated_at": now_iso,
         "proposals_needs_regeneration": False,
