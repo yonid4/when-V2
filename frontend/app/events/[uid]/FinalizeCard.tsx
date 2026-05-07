@@ -5,6 +5,7 @@ import { X, CalendarCheck, Plus, RotateCw } from 'lucide-react'
 import { useFinalize } from '@/hooks/useFinalize'
 import { useConnectCalendarAccount } from '@/hooks/useCalendarAccounts'
 import { formatDayLabel, formatTime } from '@/lib/dates'
+import { NoCalendarModal } from '@/components/event/NoCalendarModal'
 import type { Event, Participant, ProposalResponse } from '@/types'
 
 interface FinalizeCardProps {
@@ -32,6 +33,7 @@ export function FinalizeCard({
   const [videoCallLink, setVideoCallLink] = useState(event.video_call_link ?? '')
   const [apiError, setApiError] = useState<string | null>(null)
   const [showReconnect, setShowReconnect] = useState(false)
+  const [showNoCalendarModal, setShowNoCalendarModal] = useState(false)
 
   const { mutate: finalize, isPending } = useFinalize(event.uid)
   const connectCalendar = useConnectCalendarAccount()
@@ -71,6 +73,7 @@ export function FinalizeCard({
     if (!name.trim()) return
     setApiError(null)
     setShowReconnect(false)
+    setShowNoCalendarModal(false)
     finalize(
       {
         proposed_time_id: selectedProposalId,
@@ -94,7 +97,7 @@ export function FinalizeCard({
           } else if (detail === 'calendar_create_failed') {
             setApiError('Could not create calendar event — check your calendar connection and try again')
           } else if (detail === 'no_write_calendar') {
-            setApiError('No write calendar configured — go to Settings to set one')
+            setShowNoCalendarModal(true)
           } else {
             setApiError('Something went wrong — please try again')
           }
@@ -104,6 +107,7 @@ export function FinalizeCard({
   }
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-on-surface/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-surface-container-lowest rounded-2xl w-full max-w-lg shadow-warm-md flex flex-col max-h-[90vh]">
@@ -328,5 +332,10 @@ export function FinalizeCard({
         </div>
       </div>
     </div>
+
+    {showNoCalendarModal && (
+      <NoCalendarModal onClose={() => setShowNoCalendarModal(false)} />
+    )}
+    </>
   )
 }
