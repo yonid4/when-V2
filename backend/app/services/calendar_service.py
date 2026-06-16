@@ -184,17 +184,19 @@ def update_calendar_source(
 
     if data.is_write_calendar is True:
         # Read-only calendars cannot be the write calendar — creating events on
-        # them fails at the provider (e.g. Google 403 requiredAccessLevel).
+        # them fails at the provider (e.g. Google 403 requiredAccessLevel). Check
+        # this BEFORE touching the DB so a rejected attempt changes nothing.
         if not source_row.get("is_writable", True):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="calendar_not_writable",
             )
-        # Clear is_write_calendar on all other sources belonging to this user
-        service_client.rpc(
-            "clear_write_calendar_for_user",
-            {"p_user_id": user_id, "p_exclude_source_id": source_id},
-        ).execute()
+        # Set this source as the write calendar in a single update. The
+        # calendar_sources_single_write trigger atomically clears any other write
+        # calendar for this user (across all accounts/providers) in the same
+        # statement. We deliberately do NOT clear others in a separate step
+        # first: if this update then failed, that separate clear would have
+        # already committed and left the user with no write calendar at all.
         update_payload["is_write_calendar"] = True
     elif data.is_write_calendar is False:
         update_payload["is_write_calendar"] = False
