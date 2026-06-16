@@ -32,7 +32,7 @@ export interface Event {
   finalized_start_time_utc: string | null
   finalized_end_time_utc: string | null
   allow_guest_invites: boolean
-  google_calendar_event_id: string | null
+  calendar_event_id: string | null
   proposals_needs_regeneration: boolean
   proposals_last_generated_at: string | null
   created_at: string
@@ -105,10 +105,12 @@ export interface Notification {
 
 // ─── Calendar ─────────────────────────────────────────────────────────────────
 
+export type CalendarProvider = 'google' | 'microsoft'
+
 export interface CalendarAccount {
   id: string
   user_id: string
-  provider: string
+  provider: CalendarProvider
   provider_email: string
   provider_account_id: string
   connected_at: string
@@ -124,6 +126,7 @@ export interface CalendarSource {
   calendar_name: string
   is_enabled: boolean
   is_write_calendar: boolean
+  is_writable: boolean
   color: string | null
   created_at: string
   updated_at: string
@@ -227,7 +230,7 @@ export interface FinalizeStatus {
   status: string
   finalized_start_time_utc: string | null
   finalized_end_time_utc: string | null
-  google_calendar_event_id: string | null
+  calendar_event_id: string | null
   location: string | null
   video_call_link: string | null
 }

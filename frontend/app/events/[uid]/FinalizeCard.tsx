@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { X, CalendarCheck, Plus, RotateCw } from 'lucide-react'
 import { useFinalize } from '@/hooks/useFinalize'
-import { useConnectCalendarAccount } from '@/hooks/useCalendarAccounts'
 import { formatDayLabel, formatTime } from '@/lib/dates'
 import { NoCalendarModal } from '@/components/event/NoCalendarModal'
 import type { Event, Participant, ProposalResponse } from '@/types'
@@ -36,7 +35,6 @@ export function FinalizeCard({
   const [showNoCalendarModal, setShowNoCalendarModal] = useState(false)
 
   const { mutate: finalize, isPending } = useFinalize(event.uid)
-  const connectCalendar = useConnectCalendarAccount()
 
   function toggleParticipant(userId: string) {
     setExcludedUserIds((prev) => {
@@ -92,10 +90,12 @@ export function FinalizeCard({
         onError: (err: unknown) => {
           const detail = (err as { detail?: string })?.detail
           if (detail === 'calendar_credentials_expired') {
-            setApiError('Your Google Calendar connection expired. Please reconnect and try again.')
+            setApiError('Your calendar connection expired. Reconnect it in Settings and try again.')
             setShowReconnect(true)
           } else if (detail === 'calendar_create_failed') {
             setApiError('Could not create calendar event — check your calendar connection and try again')
+          } else if (detail === 'write_calendar_not_writable') {
+            setApiError('Your write calendar is read-only. Pick a writable calendar in Settings and try again.')
           } else if (detail === 'no_write_calendar') {
             setShowNoCalendarModal(true)
           } else {
@@ -300,14 +300,13 @@ export function FinalizeCard({
             <div className="space-y-2">
               <p className="text-sm text-error font-medium">{apiError}</p>
               {showReconnect && (
-                <button
-                  type="button"
-                  onClick={() => connectCalendar()}
+                <a
+                  href="/settings"
                   className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-on-primary text-sm font-semibold hover:opacity-90 transition-opacity"
                 >
                   <RotateCw className="w-4 h-4" />
-                  Reconnect Google Calendar
-                </button>
+                  Reconnect in Settings
+                </a>
               )}
             </div>
           )}

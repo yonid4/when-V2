@@ -45,6 +45,7 @@ const mockAccount = {
       calendar_name: 'Primary',
       is_enabled: true,
       is_write_calendar: true,
+      is_writable: true,
       color: '#9b4428',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

@@ -93,7 +93,7 @@ function makeEvent(overrides: Partial<EventWithParticipants> = {}): EventWithPar
     finalized_start_time_utc: null,
     finalized_end_time_utc: null,
     allow_guest_invites: false,
-    google_calendar_event_id: null,
+    calendar_event_id: null,
     proposals_needs_regeneration: false,
     proposals_last_generated_at: null,
     created_at: '2026-04-01T00:00:00.000Z',

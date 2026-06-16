@@ -42,7 +42,7 @@ export function DeleteAccountModal({ onClose }: { onClose: () => void }) {
             <p className="text-sm text-on-surface-variant mt-2">
               All your events, calendar connections, busy slots, and personal data will be{' '}
               <span className="font-semibold text-on-surface">permanently deleted</span>.
-              We will also revoke When.&apos;s access to your Google Calendar.
+              We will also revoke When.&apos;s access to your connected calendars.
               This action cannot be undone.
             </p>
           </div>

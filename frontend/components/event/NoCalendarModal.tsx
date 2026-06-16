@@ -17,7 +17,7 @@ export function NoCalendarModal({ onClose }: NoCalendarModalProps) {
         <div className="text-center space-y-1">
           <h3 className="text-base font-bold text-on-surface">No Calendar Connected</h3>
           <p className="text-sm text-on-surface-variant">
-            You need to connect a Google Calendar in Settings before you can finalize an event.
+            You need to connect a calendar in Settings before you can finalize an event.
           </p>
         </div>
         <div className="flex flex-col gap-2 w-full">

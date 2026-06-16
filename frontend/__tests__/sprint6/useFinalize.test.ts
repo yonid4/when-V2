@@ -27,7 +27,7 @@ const mockFinalizeStatus = {
   status: 'confirmed',
   finalized_start_time_utc: '2026-04-10T12:00:00+00:00',
   finalized_end_time_utc: '2026-04-10T13:00:00+00:00',
-  google_calendar_event_id: 'gcal-event-123',
+  calendar_event_id: 'gcal-event-123',
   location: 'Conference Room A',
   video_call_link: 'https://meet.google.com/abc-def-ghi',
 }

@@ -17,21 +17,30 @@ export function SourceRow({ source, onToggle, onSetWrite }: SourceRowProps) {
         <span className="font-medium">{source.calendar_name}</span>
       </div>
       <div className="flex items-center gap-4">
-        <label
-          className="flex items-center gap-2 cursor-pointer group"
-          title="Events will be added to this calendar when you finalize a meeting"
-        >
-          <input
-            type="radio"
-            name="write-calendar"
-            checked={source.is_write_calendar}
-            onChange={onSetWrite}
-            className="accent-primary w-4 h-4 cursor-pointer"
-          />
-          <span className="text-xs font-semibold text-on-surface-variant group-hover:text-primary transition-colors">
-            Write calendar
+        {source.is_writable ? (
+          <label
+            className="flex items-center gap-2 cursor-pointer group"
+            title="Events will be added to this calendar when you finalize a meeting"
+          >
+            <input
+              type="radio"
+              name="write-calendar"
+              checked={source.is_write_calendar}
+              onChange={onSetWrite}
+              className="accent-primary w-4 h-4 cursor-pointer"
+            />
+            <span className="text-xs font-semibold text-on-surface-variant group-hover:text-primary transition-colors">
+              Write calendar
+            </span>
+          </label>
+        ) : (
+          <span
+            className="text-xs font-semibold text-on-surface-variant/60"
+            title="This calendar is read-only, so events can't be created on it. It can still be used to show your busy times."
+          >
+            Read-only
           </span>
-        </label>
+        )}
         <label
           className={`relative inline-flex items-center ${source.is_write_calendar ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
           title={source.is_write_calendar ? 'This is your write calendar. Select another write calendar before disabling.' : undefined}

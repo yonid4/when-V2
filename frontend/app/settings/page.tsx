@@ -23,8 +23,8 @@ export default function SettingsPage() {
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false)
   const showCalendarBanner = searchParams.get('connect_calendar') === 'true' && !bannerDismissed
 
-  async function handleConnectCalendar() {
-    await connectCalendar()
+  async function handleConnectCalendar(provider: 'google' | 'microsoft' = 'google') {
+    await connectCalendar(provider)
   }
 
   return (
@@ -85,7 +85,7 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-2">
                       {account.needs_reauth && (
                         <button
-                          onClick={handleConnectCalendar}
+                          onClick={() => handleConnectCalendar(account.provider)}
                           className="px-5 py-2 text-sm font-semibold text-on-primary bg-primary hover:opacity-90 rounded-full transition-opacity duration-300 flex items-center gap-2"
                         >
                           <RotateCw className="w-4 h-4" />
@@ -129,13 +129,22 @@ export default function SettingsPage() {
               ))}
 
               {/* Connect another account */}
-              <button
-                onClick={handleConnectCalendar}
-                className="w-full py-4 border-2 border-dashed border-outline-variant/40 rounded-xl text-primary font-bold hover:bg-white hover:border-primary/40 transition-all duration-300 active:scale-95 flex items-center justify-center gap-2"
-              >
-                <Plus className="w-5 h-5" />
-                Connect another account
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => handleConnectCalendar('google')}
+                  className="flex-1 py-4 border-2 border-dashed border-outline-variant/40 rounded-xl text-primary font-bold hover:bg-white hover:border-primary/40 transition-all duration-300 active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-5 h-5" />
+                  Connect Google Calendar
+                </button>
+                <button
+                  onClick={() => handleConnectCalendar('microsoft')}
+                  className="flex-1 py-4 border-2 border-dashed border-outline-variant/40 rounded-xl text-primary font-bold hover:bg-white hover:border-primary/40 transition-all duration-300 active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-5 h-5" />
+                  Connect Outlook Calendar
+                </button>
+              </div>
             </div>
           </section>
 

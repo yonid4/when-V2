@@ -668,10 +668,10 @@ function EventDetailLoaded({ event }: { event: EventWithParticipants }) {
                     Join video call
                   </a>
                 )}
-                {event.google_calendar_event_id && (
+                {event.calendar_event_id && (
                   <p className="text-[10px] font-medium text-primary/70 flex items-center gap-1 pt-0.5">
                     <Calendar className="w-3 h-3" />
-                    Added to Google Calendar
+                    Added to calendar
                   </p>
                 )}
               </div>

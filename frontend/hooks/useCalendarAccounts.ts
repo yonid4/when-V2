@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import type { CalendarAccount, CalendarSource } from '@/types'
+import type { CalendarAccount, CalendarProvider, CalendarSource } from '@/types'
 
 const ACCOUNTS_KEY = ['calendar-accounts'] as const
 
@@ -25,8 +25,10 @@ export function useDisconnectCalendarAccount() {
 }
 
 export function useConnectCalendarAccount() {
-  return async () => {
-    const data = await api.get<{ url: string }>('/calendar-accounts/connect-url')
+  return async (provider: CalendarProvider = 'google') => {
+    const data = await api.get<{ url: string }>(
+      `/calendar-accounts/connect-url?provider=${provider}`
+    )
     window.location.href = data.url
   }
 }
