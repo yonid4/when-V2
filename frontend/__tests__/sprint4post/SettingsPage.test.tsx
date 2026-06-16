@@ -76,4 +76,28 @@ describe('SettingsPage — write-calendar radio', () => {
       data: { is_write_calendar: true },
     })
   })
+
+  it('explains and does not switch when a read-only calendar is chosen as write', () => {
+    const readOnlyAccount = {
+      ...mockAccount,
+      sources: [
+        {
+          ...mockAccount.sources[0],
+          id: 'source-ro',
+          calendar_name: 'Imported',
+          is_writable: false,
+        },
+      ],
+    }
+    vi.mocked(useCalendarAccounts).mockReturnValue({ data: [readOnlyAccount], isLoading: false } as any)
+
+    render(<SettingsPage />)
+
+    const radio = screen.getByRole('radio', { name: /write calendar/i })
+    radio.click()
+
+    // No switch attempted, and the user is told why.
+    expect(mockUpdateSource).not.toHaveBeenCalled()
+    expect(screen.getByText(/can't be your write calendar/i)).toBeInTheDocument()
+  })
 })
