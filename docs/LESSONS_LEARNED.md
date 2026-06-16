@@ -806,3 +806,126 @@ Lessons surfaced while fixing React errors `#418` ("hydration failed") and `#423
 
 - **Docker Compose frontend builds must use `context: ./frontend` with this Dockerfile layout.**
   When `docker-compose.yml` sets frontend build context to repo root (`context: .`) while `frontend/Dockerfile` does `COPY package.json package-lock.json ./`, local builds fail with `"/package.json": not found`. Set frontend build context to `./frontend` and dockerfile path to `Dockerfile` to match the expected file layout and keep local behavior aligned with deploy environments that build from the `frontend` directory.
+
+---
+
+## Multi-Provider Calendar Integration (Google + Microsoft / Outlook)
+
+Lessons from adding a second calendar provider (Microsoft Graph) behind a provider abstraction, plus read-only calendars, a DB-enforced single-write-calendar invariant, cross-provider per-participant finalization, and a proposal-generation fix.
+
+### Backend — Provider abstraction (`app/providers/`)
+
+- **All provider-specific logic lives behind `CalendarProvider`; services dispatch on `calendar_accounts.provider` via `get_provider(name)` — never hard-code a provider.**
+  Sync, finalize, connect, and disconnect all call `get_provider(account["provider"])` and then the abstract methods (`exchange_code`, `list_calendars`, `fetch_busy_events`, `create_event`, `revoke`). Adding a third provider means writing one `CalendarProvider` subclass and registering it — no edits to the sync/finalize/connect flows. The interface and shared value types (`TokenBundle`, `ConnectedIdentity`, `ProviderCalendar`, `BusyEvent`, `EventPayload`) live in `app/providers/base.py`.
+
+- **The registry imports providers lazily so a Google-only deployment never imports `msal`.**
+  `registry.get_provider` does the `from app.providers.google import GoogleProvider` (or `microsoft`) *inside* the function, not at module top. A deployment with `MICROSOFT_CLIENT_ID` blank never imports the Microsoft path. `SUPPORTED_PROVIDERS = ("google", "microsoft")` is the canonical tuple; the DB has a matching `calendar_accounts_provider_check` constraint.
+
+- **`TokenBundle.dirty` is the token-persistence contract — callers MUST persist `bundle.data` whenever `dirty` is true after any provider call.**
+  Providers receive a mutable `TokenBundle`. If credentials rotate mid-call they call `tokens.update(new_data)` which replaces `data` and sets `dirty = True`. Every caller (`_persist_account_after_sync`, `connect_account`, `_create_event_on_write_calendar`) checks `tokens.dirty` and writes the *whole* `tokens.data` dict back to `calendar_accounts.credentials`. Persisting the whole dict (not just the access token) is what makes Microsoft's rotating refresh token survive — see below.
+
+- **Provider errors are normalized to three exception types; services branch on these, not on Google/Microsoft-specific exceptions.**
+  `ProviderAuthError` (credentials dead → mark `needs_reauth`), `ProviderAPIError` (5xx/network/unexpected → skip without touching data), `TokenRevocationError` (revoke uncertain → keep stored credentials). Google's `RefreshError` maps to `ProviderAuthError`; Microsoft's `invalid_grant` token response maps to it too. `sync_service` and `finalize_service` now catch only these provider-neutral types. The legacy `TokenRevocationError` is re-exported from `app/utils/google_auth.py` (`# noqa: F401`) so existing import sites keep working.
+
+- **Providers normalize busy events fully (expand recurring, drop cancelled + all-day, convert to UTC) so the sync layer is provider-agnostic.**
+  `_sync_source` used to contain Google-specific parsing (pagination, `status == "cancelled"` skips, all-day `date` vs `dateTime` detection, `_to_utc`). All of that moved *into* `GoogleProvider.fetch_busy_events`. The service now just does `{be.event_id for be in busy_events}` for the stale set and builds upsert rows. The stale-deletion logic is unchanged — events the provider no longer returns are treated as stale and deleted — but it now operates on `BusyEvent` objects, not raw Google items.
+
+### Backend — Microsoft Graph specifics
+
+- **Microsoft rotates the refresh token on every refresh — persist the whole credentials dict or you permanently lose access.**
+  Unlike Google (which rotates only the access token), Graph returns a *new* refresh token on every `acquire_token_by_refresh_token`. `_ensure_access_token` stores `result.get("refresh_token", refresh_token)` back into the bundle and sets `dirty`. If a caller persisted only the access token, the next refresh would use a stale (now-invalid) refresh token and the account would silently need reauth. This is the single most important reason the persistence contract saves the entire dict.
+
+- **MSAL is used statelessly — no token cache; credentials live in our own JSONB column.**
+  `MicrosoftProvider._app()` builds a fresh `ConfidentialClientApplication` per call with no token cache. Token state is our `calendar_accounts.credentials` dict, refreshed manually via `acquire_token_by_refresh_token`. This avoids MSAL's on-disk/in-memory cache entirely and keeps the provider a pure function of the stored bundle.
+
+- **Graph `calendarView` (not `events`) is the busy-events endpoint — it expands recurring instances server-side; request `Prefer: outlook.timezone="UTC"`.**
+  `/me/calendars/{id}/calendarView?startDateTime=...&endDateTime=...` returns expanded instances within the window, mirroring Google's `singleEvents=True`. The `Prefer` header makes Graph return times already in UTC so no offset interpretation is needed. Cancelled occurrences are simply absent from the response → treated as stale. Pagination follows `@odata.nextLink`, and `params` must be sent only on the *first* request (the nextLink already carries them).
+
+- **Graph datetimes have up to 7 fractional-second digits — truncate to 6 before `datetime.fromisoformat`.**
+  Graph returns e.g. `2026-04-10T12:00:00.0000000` (7 digits). Python's `fromisoformat` caps microseconds at 6 digits and raises on 7. `_graph_dt_to_utc` strips the trailing `Z`, truncates the fractional part to 6 digits, parses, and normalizes to UTC.
+
+- **Creating a Graph event wants *naive* UTC datetimes alongside `timeZone: "UTC"` — strip the offset.**
+  Stored times are offset-aware ISO strings (`...+00:00`). Graph's event body expects `{"dateTime": "2026-04-10T12:00:00", "timeZone": "UTC"}` — the offset must be removed (`_to_graph_naive`). Google, by contrast, accepts the offset-bearing string directly.
+
+- **`hexColor` comes back as `''` or `'auto'` when unset — pass through only real `#`-prefixed values.**
+  `_hex_color` returns the value only when it `startswith("#")`, else `None`. Storing `'auto'` as a color would break the UI swatch.
+
+- **Microsoft has no token-revocation endpoint for this flow — `revoke()` is a deliberate no-op.**
+  Disconnecting an Outlook account just drops the stored credentials. `MicrosoftProvider.revoke` returns `None` without a network call, so `disconnect_account` deletes the row normally. Google's `revoke` still calls the revocation endpoint and can raise `TokenRevocationError` (which aborts the delete so the user can retry).
+
+- **Locked-down tenants return an OAuth `error` (e.g. admin-consent-required) instead of a code — the callback must handle a missing code gracefully.**
+  `microsoft_calendar_callback` accepts `code`, `state`, `error`, `error_description` as optional query params. If `error` is set or `code`/`state` is missing, it logs and redirects to `/settings?error=calendar_auth_failed` rather than 500ing. The Microsoft callback path is `/api/calendar-accounts/callback/microsoft` (separate from Google's `/callback`, which is left unchanged so the existing registered redirect URI keeps working). Both callbacks share `_complete_connect(provider, code, state)`.
+
+### Backend — Read-only calendars & the single-write-calendar invariant
+
+- **`calendar_sources.is_writable` distinguishes "valid busy source" from "can create events here" — read-only calendars are still synced for availability but can never be the write calendar.**
+  Subscribed/imported/holiday calendars and shared-as-reader calendars return `accessRole` of `reader`/`freeBusyReader` (Google) or `canEdit: false` (Graph). The provider maps these to `is_writable=False`. Choosing one as the write calendar made finalization fail at the provider with a 403 (`requiredAccessLevel`). `update_calendar_source` now rejects setting a non-writable source as the write calendar with `422 calendar_not_writable`, **checked before any DB write** so a rejected attempt changes nothing.
+
+- **The "exactly one write calendar per user across all accounts/providers" invariant is enforced by a DB trigger, not application code.**
+  Migration `20260612000001` installs `calendar_sources_single_write` (a `BEFORE INSERT OR UPDATE OF is_write_calendar ... WHEN (NEW.is_write_calendar)` trigger) whose function `enforce_single_write_calendar` clears the flag on every *other* source belonging to the same user (joining through `calendar_accounts.user_id`). Setting a write calendar is therefore a single `UPDATE ... SET is_write_calendar = true` — the trigger atomically clears the previous one in the same statement.
+
+- **Never clear other write calendars in a separate statement before setting the new one — a failure between the two leaves the user with zero write calendars.**
+  The old code called an RPC `clear_write_calendar_for_user(...)` first, then set the new flag. If the second update failed, the clear had already committed → user has no write calendar → finalize 422s. The trigger-based single-statement approach removes the window entirely. (The `clear_write_calendar_for_user` RPC is now dead.)
+
+- **`connect_account` must not steal an existing write calendar when a second account connects.**
+  Source upserts deliberately omit `is_write_calendar` so reconnecting never clobbers the current designation — **except** for read-only calendars, where it's forced to `false` so a stale designation on a now-known-read-only calendar can't persist. A write calendar is designated (the account's primary, falling back to the first writable calendar) **only if `_user_has_write_calendar(user_id)` is false** after the upserts. Connecting a second Google/Outlook account when one already exists issues no `is_write_calendar` update at all.
+
+- **A CHECK constraint (`calendar_sources_write_requires_writable`: `is_writable OR NOT is_write_calendar`) is the DB backstop.**
+  Migration `20260616000001` adds `is_writable` (default true), marks known read-only Google calendars (`%@import.calendar.google.com`, `%holiday@group.v.calendar.google.com`) non-writable + clears any stale write flag on them, and adds the CHECK so a read-only row can never be the write calendar regardless of code path. Existing rows are assumed writable until the account is re-synced/re-connected, which repopulates the real value from the provider's access role.
+
+### Backend — Cross-provider, per-participant finalization
+
+- **The confirmed event is written directly onto *each* participant's own write calendar via their own provider — not just emailed as an invite.**
+  Cross-provider invitation emails are unreliable (personal Outlook → Gmail often lands in spam). Since When. tracks RSVP itself, `finalize_event` now: (1) loads every user's write calendar in one query keyed by `user_id`; (2) splits accepted participants into *direct-write* (have a write calendar — event written straight onto their calendar, no email attendee) vs *emailed* (no write calendar — invited as an email attendee on the coordinator's copy); (3) creates the coordinator's copy first (required — aborts finalize on failure) carrying the emailed attendees; (4) best-effort writes the event onto each other participant's calendar.
+
+- **Participant-calendar write failures must never abort finalization — the event is already confirmed.**
+  Step (4) catches `ProviderAuthError` (marks that participant's account `needs_reauth`) and any other exception (logs) and continues to the next participant. Only the coordinator's own copy is allowed to abort the whole operation. The event is confirmed in the DB regardless of whether secondary calendar writes succeed.
+
+- **`events.google_calendar_event_id` was renamed to `events.calendar_event_id` — the stored id may now be an Outlook event id.**
+  The column rename is in migration `20260612000001`. `EventResponse`, `FinalizeStatusResponse`, the frontend `Event`/`FinalizeStatus` types, the notification metadata key, and the UI label ("Added to calendar", not "Added to Google Calendar") were all updated. Grep for any remaining `google_calendar_event_id` before assuming the rename is complete.
+
+- **`_pick_attendee_email` now prefers the email of the account matching the *write calendar's* provider, then any connected account, then the profile email.**
+  When emailing an attendee, the invite links most reliably if the address matches the provider that will host the event. The lookup order: provider_email of an account whose `provider == write_provider`, then any account with a `provider_email`, then `profiles.email_address`.
+
+- **A read-only coordinator write calendar is guarded again at finalize time (`422 write_calendar_not_writable`).**
+  This is normally prevented when setting the write calendar, but `finalize_event` re-checks `coordinator_write["is_writable"]` and returns a clear 422 rather than letting a provider 403 surface as a 502.
+
+- **Google now sends invitation emails: `create_calendar_event` passes `sendUpdates="all"`.**
+  Google's default is to email *no* attendees on insert; Graph emails them automatically. Adding `sendUpdates="all"` brings the Google path to parity so emailed attendees actually receive an invite.
+
+### Backend — Proposal generation fix (`proposal_service.py`)
+
+- **Candidates must be generated day-by-day within each day's configured hour window, not as one continuous sliding window over `[earliest, latest]`.**
+  The old loop strode 30 minutes from `earliest_datetime_utc` to `latest_datetime_utc` continuously, so for a multi-day event it proposed times all through the night between the daily start/end hours. `_build_day_candidates` iterates each day in `[start_date, end_date]` and only emits slots inside `[start_hour, end_hour)` for that day.
+
+- **The window can wrap past midnight (e.g. 20:00–03:00) — handle it as two segments per day, attaching the overnight tail to the previous day's iteration.**
+  When `end_hour <= start_hour` (with care around `end_hour == 0` meaning "midnight"), each day has segment 1 `[start_hour, midnight)` and segment 2 `[midnight, end_hour)`. The tail segment is generated as part of the previous day's loop so scoring/conflict logic stays per-event-day, and it's skipped on the last day so it never spills past the event window.
+
+- **Every candidate is clamped to `now` so past slots are never proposed; the first day is also clamped to `earliest_dt`.**
+  `_snap_forward` snaps a start time up to the next 30-minute boundary and strides until `seg_end`. Each segment start is `max(seg_start, now)` (and `max(..., earliest_dt)` on the first day). This fixed proposals appearing in the past for events whose window had partially elapsed.
+
+- **When there are no candidates, log and return `[]` without touching existing proposals or the regeneration flags.**
+  If `top5` is empty (e.g. the whole window is in the past), `generate_proposals` returns early *before* deleting `proposed_times` or clearing `proposals_needs_regeneration`. The delete/insert/flag-update now only run on success, so a degenerate regeneration never wipes a previously good proposal set.
+
+### Frontend
+
+- **`AvailabilityGrid`'s `overlayContent` prop accepts a render function receiving the grid's own geometry (`columnDates`, `eventStart`, `isScrollable`, `totalRows`).**
+  Previously `EventDetailClient` recomputed the Monday-anchored column dates and the px-vs-% `isScrollable`/`totalRows` math itself (an IIFE duplicating the grid's internal logic) just to position overlays. That duplication drifted from the grid's real values. Now the grid computes `columnDates` once and passes them (plus `eventStart`, `isScrollable`, `totalRows`) into `overlayContent` when it's a function. `overlayContent` still accepts a plain `ReactNode` for static content — the grid branches on `typeof overlayContent === 'function'`.
+
+- **`FinalizedSlotOverlay` pins the confirmed time on the grid (z-35) and is only rendered for `status === 'confirmed'` events; the proposed-time overlay is hidden once confirmed.**
+  When an event is confirmed, `ProposedTimeOverlay` is passed `visible={showProposedOverlay && event.status !== 'confirmed'}` and `FinalizedSlotOverlay` renders the single `finalized_start/end` block with a "✓ Confirmed" label. It reuses the same px-vs-% positioning convention (`ROW_HEIGHT_PX = 32`, `isScrollable` branch) as `ProposedTimeOverlay`.
+
+- **`no_write_calendar` at finalize now opens `NoCalendarModal` (a "connect a calendar in Settings" dialog), not just an inline error string.**
+  `FinalizeCard` maps finalize error `detail`s to distinct UX: `calendar_credentials_expired` → inline message + "Reconnect in Settings" link; `write_calendar_not_writable` → "pick a writable calendar" message; `no_write_calendar` → `NoCalendarModal`. The reconnect action is now a plain `<a href="/settings">` link, replacing the old `useConnectCalendarAccount()` button (deep OAuth re-entry from the finalize modal was fragile).
+
+- **The connect flow is provider-parameterized: `useConnectCalendarAccount()` takes `'google' | 'microsoft'` and the Settings page offers both buttons.**
+  `connect-url` is hit as `/calendar-accounts/connect-url?provider=${provider}`. The `CalendarProvider` union type (`'google' | 'microsoft'`) is shared; `CalendarAccount.provider` and `CalendarSource.is_writable` were added to the TS types to mirror the backend models. The Settings "Reconnect" button passes the account's own `provider`.
+
+- **`SourceRow` is now a client component that explains (rather than silently no-ops) when a read-only calendar is chosen as the write calendar.**
+  Clicking the write-calendar radio on a `is_writable: false` source does not call `onSetWrite()` — it sets local `showReadOnlyNotice` state and renders an inline error explaining the calendar is read-only and to pick one you own. The label also shows "Write calendar (read-only)" greyed out. This catches the mistake client-side before the backend 422.
+
+### Infra / SEO
+
+- **`GET /health` returns `{"status": "ok"}` — an unauthenticated liveness probe for Docker/uptime monitoring.** It's a bare route in `app/main.py`, registered after all routers.
+
+- **`frontend/app/robots.ts` generates `robots.txt` via Next's `MetadataRoute.Robots` — allow `/`, disallow the authenticated app surfaces (`/dashboard/`, `/events/`, `/settings/`, `/api/`).** Keeps private/per-user pages out of search indexes while letting the landing page be crawled.

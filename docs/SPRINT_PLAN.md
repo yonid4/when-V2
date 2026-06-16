@@ -370,11 +370,11 @@ After participants mark preferred slots, coordinator clicks "View Proposed Times
 #### Backend
 - [x] `POST /api/events/{uid}/finalize` — coordinator only:
   - Accepts `proposed_time_id`
-  - Creates a Google Calendar event on the coordinator's write calendar
-  - Adds all `status=accepted` participants as attendees
-  - Updates event: `status=confirmed`, `finalized_start_time_utc`, `finalized_end_time_utc`, `google_calendar_event_id`
+  - Creates the event on the coordinator's write calendar via that calendar's provider (Google or Microsoft)
+  - Writes the event directly onto each accepted participant's own write calendar (cross-provider); participants without a write calendar are added as email attendees on the coordinator's copy
+  - Updates event: `status=confirmed`, `finalized_start_time_utc`, `finalized_end_time_utc`, `calendar_event_id`
   - Sends `event_finalized` notification to all participants
-- [x] `GET /api/events/{uid}/finalize/status` — returns finalized time and Google Calendar event ID
+- [x] `GET /api/events/{uid}/finalize/status` — returns finalized time and the provider `calendar_event_id`
 
 #### Frontend
 - [x] `hooks/useFinalize.ts` — `useFinalize(uid)`, `useFinalizeStatus(uid)`

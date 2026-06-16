@@ -7,7 +7,7 @@ Group scheduling without the back-and-forth. Create an event, invite participant
 - **Google & Outlook Calendar sync** — participants connect a Google or Microsoft (Outlook) account; busy slots are pulled automatically on connect and refreshed hourly in the background. A user can connect multiple accounts across both providers.
 - **Availability heatmap** — interactive grid shows where everyone is free across the scheduling window
 - **Preferred-slot marking** — participants swipe to highlight their ideal times, not just their open ones
-- **Smart proposal ranking** — algorithm scores candidate windows by conflict count (ascending) and preferred-slot overlap (descending), surfaces the top 5
+- **Smart proposal ranking** — algorithm generates candidate windows within each day's configured hours (including overnight windows that wrap past midnight), never proposes times in the past, scores them by conflict count (ascending) and preferred-slot overlap (descending), and surfaces the top 5
 - **Email invitations** — coordinator invites participants by email; invitees receive a join link and RSVP flow
 - **Real-time updates** — Supabase Realtime pushes participant changes, busy-slot syncs, and proposal refreshes live to all viewers
 - **Event finalization** — coordinator picks the winning proposal and closes the event. The confirmed event is written directly onto **each participant's own write calendar** using that participant's provider and credentials (Google or Microsoft), so it lands reliably for everyone cross-provider without depending on invitation emails. Each user has exactly one write calendar across all connected accounts, regardless of provider (a DB trigger backs the rule). Participants without a connected calendar — and any external invitees — instead receive an emailed calendar invitation from the coordinator's calendar. Busy sources from any provider feed availability.
@@ -80,15 +80,17 @@ Outlook support is optional — leave `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_
 
 ## Database Setup
 
-The project uses Supabase (PostgreSQL). To build the database from scratch:
+The project uses Supabase (PostgreSQL). [`schema.sql`](schema.sql) is the **complete, self-contained snapshot** of the current database — running it on a fresh project is the only query you need to build everything (all extensions, enums, tables, indexes, Row Level Security policies, functions, and triggers, including the multi-provider calendar support).
+
+To build the database from scratch:
 
 1. Create a new [Supabase](https://supabase.com) project.
 2. In the Supabase dashboard, open **SQL Editor**.
-3. Copy the contents of [`schema.sql`](schema.sql) and run it in the SQL Editor.
-   This creates all extensions, enums, tables, indexes, Row Level Security policies, and triggers.
-4. If you have existing migrations to apply on top of the base schema, run each file in [`supabase/migrations/`](supabase/migrations/) in chronological order (filename prefix determines order).
-5. Copy your Supabase project URL and `anon`/`service_role` keys into `backend/.env` and `frontend/.env.local`.
+3. Copy the contents of [`schema.sql`](schema.sql) and run it.
+4. Copy your Supabase project URL and `anon`/`service_role` keys into `backend/.env` and `frontend/.env.local`.
 
+> **Do not also run the files in [`supabase/migrations/`](supabase/migrations/) on a fresh build.** Their changes are already folded into `schema.sql`, and several migrations are non-idempotent (e.g. a `RENAME COLUMN`), so applying them on top of `schema.sql` will error. The migration files exist only to **upgrade an existing database** that predates them — run each, in filename order, against such a database.
+>
 > **Note:** `schema.sql` assumes Supabase Auth is already enabled — the `auth.users` table is provided automatically by Supabase and does not need to be created manually.
 
 ## Usage
@@ -113,6 +115,8 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000), sign in with Google, and create your first event.
+
+The API exposes an unauthenticated `GET /health` endpoint (returns `{"status": "ok"}`) for container health checks and uptime monitoring.
 
 ## Visuals
 

@@ -1563,3 +1563,103 @@ The render loop was iterating `segments` three times per column (once per type: 
 ### Gotchas
 
 - **Double invalidation in `EventDetailClient` (`preferred-slots` + `availability-segments`) is intentional.** The `availability-segments` endpoint computes from both `busy_slots` and `preferred_slots` server-side, so when `preferred_slots` changes, both queries must be invalidated independently — they are separate fetches, not derived on the client.
+
+---
+
+## Multi-Provider Calendar Integration (Google + Microsoft)
+
+Tests for the calendar provider abstraction, the Microsoft (Outlook) provider, read-only / write-calendar rules, and cross-provider per-participant finalization.
+
+### Files Written
+
+| File | Tests | Covers |
+|------|-------|--------|
+| `backend/tests/test_google_provider.py` | 15 | `GoogleProvider` busy-event parsing, event creation, token capture, calendar writability |
+| `backend/tests/test_microsoft_provider.py` | 13 | `MicrosoftProvider` Graph access via mocked `msal` + `httpx` |
+
+### Files Updated
+
+| File | What changed |
+|------|--------------|
+| `backend/tests/test_sync_service.py` | Rewritten to be **provider-agnostic** — drives `_sync_source`/`_sync_user` with a mocked `CalendarProvider` returning `BusyEvent`s |
+| `backend/tests/test_finalize.py` | Reworked for per-participant cross-provider writes, new error codes, the `calendar_event_id` rename, and the 409-already-confirmed guard |
+| `backend/tests/test_calendar.py` | Added `connect_account` write-calendar designation tests and the read-only write-calendar rejection |
+| `frontend/__tests__/sprint4post/SettingsPage.test.tsx` | Added the read-only write-calendar notice test; both Settings test files add `is_writable` to source fixtures |
+
+### Backend coverage — `test_google_provider.py`
+
+- **`iso_to_utc`** — converts an offset-bearing string to UTC (09:00 PDT → 16:00 UTC) and preserves an already-UTC string.
+- **`fetch_busy_events`** — follows `nextPageToken` across pages; passes the time window + `singleEvents=True`; normalizes offset times to UTC; **skips cancelled** (`status == "cancelled"`) and **all-day** (`date`, not `dateTime`) events; maps `RefreshError` → `ProviderAuthError` and any other exception → `ProviderAPIError`.
+- **`create_event`** — builds the Google body shape (summary/description/start/end with `timeZone: "UTC"`, attendees as `[{"email": ...}]`, location only when set); `RefreshError` → `ProviderAuthError`.
+- **`_capture_tokens`** — marks the bundle `dirty` and stores the new access token when Google refreshes in place; no-op (`dirty` stays false) when the token is unchanged.
+- **`create_calendar_event`** (low-level) — asserts `sendUpdates="all"` is passed so Google emails attendees.
+- **`list_calendars` writability** — `accessRole` `owner`/`writer` → `is_writable=True`; `reader`/`freeBusyReader` → `False`; `primary` flag mapped.
+
+### Backend coverage — `test_microsoft_provider.py`
+
+- **`exchange_code`** — returns a `ConnectedIdentity` (id + `mail`, falling back to `userPrincipalName`); a token-error result raises `ProviderAPIError`.
+- **`list_calendars`** — maps `isDefaultCalendar` → primary, real `hexColor` → color (`'auto'` → `None`), `canEdit` → `is_writable`.
+- **`fetch_busy_events`** — paginates via `@odata.nextLink`, skips `isAllDay`, sends `Prefer: outlook.timezone="UTC"`, normalizes 7-fractional-digit Graph datetimes to UTC.
+- **`create_event`** — builds the Graph body (subject/body/attendees/location) with **naive** UTC datetimes + `timeZone: "UTC"`; a 5xx response raises `ProviderAPIError`.
+- **Token refresh / rotation** — an expired access token triggers a refresh, the **rotated refresh token** is stored with `dirty=True`, and the Bearer header uses the new access token; a valid token skips refresh (`dirty` stays false); `invalid_grant` and a missing refresh token both raise `ProviderAuthError`.
+- **`revoke`** is a no-op (no exception, no network).
+
+### Backend coverage — `test_sync_service.py` (provider-agnostic rewrite)
+
+Provider-specific parsing now lives in `test_google_provider.py`; this file drives the service with a mocked provider.
+
+- **`_provider_returning(busy_events)`** helper returns a `MagicMock` whose `fetch_busy_events` yields `BusyEvent`s; `_busy(id, start, end)` builds one.
+- **Upsert + stale deletion** now operate on `BusyEvent`s: upserts busy events, stale-deletes events the provider no longer returns (delete bounded by query `time_max`), and **does not call delete** when there are no stale slots.
+- **`_sync_source` propagates `ProviderAuthError`** (so `_sync_user` can mark `needs_reauth`) and **swallows `ProviderAPIError`** (skips the source, returns 0, no deletion).
+- **`_sync_user` token rotation** — patches `app.services.sync_service.get_provider`; when the bundle comes back `dirty`, the rotated `credentials` dict is persisted alongside `last_synced_at`; a `ProviderAuthError` marks the account `needs_reauth`.
+- Window-widening and event-scoped-sync tests are retained (coordinator inclusion/dedup, past-start widening, declined-participation ignored).
+
+### Backend coverage — `test_finalize.py` (reworked)
+
+- **`_pick_attendee_email`** — prefers the account whose `provider` matches the write calendar's provider, falls back to any other connected account, then `profiles.email_address`; returns `None` when no email exists. New test `test_pick_attendee_email_prefers_write_provider_over_others`.
+- **Error codes** — `404` (event not found), `403` (not coordinator), **`409` (already confirmed)**, `422 no_write_calendar`, **`422 write_calendar_not_writable`** (read-only coordinator write calendar), `422 calendar_credentials_expired` (`ProviderAuthError` → mark reauth), `502 calendar_create_failed`.
+- **Cross-provider direct writes** — `test_finalize_writes_to_participant_with_write_calendar_directly` asserts the event is created on a participant's own write calendar (not added as an email attendee); `test_finalize_participant_write_failure_does_not_abort` asserts a participant write failure marks that account `needs_reauth` but still confirms the event.
+- **Microsoft write calendar** — `test_finalize_microsoft_write_calendar_prefers_outlook_email` exercises the provider-matched attendee email path.
+- Existing attendee/field tests (excluded users, extra emails, location, video link, name-change) carry over, now asserting `calendar_event_id` (renamed from `google_calendar_event_id`).
+
+### Backend coverage — `test_calendar.py` (additions)
+
+- **`test_update_source_rejects_readonly_write_calendar`** — setting an `is_writable: false` source as the write calendar → `422 calendar_not_writable`. The source-fetch mock returns the row with a nested `calendar_accounts.user_id` so the ownership check passes first.
+- **`connect_account` write-calendar designation** (patches `_user_has_write_calendar`, `get_provider`, `service_client`):
+  - `test_connect_account_designates_write_when_user_has_none` — first connect designates the primary calendar.
+  - `test_connect_account_does_not_steal_existing_write_calendar` — second connect issues **no** `is_write_calendar` update (and no `update()` at all when tokens aren't dirty).
+  - `test_connect_account_designates_writable_not_readonly_primary` — when the primary is read-only, the write calendar lands on the first *writable* calendar instead.
+
+### Frontend coverage — `SettingsPage.test.tsx`
+
+- **`explains and does not switch when a read-only calendar is chosen as write`** — clicking the write-calendar radio on an `is_writable: false` source does **not** call `mockUpdateSource` and renders the "can't be your write calendar" notice. All source fixtures gained an `is_writable` field.
+
+### Mock Patterns
+
+#### Mocked `CalendarProvider` for service tests
+
+Provider-level tests mock the network boundary (`app.providers.google.build`, or `app.providers.microsoft.msal` + `httpx`). Service-level tests (`sync`, `finalize`, `calendar`) instead mock the **provider object** and patch `get_provider` in the service module:
+
+```python
+@patch("app.services.sync_service.get_provider")
+@patch("app.services.sync_service.service_client")
+def test_...(mock_svc, mock_get_provider):
+    prov = MagicMock()
+    prov.fetch_busy_events.return_value = [BusyEvent("e1", start.isoformat(), end.isoformat())]
+    mock_get_provider.return_value = prov
+```
+
+#### `TokenBundle` dirtiness drives persistence assertions
+
+To assert rotated credentials are persisted, return a provider whose call sets `tokens.dirty` (e.g. a side-effect that calls `tokens.update(...)`), then assert the `calendar_accounts.update` payload contains the new `credentials` dict. Conversely, assert `update()` is *not* called for the credentials when the bundle stays clean.
+
+#### Graph responses via a `_resp(status, json_body, text)` helper
+
+`test_microsoft_provider.py` builds mock `httpx` responses with `status_code`, `.json()`, and `.text`. Pagination is exercised by `mock_httpx.get.side_effect = [page1, page2]` where `page1` carries `@odata.nextLink`.
+
+### Gotchas
+
+- **Provider-specific parsing moved out of `test_sync_service.py`.** After the refactor, cancelled/all-day/pagination/UTC-normalisation assertions belong in `test_google_provider.py` / `test_microsoft_provider.py`. The sync tests should drive a mocked provider and assert only upsert/stale-deletion/persistence behaviour — don't re-add raw-Google-item fixtures here.
+- **Patch `get_provider` where it's imported, not at the registry.** `sync_service`, `finalize_service`, and `calendar_service` each do `from app.providers.registry import get_provider`, binding the name locally. Patch `app.services.<module>.get_provider`, not `app.providers.registry.get_provider`.
+- **Microsoft tests must patch both `msal` and `httpx`.** `MicrosoftProvider` builds a fresh `ConfidentialClientApplication` per call and uses `httpx` directly for REST. A test that patches only one will make a real call through the other. `exchange_code`/refresh paths need `msal`; calendar REST needs `httpx`.
+- **`calendar_event_id`, not `google_calendar_event_id`.** Any finalize/event fixture or assertion referencing the old column name will fail after the rename — grep both before adding test data.

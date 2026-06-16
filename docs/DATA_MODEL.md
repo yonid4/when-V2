@@ -46,7 +46,7 @@ Core coordination record.
 | allow_guest_invites | boolean | When true, all participants can invite others (not just coordinator) |
 | finalized_start_time_utc | timestamptz | Set when status = confirmed |
 | finalized_end_time_utc | timestamptz | Set when status = confirmed |
-| google_calendar_event_id | text | Set after finalization write to Google Calendar |
+| calendar_event_id | text | Provider event ID (Google or Outlook) set after the finalization write to the coordinator's write calendar |
 | proposals_needs_regeneration | boolean | True when busy/preferred slots change |
 | proposals_last_generated_at | timestamptz | |
 | created_at / updated_at / finalized_at | timestamptz | |
@@ -94,20 +94,21 @@ Tracks invitations, including to users who don't have an account yet.
 ---
 
 ### calendar_accounts
-One row per connected Google Calendar account per user.
+One row per connected calendar account per user. A user can connect multiple accounts across both providers.
 
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid | PK |
 | user_id | uuid | FK → profiles |
-| provider | varchar(50) | Always "google" in v2 |
-| provider_email | varchar(255) | The Google account email |
-| provider_account_id | varchar(255) | Google account ID |
-| credentials | jsonb | OAuth tokens (access_token, refresh_token, expiry) |
+| provider | varchar(50) | `google` or `microsoft`. CHECK constraint `calendar_accounts_provider_check` restricts it to these two |
+| provider_email | varchar(255) | The provider account email (Gmail / Outlook) |
+| provider_account_id | varchar(255) | Provider-side account ID |
+| credentials | jsonb | OAuth tokens (access_token, refresh_token, expiry). The whole dict is re-persisted on rotation — Microsoft rotates the refresh token on every refresh |
+| needs_reauth | boolean | Set true when a refresh fails; the UI prompts the user to reconnect |
 | connected_at | timestamptz | |
 | last_synced_at | timestamptz | Updated after each successful sync |
 
-**Unique constraint:** (user_id, provider, provider_account_id) — one row per Google account per user.
+**Unique constraint:** (user_id, provider, provider_account_id) — one row per provider account per user.
 
 ---
 
@@ -118,10 +119,11 @@ Individual calendars within a connected account (e.g. "Work", "Personal", "Birth
 |---|---|---|
 | id | uuid | PK |
 | account_id | uuid | FK → calendar_accounts |
-| calendar_id | varchar(255) | Google's calendar ID string |
+| calendar_id | varchar(255) | Provider's calendar ID string |
 | calendar_name | varchar(255) | Display name |
 | is_enabled | boolean | If true, include in busy slot sync |
-| is_write_calendar | boolean | If true, create finalized events here. Only one per user should be true |
+| is_write_calendar | boolean | If true, create finalized events here. **Exactly one per user across all accounts/providers** — enforced by the `calendar_sources_single_write` trigger (clears the flag on every other source for the same user when one is set) |
+| is_writable | boolean | False for read-only calendars (subscribed/imported/holiday, or shared-as-reader). Read-only calendars are still valid busy sources but can never be the write calendar — CHECK `calendar_sources_write_requires_writable` (`is_writable OR NOT is_write_calendar`) backs this |
 | color | varchar(20) | For display in settings |
 | created_at / updated_at | timestamptz | |
 
