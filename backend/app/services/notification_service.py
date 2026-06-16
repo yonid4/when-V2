@@ -70,6 +70,23 @@ def mark_all_read(current_user: User) -> None:
     ).eq('user_id', current_user.id).eq('is_read', False).execute()
 
 
+def _resolve_invitation_action(invitation_id: str, fallback: str) -> str:
+    """Map an already-responded invitation's status to a notification action_type."""
+    result = (
+        service_client.table('event_invitations')
+        .select('status')
+        .eq('id', invitation_id)
+        .maybe_single()
+        .execute()
+    )
+    status = result.data['status'] if (result and result.data) else None
+    if status == 'accepted':
+        return 'accept'
+    if status == 'declined':
+        return 'decline'
+    return fallback
+
+
 def take_action(notification_id: str, current_user: User, action: str) -> NotificationResponse:
     db = get_authed_client(current_user.token)
     result = db.table('notifications').select('*').eq('id', notification_id).limit(1).execute()
@@ -86,7 +103,17 @@ def take_action(notification_id: str, current_user: User, action: str) -> Notifi
         metadata = notification.get('metadata') or {}
         invitation_id = metadata.get('invitation_id')
         if invitation_id:
-            respond_to_invitation(invitation_id, current_user, action)
+            try:
+                respond_to_invitation(invitation_id, current_user, action)
+            except HTTPException as exc:
+                # Invitation already responded to (e.g. via an older flow that did
+                # not stamp the notification). Sync the notification to the
+                # invitation's real status instead of failing, so it stops
+                # offering accept/decline. Other errors (e.g. calendar_required)
+                # propagate unchanged.
+                if exc.status_code != 409:
+                    raise
+                action = _resolve_invitation_action(invitation_id, action)
 
     service_client.table('notifications').update(
         {'action_taken': True, 'action_type': action, 'action_at': now}

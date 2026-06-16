@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 const mockPush = vi.fn()
-const mockRespondToInvitation = vi.fn()
+const mockTakeAction = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: vi.fn() }),
@@ -18,10 +18,7 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/hooks/useNotifications', () => ({
   useNotifications: vi.fn(),
   useMarkRead: () => ({ mutate: vi.fn() }),
-}))
-
-vi.mock('@/hooks/useInvitations', () => ({
-  useRespondToInvitation: () => ({ mutate: mockRespondToInvitation, isPending: false }),
+  useTakeAction: () => ({ mutate: mockTakeAction, isPending: false }),
 }))
 
 vi.mock('date-fns', () => ({
@@ -70,12 +67,12 @@ describe('NotificationList — accept/decline redirect', () => {
     const { getByText } = renderWithQuery(<NotificationList />)
     fireEvent.click(getByText('Accept'))
 
-    expect(mockRespondToInvitation).toHaveBeenCalledWith(
-      { invitationId: 'inv-1', action: 'accept' },
+    expect(mockTakeAction).toHaveBeenCalledWith(
+      { notificationId: 'n1', action: 'accept' },
       expect.objectContaining({ onSuccess: expect.any(Function) })
     )
 
-    const [, callbacks] = mockRespondToInvitation.mock.calls[0]
+    const [, callbacks] = mockTakeAction.mock.calls[0]
     callbacks.onSuccess({ event_uid: 'abc-uid' })
 
     expect(mockPush).toHaveBeenCalledWith('/events/abc-uid')
@@ -88,7 +85,7 @@ describe('NotificationList — accept/decline redirect', () => {
     const { getByText } = renderWithQuery(<NotificationList />)
     fireEvent.click(getByText('Accept'))
 
-    const [, callbacks] = mockRespondToInvitation.mock.calls[0]
+    const [, callbacks] = mockTakeAction.mock.calls[0]
     callbacks.onSuccess({ event_uid: null })
 
     expect(mockPush).toHaveBeenCalledWith('/dashboard')
@@ -101,7 +98,7 @@ describe('NotificationList — accept/decline redirect', () => {
     const { getByText } = renderWithQuery(<NotificationList />)
     fireEvent.click(getByText('Decline'))
 
-    expect(mockRespondToInvitation).toHaveBeenCalledWith({ invitationId: 'inv-1', action: 'decline' })
+    expect(mockTakeAction).toHaveBeenCalledWith({ notificationId: 'n3', action: 'decline' })
     expect(mockPush).not.toHaveBeenCalled()
   })
 
@@ -112,7 +109,7 @@ describe('NotificationList — accept/decline redirect', () => {
     const { getByText } = renderWithQuery(<NotificationList />)
     fireEvent.click(getByText('Accept'))
 
-    const [, callbacks] = mockRespondToInvitation.mock.calls[0]
+    const [, callbacks] = mockTakeAction.mock.calls[0]
     callbacks.onError(new Error('calendar_required'))
 
     expect(mockPush).toHaveBeenCalledWith('/settings?connect_calendar=true')

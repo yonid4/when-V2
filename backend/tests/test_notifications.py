@@ -202,6 +202,76 @@ def test_take_action_accept(mock_dep_svc, mock_notif_authed, mock_notif_svc, moc
     assert data["action_type"] == "accept"
 
 
+# ─── 5b. test_take_action_already_responded_syncs_notification ───────────────
+
+@patch("app.services.invitation_service.service_client")
+@patch("app.services.invitation_service.get_authed_client")
+@patch("app.services.notification_service.service_client")
+@patch("app.services.notification_service.get_authed_client")
+@patch("app.dependencies.service_client")
+def test_take_action_already_responded_syncs_notification(
+    mock_dep_svc, mock_notif_authed, mock_notif_svc, mock_inv_authed, mock_inv_svc
+):
+    """An invitation already responded to (e.g. via an older flow) does not 409
+    the client; the notification is stamped using the invitation's real status."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=_current_user_profile())
+
+    notif = _make_notification_row(notification_type="event_invitation", metadata={"invitation_id": "invite-uuid-1"})
+    # Invitation was already accepted, but the stale notification still offered buttons.
+    updated_notif = {**notif, "action_taken": True, "action_type": "accept"}
+
+    now = datetime.now(timezone.utc).isoformat()
+    invite_row = {
+        "id": "invite-uuid-1",
+        "event_id": "event-db-id-1",
+        "inviter_id": "other-user",
+        "invitee_id": "user-uuid-1",
+        "invitee_email": "alice@example.com",
+        "status": "accepted",  # no longer pending → respond_to_invitation raises 409
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    # notif get_authed_client db: ownership fetch (call 1) then refresh (call 2)
+    notif_call_count = {"n": 0}
+    def make_db_table(table_name):
+        tbl = MagicMock()
+        if table_name == "notifications":
+            notif_call_count["n"] += 1
+            row = notif if notif_call_count["n"] == 1 else updated_notif
+            tbl.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(data=[row])
+        return tbl
+    db = MagicMock()
+    db.table.side_effect = make_db_table
+    mock_notif_authed.return_value = db
+    mock_inv_authed.return_value = db
+
+    # invitation_service.service_client: invitation is already accepted → 409 inside respond
+    mock_inv_svc.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=invite_row)
+
+    # notification_service.service_client: route by table name
+    def make_notif_svc_table(table_name):
+        tbl = MagicMock()
+        if table_name == "event_invitations":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data={"status": "accepted"})
+        elif table_name == "notifications":
+            tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[updated_notif])
+        return tbl
+    mock_notif_svc.table.side_effect = make_notif_svc_table
+
+    # User clicks Decline on the stale invite, but it was already accepted.
+    response = client.post(
+        "/api/notifications/notif-uuid-1/action",
+        json={"action": "decline"},
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["action_taken"] is True
+    # Reflects the invitation's real status, not the (stale) click.
+    assert data["action_type"] == "accept"
+
+
 # ─── 6. test_notifications_require_auth ──────────────────────────────────────
 
 def test_notifications_require_auth():

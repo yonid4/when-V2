@@ -1,19 +1,16 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNow } from 'date-fns'
-import { useNotifications, useMarkRead } from '@/hooks/useNotifications'
-import { useRespondToInvitation } from '@/hooks/useInvitations'
+import { useNotifications, useMarkRead, useTakeAction } from '@/hooks/useNotifications'
 import { getFinalizedMessage } from '@/lib/dates'
 import type { Notification } from '@/types'
 
 export function NotificationList() {
   const router = useRouter()
-  const queryClient = useQueryClient()
   const { data: notifications, isLoading } = useNotifications()
   const { mutate: markRead } = useMarkRead()
-  const { mutate: respondToInvitation, isPending: isResponding } = useRespondToInvitation()
+  const { mutate: takeAction, isPending: isResponding } = useTakeAction()
 
   if (isLoading) {
     return <div className="p-4 text-sm text-on-surface-variant">Loading…</div>
@@ -53,10 +50,8 @@ export function NotificationList() {
             <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => {
-                  const invitationId = n.metadata?.invitation_id as string | undefined
-                  if (!invitationId) return
-                  respondToInvitation(
-                    { invitationId, action: 'accept' },
+                  takeAction(
+                    { notificationId: n.id, action: 'accept' },
                     {
                       onSuccess: (data) => {
                         const dest = data?.event_uid ? `/events/${data.event_uid}` : '/dashboard'
@@ -77,17 +72,7 @@ export function NotificationList() {
               </button>
               <button
                 onClick={() => {
-                  const invitationId = n.metadata?.invitation_id as string | undefined
-                  if (!invitationId) return
-                  respondToInvitation(
-                    { invitationId, action: 'decline' },
-                    {
-                      onSuccess: () => {
-                        queryClient.invalidateQueries({ queryKey: ['notifications'] })
-                        queryClient.refetchQueries({ queryKey: ['notifications'] })
-                      },
-                    }
-                  )
+                  takeAction({ notificationId: n.id, action: 'decline' })
                 }}
                 disabled={isResponding}
                 className="flex-1 py-1.5 rounded-lg bg-surface-container-high text-on-surface-variant text-xs font-bold disabled:opacity-60 transition-opacity hover:bg-surface-container-highest"
@@ -101,7 +86,7 @@ export function NotificationList() {
             <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full self-start ${
               n.action_type === 'accept'
                 ? 'bg-secondary-container text-on-secondary-container'
-                : 'bg-surface-container-high text-on-surface-variant'
+                : 'bg-error-container text-on-error-container'
             }`}>
               {n.action_type === 'accept' ? 'Accepted' : 'Declined'}
             </span>

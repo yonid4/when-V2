@@ -5,15 +5,12 @@ import { NotificationList } from '@/components/notifications/NotificationList'
 import type { Notification } from '@/types'
 
 const mockMarkRead = vi.fn()
-const mockRespondToInvitation = vi.fn()
+const mockTakeAction = vi.fn()
 
 vi.mock('@/hooks/useNotifications', () => ({
   useNotifications: vi.fn(),
   useMarkRead: () => ({ mutate: mockMarkRead }),
-}))
-
-vi.mock('@/hooks/useInvitations', () => ({
-  useRespondToInvitation: () => ({ mutate: mockRespondToInvitation, isPending: false }),
+  useTakeAction: () => ({ mutate: mockTakeAction, isPending: false }),
 }))
 
 vi.mock('next/navigation', () => ({
@@ -88,15 +85,15 @@ describe('NotificationList', () => {
     expect(screen.getByText('Decline')).toBeInTheDocument()
   })
 
-  it('calls respondToInvitation with accept when Accept is clicked', () => {
+  it('calls takeAction with accept when Accept is clicked', () => {
     vi.mocked(useNotifications).mockReturnValue({
       data: [makeNotification({ id: 'notif-1', notification_type: 'event_invitation', action_taken: false, metadata: { invitation_id: 'inv-1' } })],
       isLoading: false,
     } as any)
     renderWithQuery(<NotificationList />)
     fireEvent.click(screen.getByText('Accept'))
-    expect(mockRespondToInvitation).toHaveBeenCalledWith(
-      { invitationId: 'inv-1', action: 'accept' },
+    expect(mockTakeAction).toHaveBeenCalledWith(
+      { notificationId: 'notif-1', action: 'accept' },
       expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
     )
   })

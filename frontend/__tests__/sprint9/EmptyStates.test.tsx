@@ -49,10 +49,7 @@ vi.mock('@/components/layout/Navbar', () => ({
 vi.mock('@/hooks/useNotifications', () => ({
   useNotifications: vi.fn(),
   useMarkRead: () => ({ mutate: vi.fn() }),
-}))
-
-vi.mock('@/hooks/useInvitations', () => ({
-  useRespondToInvitation: () => ({ mutate: vi.fn(), isPending: false }),
+  useTakeAction: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock('date-fns', () => ({
