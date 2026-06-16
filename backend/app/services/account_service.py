@@ -4,7 +4,8 @@ deletion order stays in one place."""
 
 import logging
 
-from app.utils.google_auth import revoke_google_token
+from app.providers.base import TokenBundle
+from app.providers.registry import get_provider
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -14,9 +15,10 @@ def delete_account(user_id: str) -> None:
     """Delete a user account and all personal data they own.
 
     Order matters:
-      1. Revoke every connected Google refresh token. If any fails for an
-         uncertain reason, abort — :func:`revoke_google_token` raises and the
-         router maps it to HTTP 502.
+      1. Revoke every connected calendar's credentials via its provider. If any
+         fails for an uncertain reason, abort — the provider raises
+         :class:`TokenRevocationError` and the router maps it to HTTP 502.
+         (Providers without a revoke endpoint, e.g. Microsoft, are no-ops.)
       2. Delete events the user is currently coordinating that are still in
          ``planning`` status. These are drafts no one's calendar depends on.
       3. Anonymize the remaining (confirmed/cancelled) events the user
@@ -39,13 +41,13 @@ def delete_account(user_id: str) -> None:
     """
     accounts = (
         service_client.table("calendar_accounts")
-        .select("credentials")
+        .select("provider, credentials")
         .eq("user_id", user_id)
         .execute()
     )
     for acc in accounts.data or []:
-        refresh_token = (acc.get("credentials") or {}).get("refresh_token")
-        revoke_google_token(refresh_token)
+        provider = get_provider(acc.get("provider") or "google")
+        provider.revoke(TokenBundle(acc.get("credentials") or {}))
 
     service_client.table("events").delete().eq("coordinator_id", user_id).eq(
         "status", "planning"

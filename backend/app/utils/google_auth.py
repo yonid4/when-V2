@@ -9,14 +9,10 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from app.config import settings
+from app.providers.base import TokenRevocationError  # noqa: F401  (re-exported)
 
 logger = logging.getLogger(__name__)
 
-
-class TokenRevocationError(Exception):
-    """Raised when Google refuses to revoke a token for a non-recoverable reason
-    (5xx, network timeout, unknown response). The caller must NOT delete the
-    stored credentials — the token may still be valid at Google."""
 
 SCOPES = [
     "openid",
@@ -46,6 +42,10 @@ def build_calendar_flow() -> Flow:
 def create_calendar_event(credentials: Credentials, calendar_id: str, event_body: dict) -> str:
     """Create a Google Calendar event and return the created event's ID.
 
+    Uses ``sendUpdates="all"`` so Google emails an invitation to every attendee
+    (Google's default is to send none). Microsoft Graph emails attendees
+    automatically; this brings the Google path to parity.
+
     Args:
         credentials: A :class:`google.oauth2.credentials.Credentials` instance.
         calendar_id: The calendar ID to insert the event into (e.g. ``'primary'``).
@@ -59,7 +59,11 @@ def create_calendar_event(credentials: Credentials, calendar_id: str, event_body
         :exc:`Exception`: For any unexpected error from the API call.
     """
     cal_service = build("calendar", "v3", credentials=credentials)
-    created = cal_service.events().insert(calendarId=calendar_id, body=event_body).execute()
+    created = (
+        cal_service.events()
+        .insert(calendarId=calendar_id, body=event_body, sendUpdates="all")
+        .execute()
+    )
     return created["id"]
 
 

@@ -46,7 +46,7 @@ class EventResponse(BaseModel):
     video_call_link: str | None
     finalized_start_time_utc: datetime | None
     finalized_end_time_utc: datetime | None
-    google_calendar_event_id: str | None
+    calendar_event_id: str | None
     proposals_needs_regeneration: bool
     proposals_last_generated_at: datetime | None
     created_at: datetime

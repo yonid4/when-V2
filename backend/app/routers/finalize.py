@@ -60,5 +60,5 @@ def get_finalize_status_endpoint(
         status=event["status"],
         finalized_start_time_utc=event.get("finalized_start_time_utc"),
         finalized_end_time_utc=event.get("finalized_end_time_utc"),
-        google_calendar_event_id=event.get("google_calendar_event_id"),
+        calendar_event_id=event.get("calendar_event_id"),
     )

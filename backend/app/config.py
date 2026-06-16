@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     google_client_secret: str
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
     google_calendar_redirect_uri: str = "http://localhost:8000/api/calendar-accounts/callback"
+    # Microsoft (Outlook / Graph) calendar. Left blank disables the provider;
+    # google-only deployments don't need these set.
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = ""
+    microsoft_calendar_redirect_uri: str = (
+        "http://localhost:8000/api/calendar-accounts/callback/microsoft"
+    )
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 10080  # 7 days

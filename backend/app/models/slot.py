@@ -63,4 +63,4 @@ class FinalizeStatusResponse(BaseModel):
     status: str
     finalized_start_time_utc: str | None
     finalized_end_time_utc: str | None
-    google_calendar_event_id: str | None
+    calendar_event_id: str | None

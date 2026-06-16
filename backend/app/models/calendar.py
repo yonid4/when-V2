@@ -9,6 +9,7 @@ class CalendarSourceResponse(BaseModel):
     calendar_name: str
     is_enabled: bool
     is_write_calendar: bool
+    is_writable: bool = True
     color: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

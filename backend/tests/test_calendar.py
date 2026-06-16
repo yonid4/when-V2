@@ -321,3 +321,161 @@ def test_update_source_not_found(mock_dep_svc, mock_cal_svc):
     )
 
     assert response.status_code == 404
+
+
+@patch("app.services.calendar_service.service_client")
+@patch("app.dependencies.service_client")
+def test_update_source_rejects_readonly_write_calendar(mock_dep_svc, mock_cal_svc):
+    """Setting a read-only calendar as the write calendar → 422 calendar_not_writable."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    source = _make_source_row(is_write_calendar=False, is_writable=False)
+    source_with_account = {**source, "calendar_accounts": {"user_id": "user-uuid-1"}}
+    mock_cal_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[source_with_account]
+    )
+
+    response = client.patch(
+        "/api/calendar-sources/source-uuid-1",
+        json={"is_write_calendar": True},
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "calendar_not_writable"
+
+
+# ─── connect_account: write-calendar designation ─────────────────────────────
+
+from app.services import calendar_service
+from app.providers.base import ConnectedIdentity, ProviderCalendar
+
+
+def _connect_account_row() -> dict:
+    return {
+        "id": "acct-1",
+        "user_id": "user-uuid-1",
+        "provider": "google",
+        "provider_email": "alice@gmail.com",
+        "provider_account_id": "gaid-1",
+    }
+
+
+@patch("app.services.calendar_service._user_has_write_calendar", return_value=False)
+@patch("app.services.calendar_service.get_provider")
+@patch("app.services.calendar_service.service_client")
+def test_connect_account_designates_write_when_user_has_none(mock_svc, mock_get_provider, mock_has_write):
+    """First connect (no existing write calendar) → the account's primary
+    calendar is designated as the write calendar."""
+    mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock(
+        data=[_connect_account_row()]
+    )
+    mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    prov = MagicMock()
+    prov.list_calendars.return_value = [
+        ProviderCalendar("cal-primary", "Primary", True, None),
+        ProviderCalendar("cal-work", "Work", False, None),
+    ]
+    mock_get_provider.return_value = prov
+
+    update_payloads = []
+
+    def capture_update(payload):
+        update_payloads.append(payload)
+        m = MagicMock()
+        m.eq.return_value.eq.return_value.execute.return_value = MagicMock()
+        return m
+
+    mock_svc.table.return_value.update.side_effect = capture_update
+
+    calendar_service.connect_account(
+        "user-uuid-1", "google", ConnectedIdentity({"access_token": "a"}, "alice@gmail.com", "gaid-1")
+    )
+
+    assert any(p.get("is_write_calendar") is True for p in update_payloads), (
+        "primary calendar should be set as the write calendar"
+    )
+
+
+@patch("app.services.calendar_service._user_has_write_calendar", return_value=True)
+@patch("app.services.calendar_service.get_provider")
+@patch("app.services.calendar_service.service_client")
+def test_connect_account_does_not_steal_existing_write_calendar(mock_svc, mock_get_provider, mock_has_write):
+    """Connecting a second account when the user already has a write calendar
+    must NOT designate a new one (no is_write_calendar update is issued)."""
+    mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock(
+        data=[_connect_account_row()]
+    )
+    mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    prov = MagicMock()
+    prov.list_calendars.return_value = [ProviderCalendar("cal-primary", "Primary", True, None)]
+    mock_get_provider.return_value = prov
+
+    calendar_service.connect_account(
+        "user-uuid-1", "microsoft", ConnectedIdentity({"access_token": "a"}, "alice@outlook.com", "msid-1")
+    )
+
+    # No write-calendar designation update is issued (tokens aren't dirty either,
+    # so update() must not be called at all).
+    assert not mock_svc.table.return_value.update.called
+
+
+@patch("app.services.calendar_service._user_has_write_calendar", return_value=False)
+@patch("app.services.calendar_service.get_provider")
+@patch("app.services.calendar_service.service_client")
+def test_connect_account_designates_writable_not_readonly_primary(mock_svc, mock_get_provider, mock_has_write):
+    """When the primary calendar is read-only, the write calendar is designated on
+    a writable calendar instead — never a read-only one."""
+
+    def capture_upsert(payload, **kwargs):
+        m = MagicMock()
+        if "provider" in payload:
+            m.execute.return_value = MagicMock(data=[_connect_account_row()])
+        else:
+            m.execute.return_value = MagicMock(data=[{**payload, "id": "src-x"}])
+        return m
+
+    mock_svc.table.return_value.upsert.side_effect = capture_upsert
+    mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    prov = MagicMock()
+    prov.list_calendars.return_value = [
+        ProviderCalendar("readonly-primary", "Imported", True, None, False),
+        ProviderCalendar("writable-sec", "Work", False, None, True),
+    ]
+    mock_get_provider.return_value = prov
+
+    designations = []
+
+    def capture_update(payload):
+        chain = MagicMock()
+
+        def first_eq(col, val):
+            inner = MagicMock()
+
+            def second_eq(col2, val2):
+                if payload.get("is_write_calendar") is True and col2 == "calendar_id":
+                    designations.append(val2)
+                tail = MagicMock()
+                tail.execute.return_value = MagicMock()
+                return tail
+
+            inner.eq.side_effect = second_eq
+            inner.execute.return_value = MagicMock()
+            return inner
+
+        chain.eq.side_effect = first_eq
+        chain.execute.return_value = MagicMock()
+        return chain
+
+    mock_svc.table.return_value.update.side_effect = capture_update
+
+    calendar_service.connect_account(
+        "user-uuid-1", "google", ConnectedIdentity({"access_token": "a"}, "alice@gmail.com", "gaid-1")
+    )
+
+    assert designations == ["writable-sec"]

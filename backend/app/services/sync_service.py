@@ -1,19 +1,12 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from google.auth.exceptions import RefreshError
-from googleapiclient.discovery import build
-
-from app.utils.google_auth import credentials_from_dict, mark_account_needs_reauth
+from app.providers.base import ProviderAPIError, ProviderAuthError, TokenBundle
+from app.providers.registry import get_provider
+from app.utils.google_auth import mark_account_needs_reauth
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
-
-
-def _to_utc(dt_str: str) -> str:
-    """Parse a datetime string (possibly with timezone offset) and return a UTC ISO string."""
-    dt = datetime.fromisoformat(dt_str)
-    return dt.astimezone(timezone.utc).isoformat()
 
 
 def sync_busy_slots(user_id: str) -> int:
@@ -82,60 +75,52 @@ def _parse_iso_utc(value: str) -> datetime:
 
 
 def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
-    """Sync all calendar sources for user_id within [time_min, time_max]."""
+    """Sync all enabled calendar sources for user_id within [time_min, time_max].
+
+    Dispatches to the provider for each account based on ``account.provider`` so
+    Google and Microsoft accounts sync through the same flow.
+    """
     accounts = (
         service_client.table("calendar_accounts")
-        .select("id, credentials, calendar_sources(id, calendar_id, is_enabled)")
+        .select("id, provider, credentials, calendar_sources(id, calendar_id, is_enabled)")
         .eq("user_id", user_id)
         .execute()
     )
 
     total = 0
     for account in accounts.data or []:
-        creds_data = account.get("credentials") or {}
-        original_token = creds_data.get("access_token")
-        credentials = credentials_from_dict(creds_data)
-
-        try:
-            cal_service = build("calendar", "v3", credentials=credentials)
-        except Exception as exc:
-            logger.error("Failed to build calendar service for account %s: %s", account["id"], exc)
-            continue
+        provider = get_provider(account["provider"])
+        tokens = TokenBundle(account.get("credentials") or {})
 
         try:
             for source in account.get("calendar_sources") or []:
                 if not source["is_enabled"]:
                     continue
                 total += _sync_source(
-                    user_id, source["id"], source["calendar_id"], cal_service, time_min, time_max
+                    user_id, source["id"], source["calendar_id"], provider, tokens, time_min, time_max
                 )
-        except RefreshError as exc:
+        except ProviderAuthError as exc:
             logger.warning(
-                "Google refresh token invalid for account %s — marking needs_reauth: %s",
+                "Refresh token invalid for account %s — marking needs_reauth: %s",
                 account["id"],
                 exc,
             )
             mark_account_needs_reauth(account["id"])
             continue
 
-        # Persist refreshed credentials if the token was renewed during the API call
-        if credentials.token and credentials.token != original_token:
-            service_client.table("calendar_accounts").update(
-                {
-                    "credentials": {
-                        **creds_data,
-                        "access_token": credentials.token,
-                        "expiry": credentials.expiry.isoformat() if credentials.expiry else None,
-                    },
-                    "last_synced_at": datetime.now(timezone.utc).isoformat(),
-                }
-            ).eq("id", account["id"]).execute()
-        else:
-            service_client.table("calendar_accounts").update(
-                {"last_synced_at": datetime.now(timezone.utc).isoformat()}
-            ).eq("id", account["id"]).execute()
+        _persist_account_after_sync(account["id"], tokens)
 
     return total
+
+
+def _persist_account_after_sync(account_id: str, tokens: TokenBundle) -> None:
+    """Stamp last_synced_at and persist rotated credentials if the provider
+    refreshed them during the sync (whole dict, so Microsoft's rotated refresh
+    token is saved too)."""
+    update_payload: dict = {"last_synced_at": datetime.now(timezone.utc).isoformat()}
+    if tokens.dirty:
+        update_payload["credentials"] = tokens.data
+    service_client.table("calendar_accounts").update(update_payload).eq("id", account_id).execute()
 
 
 def sync_event_participants_scoped(
@@ -200,74 +185,41 @@ def _sync_source(
     user_id: str,
     source_id: str,
     calendar_id: str,
-    cal_service,
+    provider,
+    tokens: TokenBundle,
     time_min: datetime,
     time_max: datetime,
 ) -> int:
-    """Fetch events from one calendar source and upsert as busy slots. Returns count."""
+    """Fetch busy events from one calendar source and upsert as busy slots.
+
+    Returns the number of slots upserted. A :class:`ProviderAuthError` bubbles up
+    so ``_sync_user`` can mark the account ``needs_reauth``; any other provider
+    API error skips this source without touching its existing slots.
+    """
     try:
-        all_items = []
-        page_token = None
-        while True:
-            response = (
-                cal_service.events()
-                .list(
-                    calendarId=calendar_id,
-                    timeMin=time_min.isoformat(),
-                    timeMax=time_max.isoformat(),
-                    singleEvents=True,
-                    maxResults=250,
-                    pageToken=page_token,
-                )
-                .execute()
-            )
-            all_items.extend(response.get("items", []))
-            page_token = response.get("nextPageToken")
-            if not page_token:
-                break
-    except RefreshError:
-        # Bubble up so _sync_user can mark the account as needs_reauth.
+        busy_events = provider.fetch_busy_events(tokens, calendar_id, time_min, time_max)
+    except ProviderAuthError:
         raise
-    except Exception as exc:
+    except ProviderAPIError as exc:
         logger.error("Failed to fetch events for calendar %s: %s", calendar_id, exc)
         return 0
 
-    slots_to_upsert = []
-    # Track all non-cancelled event IDs returned by Google so stale deletion
-    # works correctly even for events that were skipped (all-day, missing times).
-    # Cancelled events are intentionally excluded — they should be treated as
-    # stale and deleted from the DB if they exist.
-    fetched_event_ids: set[str] = set()
-
-    for item in all_items:
-        # Skip cancelled instances — treat them as stale so they get deleted.
-        if item.get("status") == "cancelled":
-            continue
-
-        fetched_event_ids.add(item["id"])
-
-        start = item.get("start", {})
-        end = item.get("end", {})
-        start_time = start.get("dateTime") or start.get("date")
-        end_time = end.get("dateTime") or end.get("date")
-
-        if not start_time or not end_time:
-            continue
-
-        # Skip all-day events (they use date strings, not dateTime)
-        if "T" not in start_time or "T" not in end_time:
-            continue
-
-        slots_to_upsert.append(
-            {
-                "user_id": user_id,
-                "calendar_source_id": source_id,
-                "provider_event_id": item["id"],
-                "start_time_utc": _to_utc(start_time),
-                "end_time_utc": _to_utc(end_time),
-                "last_synced_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+    # The provider already expanded recurring events, dropped cancelled/all-day
+    # events, and normalised times to UTC. Events the provider no longer returns
+    # are treated as stale and deleted below.
+    fetched_event_ids: set[str] = {be.event_id for be in busy_events}
+    now_iso = datetime.now(timezone.utc).isoformat()
+    slots_to_upsert = [
+        {
+            "user_id": user_id,
+            "calendar_source_id": source_id,
+            "provider_event_id": be.event_id,
+            "start_time_utc": be.start_utc,
+            "end_time_utc": be.end_utc,
+            "last_synced_at": now_iso,
+        }
+        for be in busy_events
+    ]
 
     if slots_to_upsert:
         service_client.table("busy_slots").upsert(

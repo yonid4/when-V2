@@ -44,7 +44,7 @@ def _make_event_row(**overrides) -> dict:
         "video_call_link": None,
         "finalized_start_time_utc": None,
         "finalized_end_time_utc": None,
-        "google_calendar_event_id": None,
+        "calendar_event_id": None,
         "proposals_needs_regeneration": False,
         "proposals_last_generated_at": None,
         "created_at": "2026-04-01T00:00:00+00:00",

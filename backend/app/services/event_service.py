@@ -86,7 +86,7 @@ def _row_to_event_response(row: dict, participants: list[dict]) -> EventResponse
         video_call_link=row.get('video_call_link'),
         finalized_start_time_utc=row.get('finalized_start_time_utc'),
         finalized_end_time_utc=row.get('finalized_end_time_utc'),
-        google_calendar_event_id=row.get('google_calendar_event_id'),
+        calendar_event_id=row.get('calendar_event_id'),
         proposals_needs_regeneration=row['proposals_needs_regeneration'],
         proposals_last_generated_at=row.get('proposals_last_generated_at'),
         created_at=row['created_at'],

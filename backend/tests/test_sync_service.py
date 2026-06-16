@@ -1,12 +1,15 @@
-"""Sprint 8 — sync_service unit tests.
+"""Sprint 8 — sync_service unit tests (provider-agnostic).
 
 Covers:
 - Time range: sync_busy_slots uses now → now+90 days
-- Pagination: _sync_source follows nextPageToken
-- Stale deletion: bounded to the same 90-day window
+- Window widening when the user is in past-starting active events
 - Event-scoped sync: uses event's earliest/latest, not the global window
 - Coordinator inclusion: coordinator synced even if not in event_participants
-- UTC normalization: non-UTC offsets converted before storage
+- _sync_source: upsert + stale deletion operate on provider BusyEvents
+- Token rotation: rotated credentials are persisted after a sync
+
+Provider-specific parsing (pagination, UTC normalisation, cancelled/all-day
+handling) lives in test_google_provider.py.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -14,71 +17,47 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from app.providers.base import BusyEvent, ProviderAPIError, ProviderAuthError, TokenBundle
 from app.services import sync_service
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def _make_google_event(event_id: str, start: str, end: str) -> dict:
-    return {
-        "id": event_id,
-        "start": {"dateTime": start},
-        "end": {"dateTime": end},
-    }
+def _busy(event_id: str, start: datetime, end: datetime) -> BusyEvent:
+    return BusyEvent(event_id=event_id, start_utc=start.isoformat(), end_utc=end.isoformat())
 
 
-def _make_credentials_data(**overrides) -> dict:
-    return {
-        "access_token": "tok-original",
-        "refresh_token": "ref-tok",
-        **overrides,
-    }
-
-
-def _make_account(account_id: str = "acct-1", user_id: str = "user-1", sources=None) -> dict:
-    return {
-        "id": account_id,
-        "user_id": user_id,
-        "credentials": _make_credentials_data(),
-        "calendar_sources": sources or [
-            {"id": "src-1", "calendar_id": "primary", "is_enabled": True}
-        ],
-    }
+def _provider_returning(busy_events) -> MagicMock:
+    prov = MagicMock()
+    prov.fetch_busy_events.return_value = list(busy_events)
+    return prov
 
 
 # ─── 1. Time range ────────────────────────────────────────────────────────────
 
 def _stub_no_active_events(mock_svc) -> None:
     """Make `_earliest_active_event_start` return its default by stubbing every
-    query it issues to return empty data. Use this when the test doesn't care
-    about the widening logic."""
+    query it issues to return empty data."""
     empty = MagicMock(data=[])
-    # events.select().eq("coordinator_id",...).in_("status",...).execute()
     mock_svc.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value = empty
-    # event_participants.select().eq("user_id",...).neq("status",...).execute()
     mock_svc.table.return_value.select.return_value.eq.return_value.neq.return_value.execute.return_value = empty
-    # events.select().in_("id",...).in_("status",...).execute()  — guarded by event_ids being non-empty,
-    # so not strictly required when participant_rows is empty, but harmless.
     mock_svc.table.return_value.select.return_value.in_.return_value.in_.return_value.execute.return_value = empty
-    # calendar_accounts.select().eq("user_id",...).execute() — for _sync_user
     mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = empty
 
 
-@patch("app.services.sync_service.build")
 @patch("app.services.sync_service.service_client")
-def test_sync_busy_slots_uses_90_day_window(mock_svc, mock_build):
-    """sync_busy_slots passes a time window of now → now+90 days to Google Calendar
-    when the user is in no active past-starting events."""
+def test_sync_busy_slots_uses_90_day_window(mock_svc):
+    """sync_busy_slots queries calendar_accounts (now → now+90 days) when the
+    user is in no active past-starting events."""
     _stub_no_active_events(mock_svc)
 
     result = sync_service.sync_busy_slots("user-1")
 
     assert result == 0
-    # Verify the calendar_accounts query was issued
     assert any(c == call("calendar_accounts") for c in mock_svc.table.call_args_list)
 
 
-# ─── 1b. Widened sync window when user is in past-starting active events ─────
+# ─── 1b. Window widening ──────────────────────────────────────────────────────
 
 def _stub_widening_queries(
     mock_svc,
@@ -86,36 +65,25 @@ def _stub_widening_queries(
     participant_event_ids: list[str] = None,
     participant_event_starts: list[str] = None,
 ) -> None:
-    """Configure the mock to return data for the three queries inside
-    `_earliest_active_event_start`. Pass ISO strings for the *_starts lists."""
     coord_event_starts = coord_event_starts or []
     participant_event_ids = participant_event_ids or []
     participant_event_starts = participant_event_starts or []
 
-    # events.select().eq("coordinator_id", uid).in_("status", [...]).execute()
     mock_svc.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(
         data=[{"earliest_datetime_utc": s} for s in coord_event_starts]
     )
-
-    # event_participants.select("event_id").eq("user_id", uid).neq("status", "declined").execute()
     mock_svc.table.return_value.select.return_value.eq.return_value.neq.return_value.execute.return_value = MagicMock(
         data=[{"event_id": eid} for eid in participant_event_ids]
     )
-
-    # events.select().in_("id", ...).in_("status", [...]).execute()  — participant-events query
     mock_svc.table.return_value.select.return_value.in_.return_value.in_.return_value.execute.return_value = MagicMock(
         data=[{"earliest_datetime_utc": s} for s in participant_event_starts]
     )
-
-    # calendar_accounts query: empty so we don't actually try to call Google
     mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
 
 
 @patch("app.services.sync_service._sync_user")
 @patch("app.services.sync_service.service_client")
 def test_widens_window_when_coordinator_event_starts_in_past(mock_svc, mock_sync_user):
-    """If the user coordinates an active event whose earliest is in the past,
-    time_min is widened back to that event's earliest."""
     now = datetime.now(timezone.utc)
     past = now - timedelta(days=10)
     _stub_widening_queries(mock_svc, coord_event_starts=[past.isoformat()])
@@ -126,10 +94,7 @@ def test_widens_window_when_coordinator_event_starts_in_past(mock_svc, mock_sync
     args, _ = mock_sync_user.call_args
     user_id_arg, time_min_arg, time_max_arg = args
     assert user_id_arg == "user-1"
-    assert abs((time_min_arg - past).total_seconds()) < 2, (
-        f"time_min {time_min_arg} should equal past {past}"
-    )
-    # time_max should still be ~90 days from now
+    assert abs((time_min_arg - past).total_seconds()) < 2
     assert (time_max_arg - now) >= timedelta(days=89)
     assert (time_max_arg - now) <= timedelta(days=91)
 
@@ -137,8 +102,6 @@ def test_widens_window_when_coordinator_event_starts_in_past(mock_svc, mock_sync
 @patch("app.services.sync_service._sync_user")
 @patch("app.services.sync_service.service_client")
 def test_widens_window_when_participant_event_starts_in_past(mock_svc, mock_sync_user):
-    """If the user is a non-declined participant in an active event whose
-    earliest is in the past, time_min is widened back to that event's earliest."""
     now = datetime.now(timezone.utc)
     past = now - timedelta(days=5)
     _stub_widening_queries(
@@ -158,8 +121,6 @@ def test_widens_window_when_participant_event_starts_in_past(mock_svc, mock_sync
 @patch("app.services.sync_service._sync_user")
 @patch("app.services.sync_service.service_client")
 def test_does_not_widen_when_active_events_are_all_in_future(mock_svc, mock_sync_user):
-    """If every active event the user is in starts in the future, time_min
-    stays at NOW (we never push it forward)."""
     now = datetime.now(timezone.utc)
     future = now + timedelta(days=2)
     _stub_widening_queries(mock_svc, coord_event_starts=[future.isoformat()])
@@ -169,19 +130,13 @@ def test_does_not_widen_when_active_events_are_all_in_future(mock_svc, mock_sync
 
     args, _ = mock_sync_user.call_args
     _, time_min_arg, _ = args
-    # time_min should still equal NOW, not the future event's start
     assert abs((time_min_arg - now).total_seconds()) < 2
 
 
 @patch("app.services.sync_service._sync_user")
 @patch("app.services.sync_service.service_client")
 def test_widening_ignores_declined_participation(mock_svc, mock_sync_user):
-    """If the user's participation status is 'declined', that event must not
-    contribute to time_min — the .neq('status','declined') filter excludes it
-    from the participant_rows query, so participant_event_ids is empty."""
     now = datetime.now(timezone.utc)
-    # Caller does not include declined-event ids in participant_event_ids — that
-    # mirrors what the .neq() filter does in production.
     _stub_widening_queries(mock_svc, participant_event_ids=[])
     mock_sync_user.return_value = 0
 
@@ -192,88 +147,41 @@ def test_widening_ignores_declined_participation(mock_svc, mock_sync_user):
     assert abs((time_min_arg - now).total_seconds()) < 2
 
 
-@patch("app.services.sync_service.build")
-@patch("app.services.sync_service.service_client")
-def test_sync_source_time_range_is_90_days(mock_svc, mock_build):
-    """_sync_source timeMin is 'now' and timeMax is within 90-91 days from now."""
-    now = datetime.now(timezone.utc)
-
-    # Mock calendar API to capture the list call arguments
-    mock_events = MagicMock()
-    mock_list = MagicMock()
-    mock_list.execute.return_value = {"items": [], "nextPageToken": None}
-    mock_events.list.return_value = mock_list
-    mock_cal_service = MagicMock()
-    mock_cal_service.events.return_value = mock_events
-
-    # Stale deletion query
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
-        data=[]
-    )
-
-    time_min = now
-    time_max = now + timedelta(days=90)
-
-    sync_service._sync_source("user-1", "src-1", "primary", mock_cal_service, time_min, time_max)
-
-    call_kwargs = mock_events.list.call_args.kwargs
-    parsed_min = datetime.fromisoformat(call_kwargs["timeMin"])
-    parsed_max = datetime.fromisoformat(call_kwargs["timeMax"])
-
-    assert parsed_max - parsed_min >= timedelta(days=89)
-    assert parsed_max - parsed_min <= timedelta(days=91)
-
-
-# ─── 2. Pagination ────────────────────────────────────────────────────────────
+# ─── 2. _sync_source: upsert + stale deletion (provider-agnostic) ─────────────
 
 @patch("app.services.sync_service.service_client")
-def test_sync_source_follows_page_token(mock_svc):
-    """_sync_source loops through pages when nextPageToken is present."""
+def test_sync_source_upserts_busy_events(mock_svc):
+    """_sync_source upserts one busy_slot per BusyEvent returned by the provider."""
     now = datetime.now(timezone.utc)
-    time_min = now
-    time_max = now + timedelta(days=90)
+    time_min, time_max = now, now + timedelta(days=90)
+    prov = _provider_returning([
+        _busy("evt-1", now, now + timedelta(hours=1)),
+        _busy("evt-2", now + timedelta(hours=2), now + timedelta(hours=3)),
+    ])
 
-    event1 = _make_google_event("evt-1", now.isoformat(), (now + timedelta(hours=1)).isoformat())
-    event2 = _make_google_event("evt-2", (now + timedelta(hours=2)).isoformat(), (now + timedelta(hours=3)).isoformat())
+    upserted = []
 
-    mock_list = MagicMock()
-    mock_list.execute.side_effect = [
-        {"items": [event1], "nextPageToken": "page2"},
-        {"items": [event2]},  # no nextPageToken → loop ends
-    ]
-    mock_cal = MagicMock()
-    mock_cal.events.return_value.list.return_value = mock_list
+    def capture_upsert(rows, **kwargs):
+        upserted.extend(rows)
+        return MagicMock(execute=MagicMock(return_value=MagicMock()))
 
-    # Upsert and stale deletion mocks
-    mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock()
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
-        data=[]
-    )
+    mock_svc.table.return_value.upsert.side_effect = capture_upsert
+    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(data=[])
 
-    count = sync_service._sync_source("user-1", "src-1", "primary", mock_cal, time_min, time_max)
+    count = sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max)
 
     assert count == 2
-    assert mock_cal.events.return_value.list.call_count == 2
-    # Second call should have included pageToken
-    second_kwargs = mock_cal.events.return_value.list.call_args_list[1].kwargs
-    assert second_kwargs.get("pageToken") == "page2"
+    assert {r["provider_event_id"] for r in upserted} == {"evt-1", "evt-2"}
+    assert all(r["calendar_source_id"] == "src-1" for r in upserted)
 
-
-# ─── 3. Stale deletion bounded to query window ───────────────────────────────
 
 @patch("app.services.sync_service.service_client")
 def test_stale_deletion_uses_query_time_max(mock_svc):
-    """Stale deletion filters by end_time_utc < time_max (same window as Google query)."""
+    """Stale deletion filters by end_time_utc < time_max (same window as fetch)."""
     now = datetime.now(timezone.utc)
-    time_min = now
-    time_max = now + timedelta(days=90)
+    time_min, time_max = now, now + timedelta(days=90)
+    prov = _provider_returning([])
 
-    mock_list = MagicMock()
-    mock_list.execute.return_value = {"items": []}
-    mock_cal = MagicMock()
-    mock_cal.events.return_value.list.return_value = mock_list
-
-    # Capture the lt() argument used for stale deletion
     lt_calls = []
 
     def capture_lt(column, value):
@@ -284,13 +192,145 @@ def test_stale_deletion_uses_query_time_max(mock_svc):
 
     mock_svc.table.return_value.select.return_value.eq.return_value.lt.side_effect = capture_lt
 
-    sync_service._sync_source("user-1", "src-1", "primary", mock_cal, time_min, time_max)
+    sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max)
 
     assert len(lt_calls) == 1
     stale_cutoff = datetime.fromisoformat(lt_calls[0])
-    expected_max = time_max
-    diff = abs((stale_cutoff - expected_max).total_seconds())
-    assert diff < 2, f"Stale cutoff {stale_cutoff} should be close to time_max {expected_max}"
+    assert abs((stale_cutoff - time_max).total_seconds()) < 2
+
+
+@patch("app.services.sync_service.service_client")
+def test_stale_slot_deleted_when_event_no_longer_returned(mock_svc):
+    """A busy slot whose event is no longer returned by the provider is deleted."""
+    now = datetime.now(timezone.utc)
+    time_min, time_max = now, now + timedelta(days=90)
+    prov = _provider_returning([_busy("evt-active", now, now + timedelta(hours=1))])
+
+    mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
+        data=[{"provider_event_id": "evt-active"}, {"provider_event_id": "evt-stale"}]
+    )
+
+    deleted_ids = []
+
+    def capture_in(column, ids):
+        if column == "provider_event_id":
+            deleted_ids.extend(ids)
+        return MagicMock(execute=MagicMock(return_value=MagicMock()))
+
+    mock_svc.table.return_value.delete.return_value.eq.return_value.in_.side_effect = capture_in
+
+    sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max)
+
+    assert "evt-stale" in deleted_ids
+    assert "evt-active" not in deleted_ids
+
+
+@patch("app.services.sync_service.service_client")
+def test_no_stale_slots_delete_not_called(mock_svc):
+    """When no slots are stale, the delete call is not made."""
+    now = datetime.now(timezone.utc)
+    time_min, time_max = now, now + timedelta(days=90)
+    prov = _provider_returning([_busy("evt-active", now, now + timedelta(hours=1))])
+
+    mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
+        data=[{"provider_event_id": "evt-active"}]
+    )
+
+    sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max)
+
+    mock_svc.table.return_value.delete.assert_not_called()
+
+
+@patch("app.services.sync_service.service_client")
+def test_sync_source_propagates_auth_error(mock_svc):
+    """A ProviderAuthError bubbles up so _sync_user can mark needs_reauth."""
+    now = datetime.now(timezone.utc)
+    prov = MagicMock()
+    prov.fetch_busy_events.side_effect = ProviderAuthError("invalid_grant")
+
+    with pytest.raises(ProviderAuthError):
+        sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), now, now + timedelta(days=90))
+
+
+@patch("app.services.sync_service.service_client")
+def test_sync_source_api_error_skips_source_without_deleting(mock_svc):
+    """A ProviderAPIError skips the source (returns 0) and never deletes slots."""
+    now = datetime.now(timezone.utc)
+    prov = MagicMock()
+    prov.fetch_busy_events.side_effect = ProviderAPIError("boom")
+
+    count = sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), now, now + timedelta(days=90))
+
+    assert count == 0
+    mock_svc.table.return_value.delete.assert_not_called()
+
+
+# ─── 3. _sync_user: token rotation persistence ────────────────────────────────
+
+@patch("app.services.sync_service.get_provider")
+@patch("app.services.sync_service.service_client")
+def test_sync_user_persists_rotated_credentials(mock_svc, mock_get_provider):
+    """When the provider rotates credentials during sync, the whole updated
+    credentials dict is persisted (covers Microsoft's refresh-token rotation)."""
+    now = datetime.now(timezone.utc)
+    account = {
+        "id": "acct-1",
+        "provider": "microsoft",
+        "credentials": {"access_token": "old", "refresh_token": "r1"},
+        "calendar_sources": [{"id": "src-1", "calendar_id": "cal", "is_enabled": True}],
+    }
+    mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[account])
+    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(data=[])
+
+    prov = MagicMock()
+
+    def fetch(tokens, calendar_id, time_min, time_max):
+        tokens.update({"access_token": "new", "refresh_token": "r2"})
+        return []
+
+    prov.fetch_busy_events.side_effect = fetch
+    mock_get_provider.return_value = prov
+
+    updates = []
+
+    def capture_update(payload):
+        updates.append(payload)
+        m = MagicMock()
+        m.eq.return_value.execute.return_value = MagicMock()
+        return m
+
+    mock_svc.table.return_value.update.side_effect = capture_update
+
+    sync_service._sync_user("user-1", now, now + timedelta(days=90))
+
+    persisted = [u for u in updates if "credentials" in u]
+    assert persisted, "rotated credentials should be persisted"
+    assert persisted[-1]["credentials"]["refresh_token"] == "r2"
+
+
+@patch("app.services.sync_service.mark_account_needs_reauth")
+@patch("app.services.sync_service.get_provider")
+@patch("app.services.sync_service.service_client")
+def test_sync_user_marks_needs_reauth_on_auth_error(mock_svc, mock_get_provider, mock_mark):
+    """A ProviderAuthError during a source sync marks the account needs_reauth."""
+    now = datetime.now(timezone.utc)
+    account = {
+        "id": "acct-1",
+        "provider": "google",
+        "credentials": {"access_token": "tok", "refresh_token": "r1"},
+        "calendar_sources": [{"id": "src-1", "calendar_id": "cal", "is_enabled": True}],
+    }
+    mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[account])
+
+    prov = MagicMock()
+    prov.fetch_busy_events.side_effect = ProviderAuthError("revoked")
+    mock_get_provider.return_value = prov
+
+    sync_service._sync_user("user-1", now, now + timedelta(days=90))
+
+    mock_mark.assert_called_once_with("acct-1")
 
 
 # ─── 4. Event-scoped sync uses event's datetime window ───────────────────────
@@ -298,7 +338,6 @@ def test_stale_deletion_uses_query_time_max(mock_svc):
 @patch("app.services.sync_service._sync_user")
 @patch("app.services.sync_service.service_client")
 def test_sync_event_participants_scoped_uses_event_window(mock_svc, mock_sync_user):
-    """sync_event_participants_scoped passes event's time bounds, not global 90 days."""
     now = datetime.now(timezone.utc)
     event_min = now + timedelta(days=5)
     event_max = now + timedelta(days=7)
@@ -320,25 +359,18 @@ def test_sync_event_participants_scoped_uses_event_window(mock_svc, mock_sync_us
     assert participant_id in result
     assert coordinator_id in result
 
-    # Verify _sync_user was called with the event's window, not 90-day window
     for call_args in mock_sync_user.call_args_list:
         _, passed_min, passed_max = call_args.args
-        diff_min = abs((passed_min - event_min).total_seconds())
-        diff_max = abs((passed_max - event_max).total_seconds())
-        assert diff_min < 2, "time_min should match event window"
-        assert diff_max < 2, "time_max should match event window"
+        assert abs((passed_min - event_min).total_seconds()) < 2
+        assert abs((passed_max - event_max).total_seconds()) < 2
 
-
-# ─── 5. Coordinator included even if not in event_participants ────────────────
 
 @patch("app.services.sync_service._sync_user")
 @patch("app.services.sync_service.service_client")
 def test_sync_event_participants_scoped_includes_coordinator(mock_svc, mock_sync_user):
-    """Coordinator is synced even when they are not listed in event_participants."""
     now = datetime.now(timezone.utc)
     coordinator_id = "coordinator-uuid-1"
 
-    # event_participants returns empty (coordinator not in table)
     mock_svc.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(
         data=[]
     )
@@ -358,11 +390,9 @@ def test_sync_event_participants_scoped_includes_coordinator(mock_svc, mock_sync
 @patch("app.services.sync_service._sync_user")
 @patch("app.services.sync_service.service_client")
 def test_sync_event_participants_scoped_deduplicates_coordinator(mock_svc, mock_sync_user):
-    """Coordinator is not synced twice if they are also in event_participants."""
     now = datetime.now(timezone.utc)
     coordinator_id = "coordinator-uuid-1"
 
-    # Coordinator appears in event_participants
     mock_svc.table.return_value.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(
         data=[{"user_id": coordinator_id}]
     )
@@ -375,192 +405,5 @@ def test_sync_event_participants_scoped_deduplicates_coordinator(mock_svc, mock_
         time_max=(now + timedelta(hours=4)).isoformat(),
     )
 
-    # coordinator_id should appear exactly once in results
     assert list(result.keys()).count(coordinator_id) == 1
-    # _sync_user called only once (for the participant loop, not again for coordinator)
     assert mock_sync_user.call_count == 1
-
-
-# ─── 6. UTC normalization ─────────────────────────────────────────────────────
-
-def test_to_utc_converts_offset_to_utc():
-    """_to_utc converts a datetime string with a non-UTC offset to a UTC ISO string."""
-    # UTC-7 offset → same instant in UTC is +7 hours
-    pdt_str = "2026-04-09T09:00:00-07:00"
-    result = sync_service._to_utc(pdt_str)
-    dt = datetime.fromisoformat(result)
-    assert dt.tzinfo is not None
-    # 09:00 PDT = 16:00 UTC
-    assert dt.hour == 16
-    assert dt.utcoffset().total_seconds() == 0
-
-
-def test_to_utc_preserves_utc_time():
-    """_to_utc is a no-op (aside from formatting) for a datetime already in UTC."""
-    utc_str = "2026-04-09T16:00:00+00:00"
-    result = sync_service._to_utc(utc_str)
-    dt = datetime.fromisoformat(result)
-    assert dt.hour == 16
-    assert dt.utcoffset().total_seconds() == 0
-
-
-@patch("app.services.sync_service.service_client")
-def test_sync_source_normalizes_timestamps_to_utc(mock_svc):
-    """_sync_source stores start/end times as UTC regardless of source timezone."""
-    now = datetime.now(timezone.utc)
-    time_min = now
-    time_max = now + timedelta(days=90)
-
-    # Google returns an event with PDT offset
-    event = _make_google_event(
-        "evt-pdt",
-        "2026-04-09T09:00:00-07:00",  # 16:00 UTC
-        "2026-04-09T10:00:00-07:00",  # 17:00 UTC
-    )
-    mock_list = MagicMock()
-    mock_list.execute.return_value = {"items": [event]}
-    mock_cal = MagicMock()
-    mock_cal.events.return_value.list.return_value = mock_list
-
-    upserted_rows = []
-
-    def capture_upsert(rows, **kwargs):
-        upserted_rows.extend(rows)
-        return MagicMock(execute=MagicMock(return_value=MagicMock()))
-
-    mock_svc.table.return_value.upsert.side_effect = capture_upsert
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
-        data=[]
-    )
-
-    sync_service._sync_source("user-1", "src-1", "primary", mock_cal, time_min, time_max)
-
-    assert len(upserted_rows) == 1
-    start_dt = datetime.fromisoformat(upserted_rows[0]["start_time_utc"])
-    end_dt = datetime.fromisoformat(upserted_rows[0]["end_time_utc"])
-    assert start_dt.utcoffset().total_seconds() == 0, "start_time_utc must be UTC"
-    assert end_dt.utcoffset().total_seconds() == 0, "end_time_utc must be UTC"
-    assert start_dt.hour == 16
-    assert end_dt.hour == 17
-
-
-# ─── 7. Stale deletion correctness ───────────────────────────────────────────
-
-@patch("app.services.sync_service.service_client")
-def test_stale_slot_deleted_when_event_no_longer_returned(mock_svc):
-    """A busy slot whose event is no longer returned by Google is deleted."""
-    now = datetime.now(timezone.utc)
-    time_min = now
-    time_max = now + timedelta(days=90)
-
-    # Google returns one event; the DB has two (one is stale)
-    active_event = _make_google_event(
-        "evt-active",
-        now.isoformat(),
-        (now + timedelta(hours=1)).isoformat(),
-    )
-    mock_list = MagicMock()
-    mock_list.execute.return_value = {"items": [active_event]}
-    mock_cal = MagicMock()
-    mock_cal.events.return_value.list.return_value = mock_list
-
-    # DB contains both the active slot and a stale slot
-    mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock()
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
-        data=[
-            {"provider_event_id": "evt-active"},
-            {"provider_event_id": "evt-stale"},
-        ]
-    )
-
-    deleted_ids = []
-
-    def capture_in(column, ids):
-        if column == "provider_event_id":
-            deleted_ids.extend(ids)
-        return MagicMock(execute=MagicMock(return_value=MagicMock()))
-
-    mock_svc.table.return_value.delete.return_value.eq.return_value.in_.side_effect = capture_in
-
-    sync_service._sync_source("user-1", "src-1", "primary", mock_cal, time_min, time_max)
-
-    assert "evt-stale" in deleted_ids, "Stale event should be deleted"
-    assert "evt-active" not in deleted_ids, "Active event must not be deleted"
-
-
-@patch("app.services.sync_service.service_client")
-def test_cancelled_event_not_in_fetched_ids_and_deleted_if_in_db(mock_svc):
-    """A Google event with status 'cancelled' is excluded from fetched_event_ids
-    and deleted from busy_slots if it exists in the DB."""
-    now = datetime.now(timezone.utc)
-    time_min = now
-    time_max = now + timedelta(days=90)
-
-    # Google returns one active event and one cancelled event
-    active_event = _make_google_event(
-        "evt-active",
-        now.isoformat(),
-        (now + timedelta(hours=1)).isoformat(),
-    )
-    cancelled_event = {
-        "id": "evt-cancelled",
-        "status": "cancelled",
-        "start": {"dateTime": now.isoformat()},
-        "end": {"dateTime": (now + timedelta(hours=1)).isoformat()},
-    }
-    mock_list = MagicMock()
-    mock_list.execute.return_value = {"items": [active_event, cancelled_event]}
-    mock_cal = MagicMock()
-    mock_cal.events.return_value.list.return_value = mock_list
-
-    # DB contains both the active slot and the previously-synced cancelled slot
-    mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock()
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
-        data=[
-            {"provider_event_id": "evt-active"},
-            {"provider_event_id": "evt-cancelled"},
-        ]
-    )
-
-    deleted_ids = []
-
-    def capture_in(column, ids):
-        if column == "provider_event_id":
-            deleted_ids.extend(ids)
-        return MagicMock(execute=MagicMock(return_value=MagicMock()))
-
-    mock_svc.table.return_value.delete.return_value.eq.return_value.in_.side_effect = capture_in
-
-    sync_service._sync_source("user-1", "src-1", "primary", mock_cal, time_min, time_max)
-
-    assert "evt-cancelled" in deleted_ids, "Cancelled event's slot should be deleted"
-    assert "evt-active" not in deleted_ids, "Active event must not be deleted"
-
-
-@patch("app.services.sync_service.service_client")
-def test_no_stale_slots_delete_not_called(mock_svc):
-    """When no slots are stale, the delete call is not made."""
-    now = datetime.now(timezone.utc)
-    time_min = now
-    time_max = now + timedelta(days=90)
-
-    active_event = _make_google_event(
-        "evt-active",
-        now.isoformat(),
-        (now + timedelta(hours=1)).isoformat(),
-    )
-    mock_list = MagicMock()
-    mock_list.execute.return_value = {"items": [active_event]}
-    mock_cal = MagicMock()
-    mock_cal.events.return_value.list.return_value = mock_list
-
-    # DB returns the same single slot that Google returned — nothing is stale
-    mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock()
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
-        data=[{"provider_event_id": "evt-active"}]
-    )
-
-    sync_service._sync_source("user-1", "src-1", "primary", mock_cal, time_min, time_max)
-
-    # delete() should never have been called
-    mock_svc.table.return_value.delete.assert_not_called()

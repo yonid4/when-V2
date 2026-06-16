@@ -1,9 +1,10 @@
 """Sprint 6B/6C — Event finalization tests.
 
 Tests the finalize router and finalize_service with mocked Supabase service_client
-and mocked Google Calendar API.
+and a mocked calendar provider (via ``get_provider``).
 """
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -33,6 +34,26 @@ def _current_user_profile(user_id: str = "coordinator-uuid-1") -> dict:
     return {"id": user_id, "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
 
 
+@contextmanager
+def _patched_provider(event_id: str = "cal-evt-123", error: Exception | None = None, capture: dict | None = None):
+    """Patch finalize_service.get_provider with a fake provider whose
+    create_event optionally captures the EventPayload or raises ``error``."""
+    prov = MagicMock()
+
+    def _create(tokens, calendar_id, payload):
+        if capture is not None:
+            capture["payload"] = payload
+            capture["calendar_id"] = calendar_id
+            capture["tokens"] = tokens
+        if error is not None:
+            raise error
+        return event_id
+
+    prov.create_event.side_effect = _create
+    with patch("app.services.finalize_service.get_provider", return_value=prov):
+        yield prov
+
+
 def _make_event_row(**overrides) -> dict:
     defaults = {
         "id": "event-db-id-1",
@@ -42,7 +63,7 @@ def _make_event_row(**overrides) -> dict:
         "status": "planning",
         "finalized_start_time_utc": None,
         "finalized_end_time_utc": None,
-        "google_calendar_event_id": None,
+        "calendar_event_id": None,
     }
     return {**defaults, **overrides}
 
@@ -57,28 +78,49 @@ def _make_proposed_time_row(**overrides) -> dict:
     return {**defaults, **overrides}
 
 
+def _make_write_cal_row(provider: str = "google", **overrides) -> dict:
+    """A write calendar source joined with its owning account (id, user_id,
+    provider, credentials) — matching the single joined query finalize issues."""
+    defaults = {
+        "id": "cal-source-1",
+        "calendar_id": "primary",
+        "calendar_accounts": {
+            "id": "cal-account-1",
+            "user_id": "coordinator-uuid-1",
+            "provider": provider,
+            "credentials": {"access_token": "access-tok", "refresh_token": "refresh-tok"},
+        },
+    }
+    return {**defaults, **overrides}
+
+
+def _make_user_write_cal(user_id: str, calendar_id: str, account_id: str, provider: str = "google") -> dict:
+    """A write calendar belonging to an arbitrary user (for multi-participant tests)."""
+    return {
+        "id": f"src-{account_id}",
+        "calendar_id": calendar_id,
+        "calendar_accounts": {
+            "id": account_id,
+            "user_id": user_id,
+            "provider": provider,
+            "credentials": {"access_token": "at", "refresh_token": "rt"},
+        },
+    }
+
+
 def _make_finalize_db(
     event_row: dict,
     proposed_time_row: dict | None = None,
     participants: list[dict] | None = None,
     coordinator_participant: dict | None = None,
     write_cal_rows: list[dict] | None = None,
-    creds_row: dict | None = None,
     updated_event: dict | None = None,
 ) -> MagicMock:
     """Build a db mock that routes table() calls for finalize_service."""
     participants = participants or []
     write_cal_rows = write_cal_rows or []
-    creds_row = creds_row or {
-        "id": "cal-account-1",
-        "credentials": {
-            "access_token": "access-tok",
-            "refresh_token": "refresh-tok",
-        },
-    }
-    updated_event = updated_event or {**event_row, "status": "confirmed", "google_calendar_event_id": "gcal-id-1"}
+    updated_event = updated_event or {**event_row, "status": "confirmed", "calendar_event_id": "cal-evt-123"}
 
-    # Default coordinator participant (for coordinator lookup)
     _coordinator_participant = coordinator_participant or {
         "user_id": "coordinator-uuid-1",
         "profiles": {
@@ -106,18 +148,9 @@ def _make_finalize_db(
                 data=proposed_time_row
             )
         elif name == "event_participants":
-            # First call: accepted participants list (no maybe_single, returns list)
-            # Second call: coordinator lookup (maybe_single, returns single row)
-            # We route by presence of maybe_single in the chain depth.
-            # The accepted-participants query ends in .execute() without .maybe_single()
-            # The coordinator query ends in .maybe_single().execute()
-            # We can distinguish by returning different mocks for chained .eq calls.
-            # Simplest: first call is .eq.eq.execute; second is .eq.eq.maybe_single.execute
-            # We use side_effect on select to count calls.
             _ep_call_count[0] += 1
             call_num = _ep_call_count[0]
             if call_num == 1:
-                # Accepted participants: .select().eq(event_id).eq(status).execute()
                 tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
                     data=participants
                 )
@@ -125,7 +158,6 @@ def _make_finalize_db(
                     data=_coordinator_participant
                 )
             else:
-                # Coordinator lookup: .select().eq(event_id).eq(user_id).maybe_single().execute()
                 tbl.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
                     data=_coordinator_participant
                 )
@@ -137,9 +169,9 @@ def _make_finalize_db(
                 data=write_cal_rows
             )
         elif name == "calendar_accounts":
-            tbl.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
-                data=creds_row
-            )
+            # Only touched if the provider rotated tokens (tokens.dirty); the fake
+            # provider never does, so this is a harmless default.
+            tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
         elif name == "notifications":
             tbl.insert.return_value.execute.return_value = MagicMock(data=[])
         return tbl
@@ -147,15 +179,6 @@ def _make_finalize_db(
     db = MagicMock()
     db.table.side_effect = make_table
     return db
-
-
-def _make_write_cal_row(**overrides) -> dict:
-    defaults = {
-        "id": "cal-source-1",
-        "calendar_id": "primary",
-        "calendar_accounts": {"user_id": "coordinator-uuid-1"},
-    }
-    return {**defaults, **overrides}
 
 
 def _make_participant(user_id: str, email: str, google_email: str | None = None) -> dict:
@@ -177,8 +200,8 @@ def _make_participant(user_id: str, email: str, google_email: str | None = None)
 from app.services.finalize_service import _pick_attendee_email
 
 
-def test_pick_attendee_email_prefers_google_provider_email():
-    """When participant has a Google calendar_account, use provider_email."""
+def test_pick_attendee_email_prefers_matching_provider_email():
+    """Prefer the provider_email from the account matching the write provider."""
     participant = {
         "profiles": {
             "email_address": "bob@example.com",
@@ -188,11 +211,11 @@ def test_pick_attendee_email_prefers_google_provider_email():
             ],
         }
     }
-    assert _pick_attendee_email(participant) == "bob@gmail.com"
+    assert _pick_attendee_email(participant, "google") == "bob@gmail.com"
 
 
 def test_pick_attendee_email_falls_back_to_profile_email():
-    """When no Google calendar_account exists, fall back to profile email."""
+    """When no calendar_account exists, fall back to profile email."""
     participant = {
         "profiles": {
             "email_address": "carol@example.com",
@@ -200,7 +223,7 @@ def test_pick_attendee_email_falls_back_to_profile_email():
             "calendar_accounts": [],
         }
     }
-    assert _pick_attendee_email(participant) == "carol@example.com"
+    assert _pick_attendee_email(participant, "google") == "carol@example.com"
 
 
 def test_pick_attendee_email_no_calendar_accounts_key():
@@ -211,11 +234,12 @@ def test_pick_attendee_email_no_calendar_accounts_key():
             "full_name": "Dave",
         }
     }
-    assert _pick_attendee_email(participant) == "dave@example.com"
+    assert _pick_attendee_email(participant, "google") == "dave@example.com"
 
 
-def test_pick_attendee_email_skips_non_google_accounts():
-    """Non-Google provider accounts are not used; falls back to profile email."""
+def test_pick_attendee_email_uses_other_provider_when_no_match():
+    """If no account matches the write provider, use any other connected
+    provider_email before falling back to the profile email."""
     participant = {
         "profiles": {
             "email_address": "eve@example.com",
@@ -225,59 +249,71 @@ def test_pick_attendee_email_skips_non_google_accounts():
             ],
         }
     }
-    assert _pick_attendee_email(participant) == "eve@example.com"
+    # Writing to a Google calendar, attendee only has an Outlook account.
+    assert _pick_attendee_email(participant, "google") == "eve@outlook.com"
+
+
+def test_pick_attendee_email_prefers_write_provider_over_others():
+    """With multiple accounts, the one matching the write provider wins."""
+    participant = {
+        "profiles": {
+            "email_address": "frank@example.com",
+            "full_name": "Frank",
+            "calendar_accounts": [
+                {"provider": "google", "provider_email": "frank@gmail.com"},
+                {"provider": "microsoft", "provider_email": "frank@outlook.com"},
+            ],
+        }
+    }
+    assert _pick_attendee_email(participant, "microsoft") == "frank@outlook.com"
+    assert _pick_attendee_email(participant, "google") == "frank@gmail.com"
 
 
 def test_pick_attendee_email_none_when_no_emails():
     """Returns None when both profile email and calendar accounts are absent."""
     participant = {"profiles": {}}
-    assert _pick_attendee_email(participant) is None
+    assert _pick_attendee_email(participant, "google") is None
 
 
 # ─── POST /api/events/{uid}/finalize ─────────────────────────────────────────
 
 @patch("app.utils.notifications.service_client")
-@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_create_cal, mock_notif_svc):
+def test_finalize_success(mock_dep_svc, mock_svc_svc, mock_notif_svc):
     """Coordinator can finalize an event — returns confirmed event row."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row()
-    proposed_time = _make_proposed_time_row()
-    write_cal = _make_write_cal_row()
-
     mock_svc_svc.table.side_effect = _make_finalize_db(
-        event_row=event_row,
-        proposed_time_row=proposed_time,
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
         participants=[_make_participant("bob-uuid", "bob@example.com", "bob@gmail.com")],
-        write_cal_rows=[write_cal],
+        write_cal_rows=[_make_write_cal_row()],
     ).table.side_effect
 
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "Looking forward to it!",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with _patched_provider() as prov:
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "Looking forward to it!",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 200
-    assert mock_create_cal.called
+    assert prov.create_event.called
 
 
-@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_404_event_not_found(mock_dep_svc, mock_svc_svc, mock_create_cal):
+def test_finalize_404_event_not_found(mock_dep_svc, mock_svc_svc):
     """Returns 404 when event does not exist."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -293,26 +329,26 @@ def test_finalize_404_event_not_found(mock_dep_svc, mock_svc_svc, mock_create_ca
 
     mock_svc_svc.table.side_effect = make_table
 
-    response = client.post(
-        "/api/events/nonexistent-uid/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Event",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with _patched_provider():
+        response = client.post(
+            "/api/events/nonexistent-uid/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Event",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 404
 
 
-@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_403_not_coordinator(mock_dep_svc, mock_svc_svc, mock_create_cal):
+def test_finalize_403_not_coordinator(mock_dep_svc, mock_svc_svc):
     """Returns 403 when the caller is not the coordinator."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile("other-user-uuid")
@@ -330,33 +366,33 @@ def test_finalize_403_not_coordinator(mock_dep_svc, mock_svc_svc, mock_create_ca
 
     mock_svc_svc.table.side_effect = make_table
 
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Event",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers("other-user-uuid"),
-    )
+    with _patched_provider():
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Event",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers("other-user-uuid"),
+        )
     assert response.status_code == 403
 
 
-@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_409_already_confirmed(mock_dep_svc, mock_svc_svc, mock_create_cal):
-    """Returns 409 if the event is already confirmed — no second Google Calendar
-    event is created and no duplicate notifications are inserted."""
+def test_finalize_409_already_confirmed(mock_dep_svc, mock_svc_svc):
+    """Returns 409 if the event is already confirmed — no second calendar event
+    is created and no duplicate notifications are inserted."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row(status="confirmed", google_calendar_event_id="gcal-existing-123")
+    event_row = _make_event_row(status="confirmed", calendar_event_id="cal-existing-123")
     notifications_inserted = []
 
     def make_table(name):
@@ -376,100 +412,161 @@ def test_finalize_409_already_confirmed(mock_dep_svc, mock_svc_svc, mock_create_
 
     mock_svc_svc.table.side_effect = make_table
 
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with _patched_provider() as prov:
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 409
     assert response.json()["detail"] == "event_already_finalized"
-    # No second Google Calendar event created
-    assert mock_create_cal.call_count == 0
-    # No duplicate notifications inserted
+    assert prov.create_event.call_count == 0
     assert notifications_inserted == []
 
 
-@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-event-123")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_422_no_write_calendar(mock_dep_svc, mock_svc_svc, mock_create_cal):
+def test_finalize_422_no_write_calendar(mock_dep_svc, mock_svc_svc):
     """Returns 422 when coordinator has no write calendar configured."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row()
-    proposed_time = _make_proposed_time_row()
-
     mock_svc_svc.table.side_effect = _make_finalize_db(
-        event_row=event_row,
-        proposed_time_row=proposed_time,
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
         write_cal_rows=[],  # No write calendar
     ).table.side_effect
 
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with _patched_provider():
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 422
     assert response.json()["detail"] == "no_write_calendar"
 
 
-@patch("app.services.finalize_service.create_calendar_event", side_effect=Exception("Calendar API failed"))
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc, mock_create_cal):
-    """Returns 502 when Google Calendar API fails — DB is NOT updated."""
+def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc):
+    """Returns 502 when the provider create_event fails — DB is NOT updated."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row()
-    proposed_time = _make_proposed_time_row()
-    write_cal = _make_write_cal_row()
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        write_cal_rows=[_make_write_cal_row()],
+    ).table.side_effect
 
-    db_mock = _make_finalize_db(
-        event_row=event_row,
-        proposed_time_row=proposed_time,
-        write_cal_rows=[write_cal],
-    )
-    mock_svc_svc.table.side_effect = db_mock.table.side_effect
-
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Team Lunch",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with _patched_provider(error=Exception("Calendar API failed")):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 502
     assert response.json()["detail"] == "calendar_create_failed"
 
 
-# ─── Sprint 6C: new attendee / field tests ───────────────────────────────────
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_422_write_calendar_not_writable(mock_dep_svc, mock_svc_svc):
+    """A read-only write calendar is rejected with a clear error and no provider call."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    write_cal = _make_write_cal_row()
+    write_cal["is_writable"] = False
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        write_cal_rows=[write_cal],
+    ).table.side_effect
+
+    with _patched_provider() as prov:
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "write_calendar_not_writable"
+    assert not prov.create_event.called
+
+
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_422_credentials_expired(mock_dep_svc, mock_svc_svc):
+    """A ProviderAuthError from create_event surfaces as 422 calendar_credentials_expired."""
+    from app.providers.base import ProviderAuthError
+
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        write_cal_rows=[_make_write_cal_row()],
+    ).table.side_effect
+
+    with _patched_provider(error=ProviderAuthError("invalid_grant")):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "calendar_credentials_expired"
+
+
+# ─── Sprint 6C: attendee / field tests ───────────────────────────────────────
 
 @patch("app.utils.notifications.service_client")
 @patch("app.services.finalize_service.service_client")
@@ -480,27 +577,18 @@ def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_sv
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row()
-    proposed_time = _make_proposed_time_row()
-    write_cal = _make_write_cal_row()
-
     mock_svc_svc.table.side_effect = _make_finalize_db(
-        event_row=event_row,
-        proposed_time_row=proposed_time,
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
         participants=[
             _make_participant("bob-uuid", "bob@example.com"),
             _make_participant("carol-uuid", "carol@example.com"),
         ],
-        write_cal_rows=[write_cal],
+        write_cal_rows=[_make_write_cal_row()],
     ).table.side_effect
 
-    captured_body = {}
-
-    def fake_create(credentials, calendar_id, event_body):
-        captured_body.update(event_body)
-        return "gcal-1"
-
-    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+    capture: dict = {}
+    with _patched_provider(capture=capture):
         response = client.post(
             "/api/events/event-uid-1/finalize",
             json={
@@ -515,9 +603,9 @@ def test_finalize_excluded_user_ids_removed_from_attendees(mock_dep_svc, mock_sv
             headers=_auth_headers(),
         )
     assert response.status_code == 200
-    attendee_emails = [a["email"] for a in captured_body.get("attendees", [])]
-    assert "bob@example.com" in attendee_emails
-    assert "carol@example.com" not in attendee_emails
+    emails = capture["payload"].attendee_emails
+    assert "bob@example.com" in emails
+    assert "carol@example.com" not in emails
 
 
 @patch("app.utils.notifications.service_client")
@@ -529,24 +617,15 @@ def test_finalize_extra_emails_added_to_attendees(mock_dep_svc, mock_svc_svc, mo
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row()
-    proposed_time = _make_proposed_time_row()
-    write_cal = _make_write_cal_row()
-
     mock_svc_svc.table.side_effect = _make_finalize_db(
-        event_row=event_row,
-        proposed_time_row=proposed_time,
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
         participants=[_make_participant("bob-uuid", "bob@example.com")],
-        write_cal_rows=[write_cal],
+        write_cal_rows=[_make_write_cal_row()],
     ).table.side_effect
 
-    captured_body = {}
-
-    def fake_create(credentials, calendar_id, event_body):
-        captured_body.update(event_body)
-        return "gcal-1"
-
-    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+    capture: dict = {}
+    with _patched_provider(capture=capture):
         response = client.post(
             "/api/events/event-uid-1/finalize",
             json={
@@ -561,36 +640,27 @@ def test_finalize_extra_emails_added_to_attendees(mock_dep_svc, mock_svc_svc, mo
             headers=_auth_headers(),
         )
     assert response.status_code == 200
-    attendee_emails = [a["email"] for a in captured_body.get("attendees", [])]
-    assert "bob@example.com" in attendee_emails
-    assert "external@partner.com" in attendee_emails
+    emails = capture["payload"].attendee_emails
+    assert "bob@example.com" in emails
+    assert "external@partner.com" in emails
 
 
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_location_in_gcal_body(mock_dep_svc, mock_svc_svc):
-    """location field appears in Google Calendar event body."""
+def test_finalize_location_in_payload(mock_dep_svc, mock_svc_svc):
+    """location field appears on the EventPayload."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row()
-    proposed_time = _make_proposed_time_row()
-    write_cal = _make_write_cal_row()
-
     mock_svc_svc.table.side_effect = _make_finalize_db(
-        event_row=event_row,
-        proposed_time_row=proposed_time,
-        write_cal_rows=[write_cal],
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        write_cal_rows=[_make_write_cal_row()],
     ).table.side_effect
 
-    captured_body = {}
-
-    def fake_create(credentials, calendar_id, event_body):
-        captured_body.update(event_body)
-        return "gcal-1"
-
-    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+    capture: dict = {}
+    with _patched_provider(capture=capture):
         response = client.post(
             "/api/events/event-uid-1/finalize",
             json={
@@ -605,7 +675,7 @@ def test_finalize_location_in_gcal_body(mock_dep_svc, mock_svc_svc):
             headers=_auth_headers(),
         )
     assert response.status_code == 200
-    assert captured_body.get("location") == "123 Main St"
+    assert capture["payload"].location == "123 Main St"
 
 
 @patch("app.services.finalize_service.service_client")
@@ -616,23 +686,14 @@ def test_finalize_video_call_link_in_description(mock_dep_svc, mock_svc_svc):
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row()
-    proposed_time = _make_proposed_time_row()
-    write_cal = _make_write_cal_row()
-
     mock_svc_svc.table.side_effect = _make_finalize_db(
-        event_row=event_row,
-        proposed_time_row=proposed_time,
-        write_cal_rows=[write_cal],
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        write_cal_rows=[_make_write_cal_row()],
     ).table.side_effect
 
-    captured_body = {}
-
-    def fake_create(credentials, calendar_id, event_body):
-        captured_body.update(event_body)
-        return "gcal-1"
-
-    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+    capture: dict = {}
+    with _patched_provider(capture=capture):
         response = client.post(
             "/api/events/event-uid-1/finalize",
             json={
@@ -647,7 +708,7 @@ def test_finalize_video_call_link_in_description(mock_dep_svc, mock_svc_svc):
             headers=_auth_headers(),
         )
     assert response.status_code == 200
-    assert captured_body.get("description") == "Video call: https://meet.example.com/abc"
+    assert capture["payload"].description == "Video call: https://meet.example.com/abc"
 
 
 @patch("app.services.finalize_service.service_client")
@@ -658,23 +719,14 @@ def test_finalize_note_and_video_call_link_combined(mock_dep_svc, mock_svc_svc):
         data=_current_user_profile()
     )
 
-    event_row = _make_event_row()
-    proposed_time = _make_proposed_time_row()
-    write_cal = _make_write_cal_row()
-
     mock_svc_svc.table.side_effect = _make_finalize_db(
-        event_row=event_row,
-        proposed_time_row=proposed_time,
-        write_cal_rows=[write_cal],
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        write_cal_rows=[_make_write_cal_row()],
     ).table.side_effect
 
-    captured_body = {}
-
-    def fake_create(credentials, calendar_id, event_body):
-        captured_body.update(event_body)
-        return "gcal-1"
-
-    with patch("app.services.finalize_service.create_calendar_event", side_effect=fake_create):
+    capture: dict = {}
+    with _patched_provider(capture=capture):
         response = client.post(
             "/api/events/event-uid-1/finalize",
             json={
@@ -689,14 +741,63 @@ def test_finalize_note_and_video_call_link_combined(mock_dep_svc, mock_svc_svc):
             headers=_auth_headers(),
         )
     assert response.status_code == 200
-    expected = "See you there!\n\nVideo call: https://meet.example.com/xyz"
-    assert captured_body.get("description") == expected
+    assert capture["payload"].description == "See you there!\n\nVideo call: https://meet.example.com/xyz"
 
 
-@patch("app.services.finalize_service.create_calendar_event", return_value="gcal-1")
+@patch("app.utils.notifications.service_client")
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
-def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc, mock_create_cal):
+def test_finalize_microsoft_write_calendar_prefers_outlook_email(mock_dep_svc, mock_svc_svc, mock_notif_svc):
+    """Cross-provider: a Microsoft write calendar with a participant who has both
+    Google and Microsoft accounts invites the Outlook email; the event is created
+    via the Microsoft provider."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    bob = {
+        "user_id": "bob-uuid",
+        "profiles": {
+            "email_address": "bob@example.com",
+            "full_name": "Bob",
+            "calendar_accounts": [
+                {"provider": "google", "provider_email": "bob@gmail.com"},
+                {"provider": "microsoft", "provider_email": "bob@outlook.com"},
+            ],
+        },
+    }
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        participants=[bob],
+        write_cal_rows=[_make_write_cal_row(provider="microsoft")],
+    ).table.side_effect
+
+    capture: dict = {}
+    with _patched_provider(capture=capture):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
+    assert response.status_code == 200
+    emails = capture["payload"].attendee_emails
+    assert "bob@outlook.com" in emails
+    assert "bob@gmail.com" not in emails
+
+
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc):
     """When name differs from event.name, the update payload includes name."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
         data=_current_user_profile()
@@ -738,31 +839,124 @@ def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc, mo
             )
         elif name == "calendar_sources":
             tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[write_cal])
-        elif name == "calendar_accounts":
-            tbl.select.return_value.eq.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
-                data={"id": "cal-1", "credentials": {"access_token": "tok", "refresh_token": "rtok"}}
-            )
         elif name == "notifications":
             tbl.insert.return_value.execute.return_value = MagicMock(data=[])
         return tbl
 
     mock_svc_svc.table.side_effect = make_table
 
-    response = client.post(
-        "/api/events/event-uid-1/finalize",
-        json={
-            "proposed_time_id": "pt-uuid-1",
-            "name": "Renamed Lunch",
-            "note": "",
-            "excluded_user_ids": [],
-            "extra_emails": [],
-            "location": "",
-            "video_call_link": "",
-        },
-        headers=_auth_headers(),
-    )
+    with _patched_provider(event_id="cal-1"):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Renamed Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
     assert response.status_code == 200
     assert captured_update.get("name") == "Renamed Lunch"
+    assert captured_update.get("calendar_event_id") == "cal-1"
+
+
+# ─── Direct-write to participants' own calendars (cross-provider) ─────────────
+
+@patch("app.utils.notifications.service_client")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_writes_to_participant_with_write_calendar_directly(mock_dep_svc, mock_svc_svc, mock_notif_svc):
+    """A participant who has their own write calendar gets the event written
+    directly onto it (no attendees), and is NOT an email attendee on the
+    coordinator's copy. Coordinator=Google, participant=Outlook."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    coord_cal = _make_user_write_cal("coordinator-uuid-1", "coord-cal", "coord-acct", "google")
+    bob_cal = _make_user_write_cal("bob-uuid", "bob-cal", "bob-acct", "microsoft")
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        participants=[_make_participant("bob-uuid", "bob@example.com", "bob@gmail.com")],
+        write_cal_rows=[coord_cal, bob_cal],
+    ).table.side_effect
+
+    with _patched_provider() as prov:
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
+    assert response.status_code == 200
+    by_cal = {c.args[1]: c.args[2] for c in prov.create_event.call_args_list}
+    assert set(by_cal) == {"coord-cal", "bob-cal"}
+    # Bob got a direct write with no attendees, and is NOT emailed on the coord copy.
+    assert by_cal["bob-cal"].attendee_emails == []
+    assert by_cal["coord-cal"].attendee_emails == []
+
+
+@patch("app.utils.notifications.service_client")
+@patch("app.services.finalize_service.mark_account_needs_reauth")
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_participant_write_failure_does_not_abort(mock_dep_svc, mock_svc_svc, mock_mark, mock_notif_svc):
+    """If writing to a participant's calendar fails (expired token), finalize
+    still succeeds and the participant's account is flagged needs_reauth."""
+    from app.providers.base import ProviderAuthError
+
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    coord_cal = _make_user_write_cal("coordinator-uuid-1", "coord-cal", "coord-acct", "google")
+    bob_cal = _make_user_write_cal("bob-uuid", "bob-cal", "bob-acct", "microsoft")
+
+    mock_svc_svc.table.side_effect = _make_finalize_db(
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        participants=[_make_participant("bob-uuid", "bob@example.com")],
+        write_cal_rows=[coord_cal, bob_cal],
+    ).table.side_effect
+
+    prov = MagicMock()
+
+    def _create(tokens, calendar_id, payload):
+        if calendar_id == "bob-cal":
+            raise ProviderAuthError("expired")
+        return "coord-evt"
+
+    prov.create_event.side_effect = _create
+
+    with patch("app.services.finalize_service.get_provider", return_value=prov):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
+    assert response.status_code == 200
+    mock_mark.assert_called_once_with("bob-acct")
 
 
 # ─── GET /api/events/{uid}/finalize/status ────────────────────────────────────
@@ -779,7 +973,7 @@ def test_get_finalize_status_coordinator(mock_dep_svc, mock_router_svc):
         status="confirmed",
         finalized_start_time_utc="2026-04-10T12:00:00+00:00",
         finalized_end_time_utc="2026-04-10T13:00:00+00:00",
-        google_calendar_event_id="gcal-123",
+        calendar_event_id="cal-123",
     )
 
     def make_table(name):
@@ -800,7 +994,7 @@ def test_get_finalize_status_coordinator(mock_dep_svc, mock_router_svc):
     data = response.json()
     assert data["status"] == "confirmed"
     assert data["finalized_start_time_utc"] == "2026-04-10T12:00:00+00:00"
-    assert data["google_calendar_event_id"] == "gcal-123"
+    assert data["calendar_event_id"] == "cal-123"
 
 
 @patch("app.services.finalize_service.service_client")
