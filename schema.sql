@@ -250,11 +250,13 @@ CREATE OR REPLACE FUNCTION "public"."enforce_single_write_calendar"() RETURNS "t
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
 BEGIN
-    UPDATE calendar_sources cs
+    UPDATE "public"."calendar_sources" cs
     SET is_write_calendar = false
-    FROM calendar_accounts ca
+    FROM "public"."calendar_accounts" ca
     WHERE cs.account_id = ca.id
-      AND ca.user_id = (SELECT user_id FROM calendar_accounts WHERE id = NEW.account_id)
+      AND ca.user_id = (
+          SELECT user_id FROM "public"."calendar_accounts" WHERE id = NEW.account_id
+      )
       AND cs.id <> NEW.id
       AND cs.is_write_calendar;
     RETURN NEW;
@@ -1067,6 +1069,11 @@ CREATE POLICY "events_update" ON "public"."events" FOR UPDATE USING (("coordinat
 
 
 ALTER TABLE "public"."notifications" ENABLE ROW LEVEL SECURITY;
+
+
+-- Legacy duplicate of notifications_select_own (same predicate). Kept to match
+-- the live database; functionally redundant and safe to drop.
+CREATE POLICY "Users can only read own notifications" ON "public"."notifications" FOR SELECT USING (("auth"."uid"() = "user_id"));
 
 
 CREATE POLICY "notifications_select_own" ON "public"."notifications" FOR SELECT USING (("auth"."uid"() = "user_id"));
