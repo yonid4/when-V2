@@ -246,6 +246,25 @@ $$;
 ALTER FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."enforce_single_write_calendar"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+    UPDATE calendar_sources cs
+    SET is_write_calendar = false
+    FROM calendar_accounts ca
+    WHERE cs.account_id = ca.id
+      AND ca.user_id = (SELECT user_id FROM calendar_accounts WHERE id = NEW.account_id)
+      AND cs.id <> NEW.id
+      AND cs.is_write_calendar;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."enforce_single_write_calendar"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."event_participants_broadcast_trigger"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -452,7 +471,8 @@ CREATE TABLE IF NOT EXISTS "public"."calendar_accounts" (
     "credentials" "jsonb" NOT NULL,
     "connected_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "last_synced_at" timestamp with time zone,
-    "needs_reauth" boolean DEFAULT false NOT NULL
+    "needs_reauth" boolean DEFAULT false NOT NULL,
+    CONSTRAINT "calendar_accounts_provider_check" CHECK ((("provider")::"text" = ANY (ARRAY['google'::"text", 'microsoft'::"text"])))
 );
 
 
@@ -466,9 +486,11 @@ CREATE TABLE IF NOT EXISTS "public"."calendar_sources" (
     "calendar_name" character varying(255) NOT NULL,
     "is_enabled" boolean DEFAULT true NOT NULL,
     "is_write_calendar" boolean DEFAULT false NOT NULL,
+    "is_writable" boolean DEFAULT true NOT NULL,
     "color" character varying(20),
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "calendar_sources_write_requires_writable" CHECK (("is_writable" OR NOT "is_write_calendar"))
 );
 
 
@@ -520,7 +542,7 @@ CREATE TABLE IF NOT EXISTS "public"."events" (
     "video_call_link" "text",
     "finalized_start_time_utc" timestamp with time zone,
     "finalized_end_time_utc" timestamp with time zone,
-    "google_calendar_event_id" "text",
+    "calendar_event_id" "text",
     "proposals_needs_regeneration" boolean DEFAULT true NOT NULL,
     "proposals_last_generated_at" timestamp with time zone,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
@@ -819,6 +841,10 @@ CREATE OR REPLACE TRIGGER "busy_slots_broadcast" AFTER INSERT OR DELETE OR UPDAT
 
 
 CREATE OR REPLACE TRIGGER "busy_slots_updated_at" BEFORE UPDATE ON "public"."busy_slots" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "calendar_sources_single_write" BEFORE INSERT OR UPDATE OF "is_write_calendar" ON "public"."calendar_sources" FOR EACH ROW WHEN (NEW.is_write_calendar) EXECUTE FUNCTION "public"."enforce_single_write_calendar"();
 
 
 
