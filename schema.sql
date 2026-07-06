@@ -488,10 +488,10 @@ CREATE TABLE IF NOT EXISTS "public"."calendar_sources" (
     "calendar_name" character varying(255) NOT NULL,
     "is_enabled" boolean DEFAULT true NOT NULL,
     "is_write_calendar" boolean DEFAULT false NOT NULL,
-    "is_writable" boolean DEFAULT true NOT NULL,
     "color" character varying(20),
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "is_writable" boolean DEFAULT true NOT NULL,
     CONSTRAINT "calendar_sources_write_requires_writable" CHECK (("is_writable" OR NOT "is_write_calendar"))
 );
 
@@ -1180,11 +1180,35 @@ ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."proposed_time_not
 
 
 -- RLS policies for realtime.messages (pg_dump cannot capture cross-schema objects)
-CREATE POLICY "authenticated can receive broadcasts"
-  ON "realtime"."messages" FOR SELECT TO "authenticated" USING (true);
+CREATE POLICY "authenticated can receive broadcasts" ON "realtime"."messages" FOR SELECT TO "authenticated" USING (true);
 
-CREATE POLICY "authenticated can send broadcasts"
-  ON "realtime"."messages" FOR INSERT TO "authenticated" WITH CHECK (true);
+CREATE POLICY "authenticated can send broadcasts" ON "realtime"."messages" FOR INSERT TO "authenticated" WITH CHECK (true);
+
+CREATE POLICY "authenticated users can receive broadcasts" ON "realtime"."messages" FOR SELECT TO "authenticated" USING (true);
+
+CREATE POLICY "authenticated users can send broadcasts" ON "realtime"."messages" FOR INSERT TO "authenticated" WITH CHECK (true);
+
+CREATE POLICY "event coordinator can read participants topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:participants'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."events" "e"
+  WHERE (("e"."coordinator_id" = "auth"."uid"()) AND ("e"."id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
+
+CREATE POLICY "event coordinator can read preferred slots topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:preferred_slots'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."events" "e"
+  WHERE (("e"."coordinator_id" = "auth"."uid"()) AND ("e"."id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
+
+CREATE POLICY "event participants can read participants topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:participants'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."event_participants" "ep"
+  WHERE (("ep"."user_id" = "auth"."uid"()) AND ("ep"."event_id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
+
+CREATE POLICY "event participants can read preferred slots topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:preferred_slots'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."event_participants" "ep"
+  WHERE (("ep"."user_id" = "auth"."uid"()) AND ("ep"."event_id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
+
+ALTER TABLE "realtime"."messages" ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user can read busy_slots topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING (("topic" = (('user:'::"text" || ("auth"."uid"())::"text") || ':busy_slots'::"text")));
+
+CREATE POLICY "user can read notifications topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING (("topic" = (('user:'::"text" || ("auth"."uid"())::"text") || ':notifications'::"text")));
 
 
 
@@ -1379,6 +1403,12 @@ GRANT ALL ON FUNCTION "public"."busy_slots_broadcast_trigger"() TO "service_role
 GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "anon";
 GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."enforce_single_write_calendar"() TO "anon";
+GRANT ALL ON FUNCTION "public"."enforce_single_write_calendar"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."enforce_single_write_calendar"() TO "service_role";
 
 
 
