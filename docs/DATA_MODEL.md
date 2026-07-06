@@ -251,3 +251,16 @@ events
 | preferred_slots | All participants of the event | Own rows only |
 | proposed_times | All participants of the event | Service role only (written by algorithm) |
 | notifications | Own rows only | Service role only (written by notification service) |
+
+### Realtime broadcasts (`realtime.messages`)
+
+DB triggers publish broadcast payloads into `realtime.messages`. Its RLS allows reads only through topic-scoped SELECT policies — there is no INSERT policy, so clients cannot send broadcasts:
+
+| Topic pattern | Readable by |
+|---|---|
+| `event:<id>:participants` | Event coordinator or participant |
+| `event:<id>:preferred_slots` | Event coordinator or participant |
+| `user:<uid>:busy_slots` | That user only |
+| `user:<uid>:notifications` | That user only |
+
+The frontend does not consume broadcasts; it subscribes via `postgres_changes` (governed by the per-table policies above) and presence.

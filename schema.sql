@@ -1180,14 +1180,9 @@ ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."proposed_time_not
 
 
 -- RLS policies for realtime.messages (pg_dump cannot capture cross-schema objects)
-CREATE POLICY "authenticated can receive broadcasts" ON "realtime"."messages" FOR SELECT TO "authenticated" USING (true);
-
-CREATE POLICY "authenticated can send broadcasts" ON "realtime"."messages" FOR INSERT TO "authenticated" WITH CHECK (true);
-
-CREATE POLICY "authenticated users can receive broadcasts" ON "realtime"."messages" FOR SELECT TO "authenticated" USING (true);
-
-CREATE POLICY "authenticated users can send broadcasts" ON "realtime"."messages" FOR INSERT TO "authenticated" WITH CHECK (true);
-
+-- Broadcasts are readable only via topic-scoped SELECT policies; there is no
+-- INSERT policy, so clients cannot send broadcasts
+-- (see supabase/migrations/20260706000001_scope_realtime_broadcast_policies.sql).
 CREATE POLICY "event coordinator can read participants topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:participants'::"text") AND (EXISTS ( SELECT 1
    FROM "public"."events" "e"
   WHERE (("e"."coordinator_id" = "auth"."uid"()) AND ("e"."id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
