@@ -23,8 +23,12 @@ SCOPES = [
 ]
 
 
-def build_calendar_flow() -> Flow:
-    """Build a Google OAuth Flow for calendar access."""
+def build_calendar_flow(state: str | None = None) -> Flow:
+    """Build a Google OAuth Flow for calendar access.
+
+    ``state`` is threaded through oauthlib's own API (``OAuth2Session`` state)
+    on the callback so we never reach into private flow attributes.
+    """
     client_config = {
         "web": {
             "client_id": settings.google_client_id,
@@ -34,7 +38,7 @@ def build_calendar_flow() -> Flow:
             "redirect_uris": [settings.google_calendar_redirect_uri],
         }
     }
-    flow = Flow.from_client_config(client_config, scopes=SCOPES)
+    flow = Flow.from_client_config(client_config, scopes=SCOPES, state=state)
     flow.redirect_uri = settings.google_calendar_redirect_uri
     return flow
 

@@ -52,10 +52,11 @@ class GoogleProvider(CalendarProvider):
         return auth_url
 
     def exchange_code(self, code: str, state: str) -> ConnectedIdentity:
-        flow = build_calendar_flow()
-        # oauthlib validates the echoed state against the flow's own state; we
-        # build a fresh flow per callback, so force it to the incoming value.
-        object.__setattr__(flow, "_state", state)
+        # Build the flow with the echoed state via oauthlib's own API rather than
+        # poking a private attribute. Cross-user CSRF protection comes from the
+        # signed-state check in the router (see app.utils.oauth_state), verified
+        # before this is ever called.
+        flow = build_calendar_flow(state=state)
         flow.fetch_token(code=code)
         credentials = flow.credentials
         assert isinstance(credentials, Credentials)
