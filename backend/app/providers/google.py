@@ -79,9 +79,12 @@ class GoogleProvider(CalendarProvider):
             items = calendar_list.get("items", [])
         except RefreshError as exc:
             raise ProviderAuthError(str(exc)) from exc
-        except Exception as exc:  # tolerate listing failures, mirror old connect
+        except Exception as exc:
+            # Surface the failure instead of returning [] — an empty list is
+            # indistinguishable from "no sources / no write calendar" to
+            # connect_account, which would silently save a broken account.
             logger.error("Failed to fetch Google calendar list: %s", exc)
-            return []
+            raise ProviderAPIError(str(exc)) from exc
         self._capture_tokens(creds, tokens)
         return [
             ProviderCalendar(

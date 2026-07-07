@@ -266,3 +266,27 @@ def test_list_calendars_maps_access_role_to_writable(mock_build):
     assert by_id["team"].is_writable is True
     assert by_id["ro@import.calendar.google.com"].is_writable is False
     assert by_id["fb"].is_writable is False
+
+
+@patch("app.providers.google.build")
+def test_list_calendars_other_error_becomes_api_error(mock_build):
+    """A transient/generic failure must raise ProviderAPIError, not return [] —
+    an empty list is indistinguishable from 'no calendars' to connect_account and
+    would silently save a broken account with no write calendar."""
+    cal = MagicMock()
+    cal.calendarList.return_value.list.return_value.execute.side_effect = RuntimeError("boom")
+    mock_build.return_value = cal
+
+    with pytest.raises(ProviderAPIError):
+        GoogleProvider().list_calendars(_tokens())
+
+
+@patch("app.providers.google.build")
+def test_list_calendars_refresh_error_becomes_auth_error(mock_build):
+    """Parity/regression: an auth refresh failure still maps to ProviderAuthError."""
+    cal = MagicMock()
+    cal.calendarList.return_value.list.return_value.execute.side_effect = RefreshError("bad token")
+    mock_build.return_value = cal
+
+    with pytest.raises(ProviderAuthError):
+        GoogleProvider().list_calendars(_tokens())
