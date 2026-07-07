@@ -1,9 +1,12 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.models.event import validate_video_call_link
+
+# Anti-fan-out cap: 100 is generous for a real meeting while blocking mass-mail abuse.
+MAX_FINALIZE_RECIPIENTS = 100
 
 
 class PreferredSlotCreate(BaseModel):
@@ -42,8 +45,8 @@ class AvailabilitySegment(BaseModel):
 class FinalizeRequest(BaseModel):
     proposed_time_id: str
     name: str
-    excluded_user_ids: list[str] = []
-    extra_emails: list[str] = []
+    excluded_user_ids: list[str] = Field(default=[], max_length=MAX_FINALIZE_RECIPIENTS)
+    extra_emails: list[EmailStr] = Field(default=[], max_length=MAX_FINALIZE_RECIPIENTS)
     note: str = ""
     location: str = ""
     video_call_link: str = ""
