@@ -69,14 +69,28 @@ def _create_event_on_write_calendar(client, write_cal_row: dict, payload: EventP
     """
     account = write_cal_row["calendar_accounts"]
     provider = get_provider(account["provider"])
-    tokens = TokenBundle(account.get("credentials") or {})
+    credentials = account.get("credentials") or {}
+    # Capture the refresh token BEFORE the provider call: TokenBundle.update()
+    # replaces .data wholesale, so the pre-refresh token is not retained.
+    original_refresh_token = credentials.get("refresh_token")
+    tokens = TokenBundle(credentials)
     try:
         return provider.create_event(tokens, write_cal_row["calendar_id"], payload)
     finally:
         if tokens.dirty:
-            client.table("calendar_accounts").update(
-                {"credentials": tokens.data}
-            ).eq("id", account["id"]).execute()
+            # Compare-and-swap (CAS) to avoid clobbering a concurrently-rotated
+            # Microsoft refresh token (M6): only overwrite credentials if the row
+            # still holds the refresh token we started from. If a concurrent
+            # sync/finalize already rotated it, the jsonb-path filter matches zero
+            # rows and this stale write is silently skipped (correct — not an error).
+            query = (
+                client.table("calendar_accounts")
+                .update({"credentials": tokens.data})
+                .eq("id", account["id"])
+            )
+            if original_refresh_token:
+                query = query.eq("credentials->>refresh_token", original_refresh_token)
+            query.execute()
 
 
 def finalize_event(

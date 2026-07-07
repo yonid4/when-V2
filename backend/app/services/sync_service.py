@@ -95,7 +95,11 @@ def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
     changed = False
     for account in accounts.data or []:
         provider = get_provider(account["provider"])
-        tokens = TokenBundle(account.get("credentials") or {})
+        credentials = account.get("credentials") or {}
+        # Capture the refresh token BEFORE any provider call: TokenBundle.update()
+        # replaces .data wholesale, so the pre-refresh token is not retained.
+        original_refresh_token = credentials.get("refresh_token")
+        tokens = TokenBundle(credentials)
 
         try:
             for source in account.get("calendar_sources") or []:
@@ -115,7 +119,7 @@ def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
             mark_account_needs_reauth(account["id"])
             continue
 
-        _persist_account_after_sync(account["id"], tokens)
+        _persist_account_after_sync(account["id"], tokens, original_refresh_token)
 
     if changed:
         _mark_user_events_stale(user_id)
@@ -147,14 +151,34 @@ def _mark_user_events_stale(user_id: str) -> None:
     ).in_("id", event_ids).eq("status", "planning").execute()
 
 
-def _persist_account_after_sync(account_id: str, tokens: TokenBundle) -> None:
+def _persist_account_after_sync(
+    account_id: str, tokens: TokenBundle, original_refresh_token: str | None
+) -> None:
     """Stamp last_synced_at and persist rotated credentials if the provider
     refreshed them during the sync (whole dict, so Microsoft's rotated refresh
     token is saved too)."""
-    update_payload: dict = {"last_synced_at": datetime.now(timezone.utc).isoformat()}
-    if tokens.dirty:
-        update_payload["credentials"] = tokens.data
-    service_client.table("calendar_accounts").update(update_payload).eq("id", account_id).execute()
+    # last_synced_at is harmless best-effort metadata — always write it,
+    # unconditionally (never gated by the CAS below).
+    service_client.table("calendar_accounts").update(
+        {"last_synced_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("id", account_id).execute()
+
+    if not tokens.dirty:
+        return
+
+    # Compare-and-swap (CAS) to avoid clobbering a concurrently-rotated Microsoft
+    # refresh token (M6): only overwrite credentials if the row still holds the
+    # refresh token we started from. If a concurrent sync/finalize already rotated
+    # it, the jsonb-path filter matches zero rows and our stale write is silently
+    # skipped (correct — not an error).
+    query = (
+        service_client.table("calendar_accounts")
+        .update({"credentials": tokens.data})
+        .eq("id", account_id)
+    )
+    if original_refresh_token:
+        query = query.eq("credentials->>refresh_token", original_refresh_token)
+    query.execute()
 
 
 def sync_event_participants_scoped(

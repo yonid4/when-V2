@@ -379,6 +379,104 @@ def test_sync_user_persists_rotated_credentials(mock_svc, mock_get_provider):
     assert persisted[-1]["credentials"]["refresh_token"] == "r2"
 
 
+@patch("app.services.sync_service.service_client")
+def test_persist_account_applies_cas_filter_on_rotated_credentials(mock_svc):
+    """M6: when the provider rotates credentials, the credentials write is a
+    compare-and-swap keyed on the ORIGINAL refresh token — so a concurrently
+    rotated Microsoft refresh token is never clobbered. last_synced_at is still
+    written unconditionally (never gated by the CAS)."""
+    tokens = TokenBundle({"access_token": "old", "refresh_token": "r1"})
+    tokens.update({"access_token": "new", "refresh_token": "r2"})
+
+    update_calls = []
+
+    def capture_update(payload):
+        entry = {"payload": payload, "eq_calls": []}
+        update_calls.append(entry)
+        chain = MagicMock()
+
+        def record_eq(column, value):
+            entry["eq_calls"].append((column, value))
+            return chain
+
+        chain.eq.side_effect = record_eq
+        chain.execute.return_value = MagicMock(data=[])
+        return chain
+
+    mock_svc.table.return_value.update.side_effect = capture_update
+
+    sync_service._persist_account_after_sync("acct-1", tokens, "r1")
+
+    # last_synced_at is always written, unconditionally (no CAS guard).
+    last_synced = [c for c in update_calls if "last_synced_at" in c["payload"]]
+    assert last_synced, "last_synced_at must always be written"
+    assert ("credentials->>refresh_token", "r1") not in last_synced[0]["eq_calls"]
+
+    # The credentials write carries the CAS guard on the original refresh token.
+    cred_calls = [c for c in update_calls if "credentials" in c["payload"]]
+    assert len(cred_calls) == 1
+    assert ("id", "acct-1") in cred_calls[0]["eq_calls"]
+    assert ("credentials->>refresh_token", "r1") in cred_calls[0]["eq_calls"]
+    assert cred_calls[0]["payload"]["credentials"]["refresh_token"] == "r2"
+
+
+@patch("app.services.sync_service.service_client")
+def test_persist_account_not_dirty_writes_only_last_synced_at(mock_svc):
+    """When the provider did NOT rotate credentials, only last_synced_at is
+    written — no credentials key, and therefore no CAS write."""
+    tokens = TokenBundle({"access_token": "tok", "refresh_token": "r1"})  # not dirty
+
+    update_calls = []
+
+    def capture_update(payload):
+        update_calls.append(payload)
+        chain = MagicMock()
+        chain.eq.return_value = chain
+        chain.execute.return_value = MagicMock(data=[])
+        return chain
+
+    mock_svc.table.return_value.update.side_effect = capture_update
+
+    sync_service._persist_account_after_sync("acct-1", tokens, "r1")
+
+    assert len(update_calls) == 1
+    assert "credentials" not in update_calls[0]
+    assert "last_synced_at" in update_calls[0]
+
+
+@patch("app.services.sync_service.service_client")
+def test_persist_account_falls_back_to_unconditional_write_without_original_token(mock_svc):
+    """Defensive edge: if the account had no refresh token to start from, the
+    credentials write falls back to the unconditional update (no CAS filter) so
+    behavior never regresses."""
+    tokens = TokenBundle({"access_token": "old"})
+    tokens.update({"access_token": "new", "refresh_token": "r2"})
+
+    update_calls = []
+
+    def capture_update(payload):
+        entry = {"payload": payload, "eq_calls": []}
+        update_calls.append(entry)
+        chain = MagicMock()
+
+        def record_eq(column, value):
+            entry["eq_calls"].append((column, value))
+            return chain
+
+        chain.eq.side_effect = record_eq
+        chain.execute.return_value = MagicMock(data=[])
+        return chain
+
+    mock_svc.table.return_value.update.side_effect = capture_update
+
+    sync_service._persist_account_after_sync("acct-1", tokens, None)
+
+    cred_calls = [c for c in update_calls if "credentials" in c["payload"]]
+    assert len(cred_calls) == 1
+    assert ("id", "acct-1") in cred_calls[0]["eq_calls"]
+    assert not any(col == "credentials->>refresh_token" for col, _ in cred_calls[0]["eq_calls"])
+
+
 @patch("app.services.sync_service.mark_account_needs_reauth")
 @patch("app.services.sync_service.get_provider")
 @patch("app.services.sync_service.service_client")

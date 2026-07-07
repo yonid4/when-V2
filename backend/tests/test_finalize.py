@@ -1123,6 +1123,71 @@ def test_finalize_participant_write_failure_does_not_abort(mock_dep_svc, mock_sv
     mock_mark.assert_called_once_with("bob-acct")
 
 
+# ─── CAS credentials persistence (M6) ────────────────────────────────────────
+
+@patch("app.services.finalize_service.get_provider")
+def test_create_event_applies_cas_filter_on_rotated_credentials(mock_get_provider):
+    """M6: when create_event rotates credentials (Microsoft rotates its refresh
+    token on every refresh), the persist is a compare-and-swap keyed on the
+    ORIGINAL refresh token — so a concurrently rotated token is never clobbered."""
+    from app.providers.base import EventPayload
+    from app.services.finalize_service import _create_event_on_write_calendar
+
+    write_cal_row = {
+        "id": "src-1",
+        "calendar_id": "primary",
+        "calendar_accounts": {
+            "id": "acct-1",
+            "user_id": "u1",
+            "provider": "microsoft",
+            "credentials": {"access_token": "old", "refresh_token": "r1"},
+        },
+    }
+
+    prov = MagicMock()
+
+    def _create(tokens, calendar_id, payload):
+        tokens.update({"access_token": "new", "refresh_token": "r2"})
+        return "evt-1"
+
+    prov.create_event.side_effect = _create
+    mock_get_provider.return_value = prov
+
+    update_calls = []
+
+    def capture_update(payload):
+        entry = {"payload": payload, "eq_calls": []}
+        update_calls.append(entry)
+        chain = MagicMock()
+
+        def record_eq(column, value):
+            entry["eq_calls"].append((column, value))
+            return chain
+
+        chain.eq.side_effect = record_eq
+        chain.execute.return_value = MagicMock(data=[])
+        return chain
+
+    db = MagicMock()
+    db.table.return_value.update.side_effect = capture_update
+
+    payload = EventPayload(
+        summary="s",
+        description="",
+        start_utc="2026-01-01T00:00:00+00:00",
+        end_utc="2026-01-01T01:00:00+00:00",
+    )
+
+    result = _create_event_on_write_calendar(db, write_cal_row, payload)
+
+    assert result == "evt-1"
+    cred_calls = [c for c in update_calls if "credentials" in c["payload"]]
+    assert len(cred_calls) == 1
+    assert ("id", "acct-1") in cred_calls[0]["eq_calls"]
+    assert ("credentials->>refresh_token", "r1") in cred_calls[0]["eq_calls"]
+    assert cred_calls[0]["payload"]["credentials"]["refresh_token"] == "r2"
+
+
 # ─── GET /api/events/{uid}/finalize/status ────────────────────────────────────
 
 @patch("app.services.finalize_service.service_client")
