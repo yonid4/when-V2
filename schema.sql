@@ -1395,8 +1395,9 @@ GRANT ALL ON FUNCTION "public"."busy_slots_broadcast_trigger"() TO "service_role
 
 
 
-GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "anon";
-GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "authenticated";
+-- SECURITY DEFINER with no internal auth check: executable by service_role only
+-- (see supabase/migrations/20260706000003_revoke_clear_write_calendar_grants.sql).
+REVOKE ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "service_role";
 
 
