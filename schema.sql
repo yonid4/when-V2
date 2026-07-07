@@ -1045,7 +1045,7 @@ CREATE POLICY "event_participants_select" ON "public"."event_participants" FOR S
 
 
 
-CREATE POLICY "event_participants_update_self" ON "public"."event_participants" FOR UPDATE USING (("user_id" = "auth"."uid"()));
+CREATE POLICY "event_participants_update_self" ON "public"."event_participants" FOR UPDATE USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
 
 
 
@@ -1494,8 +1494,11 @@ GRANT ALL ON TABLE "public"."event_invitations" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."event_participants" TO "anon";
-GRANT ALL ON TABLE "public"."event_participants" TO "authenticated";
+-- authenticated may UPDATE only rsvp_status; anon holds no UPDATE at all
+-- (see supabase/migrations/20260706000002_restrict_event_participants_self_update.sql).
+GRANT INSERT,SELECT,DELETE,TRUNCATE,REFERENCES,TRIGGER ON TABLE "public"."event_participants" TO "anon";
+GRANT INSERT,SELECT,DELETE,TRUNCATE,REFERENCES,TRIGGER ON TABLE "public"."event_participants" TO "authenticated";
+GRANT UPDATE("rsvp_status") ON TABLE "public"."event_participants" TO "authenticated";
 GRANT ALL ON TABLE "public"."event_participants" TO "service_role";
 
 
