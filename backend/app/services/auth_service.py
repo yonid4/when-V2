@@ -21,7 +21,7 @@ SCOPES = [
 ]
 
 
-def build_oauth_flow() -> Flow:
+def build_oauth_flow(state: str | None = None) -> Flow:
     client_config = {
         "web": {
             "client_id": settings.google_client_id,
@@ -31,30 +31,47 @@ def build_oauth_flow() -> Flow:
             "redirect_uris": [settings.google_redirect_uri],
         }
     }
-    flow = Flow.from_client_config(client_config, scopes=SCOPES)
+    # ``state`` is threaded through oauthlib's own API (OAuth2Session state) so we
+    # never reach into private flow attributes — mirrors build_calendar_flow.
+    flow = Flow.from_client_config(client_config, scopes=SCOPES, state=state)
     flow.redirect_uri = settings.google_redirect_uri
     return flow
 
 
-def get_authorization_url() -> str:
+def get_authorization_url(state: str) -> str:
+    """Build the Google login consent URL, embedding ``state`` for CSRF binding.
+
+    The caller (auth router) generates a random ``state``, pins it to the browser
+    in an HttpOnly cookie on the redirect response, and re-checks it in the
+    callback before the code is exchanged. See app/routers/auth.py.
+    """
     flow = build_oauth_flow()
+    # include_granted_scopes=false (matching the calendar flow): login credentials
+    # are used only to fetch userinfo and are never persisted, so the incremental-
+    # auth scope union buys login nothing — and with it off, Google echoes exactly
+    # the requested scopes, so oauthlib's strict scope validation passes.
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
+        include_granted_scopes="false",
         prompt="consent",
-        state="stateless",
+        state=state,
     )
     return auth_url
 
 
-def exchange_code_and_upsert_user(code: str, state: str = "stateless") -> str:
-    """Exchange OAuth code, upsert profile, check pending invites, return JWT."""
-    flow = build_oauth_flow()
-    # Use the state value from the callback to match what we sent
-    object.__setattr__(flow, "_state", state)
-    # Disable scope change validation — calendar scopes may not be returned
-    # immediately if the consent screen is in testing mode
-    flow.oauth2session.scope = None
+def exchange_code_and_upsert_user(code: str, state: str) -> str:
+    """Exchange OAuth code, upsert profile, check pending invites, return JWT.
+
+    ``state`` is threaded through oauthlib's own API rather than a private
+    attribute. Login CSRF protection is enforced upstream in the router, which
+    compares the returned ``state`` against the ``oauth_login_state`` cookie set
+    in the initiating browser before this is ever called.
+
+    oauthlib's scope validation is deliberately left enabled: the login URL
+    requests include_granted_scopes=false, so Google returns exactly the
+    requested scopes and any mismatch here is genuinely suspicious.
+    """
+    flow = build_oauth_flow(state=state)
     try:
         flow.fetch_token(code=code)
     except Exception as exc:

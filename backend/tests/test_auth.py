@@ -6,6 +6,7 @@ Supabase clients and mocked Google OAuth flow.
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, call
+from urllib.parse import parse_qs, urlparse
 import os
 
 from google.oauth2.credentials import Credentials
@@ -83,6 +84,121 @@ def test_auth_google_redirect():
     assert "client_id=" in location
     assert "redirect_uri=" in location
     assert "scope=" in location
+
+    # Login must NOT request the incremental-auth scope union: with
+    # include_granted_scopes=false Google echoes exactly the requested scopes,
+    # which is what lets the exchange keep oauthlib's scope validation enabled.
+    query = parse_qs(urlparse(location).query)
+    assert query["include_granted_scopes"] == ["false"]
+
+
+def test_auth_google_redirect_binds_state_to_cookie():
+    """Login-start sets an HttpOnly state cookie whose value matches the ``state``
+    carried in the Google consent URL — the browser-session binding that defeats
+    login CSRF."""
+    response = client.get("/auth/google")
+
+    # State from the Google URL
+    query = parse_qs(urlparse(response.headers["location"]).query)
+    url_state = query["state"][0]
+    assert url_state and url_state != "stateless"
+
+    # State pinned to the browser via cookie
+    set_cookie = response.headers["set-cookie"]
+    assert "oauth_login_state=" in set_cookie
+    assert "httponly" in set_cookie.lower()
+    assert "samesite=lax" in set_cookie.lower()
+    assert "path=/auth/google/callback" in set_cookie.lower()
+    assert response.cookies["oauth_login_state"] == url_state
+
+
+# ─── 1b. Login callback CSRF / state-binding ──────────────────────────────────
+
+# Fresh clients per test so the module-level cookie jar (populated by the
+# login-start tests) can't leak an oauth_login_state cookie into these.
+
+@patch("app.services.auth_service.exchange_code_and_upsert_user", return_value="fake.jwt.token")
+def test_login_callback_valid_state_proceeds(mock_exchange):
+    """Matching cookie + query state → code is exchanged and the browser is
+    redirected to the frontend with the token; the state cookie is cleared."""
+    c = TestClient(app, follow_redirects=False, cookies={"oauth_login_state": "match-123"})
+    response = c.get("/auth/google/callback?code=auth-code&state=match-123")
+
+    assert response.status_code in (302, 307)
+    assert "/auth/callback?token=fake.jwt.token" in response.headers["location"]
+    mock_exchange.assert_called_once_with("auth-code", "match-123")
+
+    # Cookie is single-use — cleared on success
+    set_cookie = response.headers["set-cookie"]
+    assert "oauth_login_state=" in set_cookie
+    assert "max-age=0" in set_cookie.lower()
+
+
+@patch("app.services.auth_service.exchange_code_and_upsert_user")
+def test_login_callback_missing_cookie_rejected(mock_exchange):
+    """State query param present but no cookie (attacker's own flow in victim's
+    browser) → rejected, code never exchanged."""
+    c = TestClient(app, follow_redirects=False)
+    response = c.get("/auth/google/callback?code=auth-code&state=whatever")
+
+    assert response.status_code in (302, 307)
+    assert "error=auth_failed" in response.headers["location"]
+    mock_exchange.assert_not_called()
+
+
+@patch("app.services.auth_service.exchange_code_and_upsert_user")
+def test_login_callback_missing_param_rejected(mock_exchange):
+    """Cookie present but no state query param → rejected, code never exchanged."""
+    c = TestClient(app, follow_redirects=False, cookies={"oauth_login_state": "cookie-value"})
+    response = c.get("/auth/google/callback?code=auth-code")
+
+    assert response.status_code in (302, 307)
+    assert "error=auth_failed" in response.headers["location"]
+    mock_exchange.assert_not_called()
+
+
+@patch("app.services.auth_service.exchange_code_and_upsert_user")
+def test_login_callback_state_mismatch_rejected(mock_exchange):
+    """Cookie and query state differ → rejected, code never exchanged."""
+    c = TestClient(app, follow_redirects=False, cookies={"oauth_login_state": "victim-state"})
+    response = c.get("/auth/google/callback?code=auth-code&state=attacker-state")
+
+    assert response.status_code in (302, 307)
+    assert "error=auth_failed" in response.headers["location"]
+    mock_exchange.assert_not_called()
+
+
+# ─── 1c. Exchange keeps oauthlib scope validation ─────────────────────────────
+
+@patch("app.services.auth_service.service_client")
+@patch("app.services.auth_service.build_oauth_flow")
+def test_exchange_keeps_scope_validation(mock_build_flow, mock_svc):
+    """The exchange must NOT disable oauthlib's scope check (the old
+    ``flow.oauth2session.scope = None``) and must thread ``state`` through the
+    flow builder rather than a private attribute. Genuine scope validation is
+    safe because the login URL requests include_granted_scopes=false, so Google
+    echoes exactly the requested scopes."""
+    mock_flow = MagicMock()
+    mock_flow.credentials = Credentials(token="tok", refresh_token="ref")
+    mock_build_flow.return_value = mock_flow
+
+    user_info = {
+        "id": "google-account-id",
+        "email": "scope@example.com",
+        "name": "Scope User",
+        "picture": None,
+    }
+    with patch("app.services.auth_service._fetch_google_user_info", return_value=user_info):
+        auth_user = MagicMock()
+        auth_user.user.id = "scope-user-uuid"
+        mock_svc.auth.admin.create_user.return_value = auth_user
+
+        auth_service.exchange_code_and_upsert_user("fake-code", "csrf-state")
+
+    # State goes through the builder (oauthlib's own API), not flow._state
+    mock_build_flow.assert_called_once_with(state="csrf-state")
+    # Scope checking stays enabled — the session scope is never nulled out
+    assert mock_flow.oauth2session.scope is not None
 
 
 # ─── 2. test_auth_me_success ──────────────────────────────────────────────────
@@ -199,7 +315,7 @@ def test_profile_created_on_first_login(mock_build_flow, mock_svc):
         # Mock pending invitations query → empty
         mock_svc.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
 
-        auth_service.exchange_code_and_upsert_user("fake-code")
+        auth_service.exchange_code_and_upsert_user("fake-code", "test-state")
 
     # Capture the profiles upsert call
     upsert_calls = [
@@ -320,7 +436,7 @@ def test_pending_invitations_matched_on_signup(mock_build_flow, mock_svc):
         new_auth_user.user.id = "new-invited-user-uuid"
         mock_svc.auth.admin.create_user.return_value = new_auth_user
 
-        auth_service.exchange_code_and_upsert_user("fake-code")
+        auth_service.exchange_code_and_upsert_user("fake-code", "test-state")
 
     # invitee_id is set on the invitation row
     assert len(invitations_updated) == 1
@@ -419,7 +535,7 @@ def test_pending_invitations_no_duplicate_on_relogin(mock_build_flow, mock_svc):
         existing_auth_user.user.id = "existing-invited-user-uuid"
         mock_svc.auth.admin.create_user.return_value = existing_auth_user
 
-        auth_service.exchange_code_and_upsert_user("fake-code")
+        auth_service.exchange_code_and_upsert_user("fake-code", "test-state")
 
     # No duplicate notification — invitee_id is already set so the row is excluded
     assert notifications_inserted == []
