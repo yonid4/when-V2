@@ -41,6 +41,16 @@ def test_normalize_email_non_gmail_other_domain():
     assert normalize_email("j.o.h.n@outlook.com") == "j.o.h.n@outlook.com"
 
 
+def test_normalize_email_mixed_case_gmail():
+    """M11: mixed-case dotted Gmail → lowercased and dots stripped."""
+    assert normalize_email("John.Smith@Gmail.com") == "johnsmith@gmail.com"
+
+
+def test_normalize_email_mixed_case_non_gmail():
+    """M11: mixed-case non-Gmail → lowercased, dots preserved."""
+    assert normalize_email("JOHN.DOE@Company.COM") == "john.doe@company.com"
+
+
 # ─── invite normalization integration tests ──────────────────────────────────
 
 def _auth_headers(user_id: str = "user-uuid-1", email: str = "alice@example.com") -> dict:
