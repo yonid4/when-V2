@@ -6,13 +6,14 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { ArrowLeft, ArrowRight, MapPin, Video, Users, PartyPopper, Cake, MoreHorizontal } from 'lucide-react'
 import type { EventType, Step1Values } from '@/types'
+import { isSafeHttpUrl } from '@/lib/eventUtils'
 
 const step1Schema = z.object({
   name: z.string().min(1, 'Event name is required'),
   event_type: z.enum(['meeting', 'social', 'birthday', 'other']),
   description: z.string().optional(),
   location: z.string().optional(),
-  video_call_link: z.string().url('Must be a valid URL').or(z.literal('')).optional(),
+  video_call_link: z.string().refine(isSafeHttpUrl, 'Must be a valid URL').or(z.literal('')).optional(),
 })
 
 const EVENT_TYPES: { value: EventType; label: string; icon: React.ReactNode }[] = [

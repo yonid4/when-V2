@@ -1,11 +1,30 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, field_validator
 
 from app.models.participant import ParticipantResponse  # noqa: F401 — re-exported for callers
 
 EventType = Literal['meeting', 'social', 'birthday', 'other']
 EventStatus = Literal['planning', 'confirmed', 'cancelled']
+
+
+def validate_video_call_link(value: str | None) -> str | None:
+    """Shared validator for user-supplied video-call links.
+
+    A link is later rendered into an anchor `href` on the frontend, so a
+    `javascript:` (or any non-http) scheme would be a stored-XSS sink. This is
+    the server-side security boundary: `None`/empty means "no link"; any other
+    value must be an http(s) URL with a network location. Rejection raises a
+    ValueError, which Pydantic surfaces as a natural 422 at the router.
+    """
+    if value is None or not value.strip():
+        return value
+    parsed = urlparse(value)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        raise ValueError('video_call_link must be an http(s) URL')
+    return value
 
 
 class EventCreate(BaseModel):
@@ -18,6 +37,8 @@ class EventCreate(BaseModel):
     location: str | None = None
     video_call_link: str | None = None
 
+    _validate_video_call_link = field_validator('video_call_link')(validate_video_call_link)
+
 
 class EventUpdate(BaseModel):
     name: str | None = None
@@ -29,6 +50,8 @@ class EventUpdate(BaseModel):
     location: str | None = None
     video_call_link: str | None = None
     status: EventStatus | None = None
+
+    _validate_video_call_link = field_validator('video_call_link')(validate_video_call_link)
 
 
 class EventResponse(BaseModel):

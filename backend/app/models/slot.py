@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.models.event import validate_video_call_link
 
 
 class PreferredSlotCreate(BaseModel):
@@ -45,6 +47,8 @@ class FinalizeRequest(BaseModel):
     note: str = ""
     location: str = ""
     video_call_link: str = ""
+
+    _validate_video_call_link = field_validator('video_call_link')(validate_video_call_link)
 
 
 class ProposedTimeNoteCreate(BaseModel):

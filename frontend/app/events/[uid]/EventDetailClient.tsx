@@ -31,7 +31,7 @@ import { Navbar } from '@/components/layout/Navbar'
 import { useAuthStore } from '@/stores/authStore'
 import type { EventWithParticipants, PreferredSlot } from '@/types'
 import { toDate, formatDateWindowWithYear, formatTime, formatLongDate } from '@/lib/dates'
-import { typeLabel } from '@/lib/eventUtils'
+import { typeLabel, isSafeHttpUrl } from '@/lib/eventUtils'
 import { StatusBadge } from '@/components/event/StatusBadge'
 import { EditModal } from '@/components/event/EditModal'
 import { DeleteModal } from '@/components/event/DeleteModal'
@@ -658,15 +658,22 @@ function EventDetailLoaded({ event }: { event: EventWithParticipants }) {
                   </p>
                 )}
                 {event.video_call_link && (
-                  <a
-                    href={event.video_call_link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs font-medium text-primary flex items-center gap-1 pt-0.5 hover:underline"
-                  >
-                    <Link2 className="w-3 h-3 shrink-0" />
-                    Join video call
-                  </a>
+                  isSafeHttpUrl(event.video_call_link) ? (
+                    <a
+                      href={event.video_call_link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-medium text-primary flex items-center gap-1 pt-0.5 hover:underline"
+                    >
+                      <Link2 className="w-3 h-3 shrink-0" />
+                      Join video call
+                    </a>
+                  ) : (
+                    <p className="text-xs font-medium text-on-surface-variant flex items-center gap-1 pt-0.5 break-all">
+                      <Link2 className="w-3 h-3 shrink-0" />
+                      {event.video_call_link}
+                    </p>
+                  )
                 )}
                 {event.calendar_event_id && (
                   <p className="text-[10px] font-medium text-primary/70 flex items-center gap-1 pt-0.5">

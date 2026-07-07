@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { EventWithParticipants } from '@/types'
+import { isSafeHttpUrl } from '@/lib/eventUtils'
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -12,7 +13,7 @@ export const editSchema = z.object({
   duration_minutes: z.number().min(15, 'Minimum 15 minutes'),
   description: z.string().optional(),
   location: z.string().optional(),
-  video_call_link: z.string().url('Must be a valid URL').or(z.literal('')).optional(),
+  video_call_link: z.string().refine(isSafeHttpUrl, 'Must be a valid URL').or(z.literal('')).optional(),
 })
 
 export type EditValues = z.infer<typeof editSchema>

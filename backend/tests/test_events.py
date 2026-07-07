@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.models.event import EventCreate, EventUpdate, EventResponse
 from app.models.participant import ParticipantResponse
@@ -409,3 +410,48 @@ def test_delete_event_notifies_participants(mock_get_client, mock_notif_svc):
     assert len(notif_insert_data) == 2
     assert all(n["notification_type"] == "event_deleted" for n in notif_insert_data)
     assert {n["user_id"] for n in notif_insert_data} == {"user-2", "user-3"}
+
+
+# ─── 11. video_call_link validation (stored-XSS guard, H1) ───────────────────
+
+def _valid_create_kwargs(**overrides) -> dict:
+    """Minimal valid EventCreate kwargs; override individual fields per test."""
+    defaults = {
+        "name": "Team Standup",
+        "event_type": "meeting",
+        "earliest_datetime_utc": datetime(2026, 4, 10, 9, tzinfo=timezone.utc),
+        "latest_datetime_utc": datetime(2026, 4, 10, 17, tzinfo=timezone.utc),
+        "duration_minutes": 30,
+    }
+    return {**defaults, **overrides}
+
+
+def test_event_create_rejects_javascript_video_call_link():
+    """A javascript: scheme is rejected (422) — it would be a stored-XSS href."""
+    with pytest.raises(ValidationError):
+        EventCreate(**_valid_create_kwargs(video_call_link="javascript:alert(1)"))
+
+
+def test_event_update_rejects_javascript_video_call_link():
+    with pytest.raises(ValidationError):
+        EventUpdate(video_call_link="javascript:alert(1)")
+
+
+def test_event_create_accepts_https_video_call_link():
+    data = EventCreate(**_valid_create_kwargs(video_call_link="https://meet.example.com/x"))
+    assert data.video_call_link == "https://meet.example.com/x"
+
+
+def test_event_update_accepts_https_video_call_link():
+    data = EventUpdate(video_call_link="https://meet.example.com/x")
+    assert data.video_call_link == "https://meet.example.com/x"
+
+
+def test_event_create_accepts_none_video_call_link():
+    data = EventCreate(**_valid_create_kwargs(video_call_link=None))
+    assert data.video_call_link is None
+
+
+def test_event_update_accepts_none_video_call_link():
+    data = EventUpdate(video_call_link=None)
+    assert data.video_call_link is None
