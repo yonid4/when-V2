@@ -85,7 +85,7 @@ def exchange_code_and_upsert_user(code: str, state: str) -> str:
         logger.error("fetch_token failed: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to exchange OAuth code: {exc}",
+            detail="oauth_exchange_failed",
         )
 
     credentials = flow.credentials

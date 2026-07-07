@@ -210,6 +210,22 @@ def test_exchange_keeps_scope_validation(mock_build_flow, mock_svc):
     assert mock_flow.oauth2session.scope is not None
 
 
+@patch("app.services.auth_service.build_oauth_flow")
+def test_exchange_token_failure_does_not_leak_exception(mock_build_flow):
+    """M13: when fetch_token raises, the client sees a static, non-leaking
+    detail — the underlying OAuth-library/Google error text must NOT surface."""
+    mock_flow = MagicMock()
+    mock_flow.fetch_token.side_effect = RuntimeError("upstream 400: secret detail")
+    mock_build_flow.return_value = mock_flow
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth_service.exchange_code_and_upsert_user("fake-code", "csrf-state")
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "oauth_exchange_failed"
+    assert "secret detail" not in str(exc_info.value.detail)
+
+
 # ─── 1d. Session exchange / realtime token / logout (M4+M5) ───────────────────
 
 @patch("app.services.auth_service.service_client")
