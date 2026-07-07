@@ -507,6 +507,90 @@ def test_profile_created_on_first_login(mock_build_flow, mock_svc):
     assert profile_upsert["avatar_url"] == "https://example.com/pic.jpg"
 
 
+# ─── 8b. Returning-user resolution via profiles lookup (H7) ──────────────────
+#
+# When auth.admin.create_user raises (user already exists), the auth user id
+# must be resolved with a single profiles-table query — NEVER by paging
+# auth.admin.list_users, whose old first-page-then-page-2 scan skipped users
+# at indices ~51–1000 and broke returning logins at scale.
+
+def _profiles_lookup_client(rows: list[dict]) -> MagicMock:
+    """Mock service_client: create_user raises 'already exists'; the profiles
+    email lookup returns ``rows``; the profiles upsert is a no-op."""
+    mock_svc = MagicMock()
+    mock_svc.auth.admin.create_user.side_effect = Exception("User already registered")
+
+    profiles_tbl = MagicMock()
+    profiles_tbl.select.return_value.in_.return_value.execute.return_value = MagicMock(data=rows)
+    profiles_tbl.upsert.return_value.execute.return_value = MagicMock(data=[])
+    mock_svc.table.return_value = profiles_tbl
+    return mock_svc
+
+
+def test_returning_user_resolved_via_profiles_lookup():
+    """Returning login: id comes from the profiles email lookup; list_users is
+    never called (there is no page for a user to be lost on)."""
+    existing_row = {"id": "existing-user-uuid", "email_address": "alice@example.com"}
+    mock_svc = _profiles_lookup_client([existing_row])
+
+    user_info = {"email": "alice@example.com", "name": "Alice", "picture": None}
+    with patch("app.services.auth_service.service_client", mock_svc):
+        profile = auth_service._upsert_profile(user_info, MagicMock())
+
+    assert profile["id"] == "existing-user-uuid"
+    mock_svc.auth.admin.list_users.assert_not_called()
+
+    # The upsert is keyed to the resolved auth user id
+    upsert_data = mock_svc.table.return_value.upsert.call_args.args[0]
+    assert upsert_data["id"] == "existing-user-uuid"
+    assert upsert_data["email_address"] == "alice@example.com"
+
+
+def test_returning_user_gmail_dots_resolved_via_normalized_email():
+    """Gmail dot-variant: the profile row stores the normalized form
+    (johndoe@) while Google sends the raw form (john.doe@). The lookup must
+    query both forms and match the normalized row."""
+    existing_row = {"id": "gmail-user-uuid", "email_address": "johndoe@gmail.com"}
+    mock_svc = _profiles_lookup_client([existing_row])
+
+    user_info = {"email": "john.doe@gmail.com", "name": "John", "picture": None}
+    with patch("app.services.auth_service.service_client", mock_svc):
+        profile = auth_service._upsert_profile(user_info, MagicMock())
+
+    assert profile["id"] == "gmail-user-uuid"
+
+    # Both email forms were included in the candidates filter
+    in_args = mock_svc.table.return_value.select.return_value.in_.call_args
+    assert in_args.args[0] == "email_address"
+    assert set(in_args.args[1]) == {"johndoe@gmail.com", "john.doe@gmail.com"}
+
+
+def test_returning_user_raw_trigger_email_still_resolves():
+    """Crash-window case: the on_auth_user_created trigger wrote the raw email
+    and no completed login normalized it yet — the raw-form row must still
+    resolve."""
+    existing_row = {"id": "raw-email-uuid", "email_address": "john.doe@gmail.com"}
+    mock_svc = _profiles_lookup_client([existing_row])
+
+    user_info = {"email": "john.doe@gmail.com", "name": "John", "picture": None}
+    with patch("app.services.auth_service.service_client", mock_svc):
+        profile = auth_service._upsert_profile(user_info, MagicMock())
+
+    assert profile["id"] == "raw-email-uuid"
+
+
+def test_returning_user_unresolvable_raises_500():
+    """create_user raises and no profile row matches either email form → 500."""
+    mock_svc = _profiles_lookup_client([])
+
+    user_info = {"email": "ghost@example.com", "name": "Ghost", "picture": None}
+    with patch("app.services.auth_service.service_client", mock_svc):
+        with pytest.raises(HTTPException) as exc_info:
+            auth_service._upsert_profile(user_info, MagicMock())
+
+    assert exc_info.value.status_code == 500
+
+
 # ─── 9. test_pending_invitations_matched_on_signup ───────────────────────────
 
 @patch("app.services.auth_service.service_client")

@@ -147,26 +147,32 @@ def _upsert_profile(user_info: dict, credentials: Credentials) -> dict:
         profile_id = auth_user.user.id
     except Exception as e:
         logger.error("create_user failed: %s", e)
-        # User already exists in auth.users — look them up by email
-        response = service_client.auth.admin.list_users()
-        users = response if isinstance(response, list) else getattr(response, "users", [])
-        matched = next((u for u in users if u.email == user_info["email"]), None)
-        if not matched:
-            # Try fetching all pages
-            page = 1
-            while not matched:
-                page += 1
-                response = service_client.auth.admin.list_users(page=page, per_page=1000)
-                batch = response if isinstance(response, list) else getattr(response, "users", [])
-                if not batch:
-                    break
-                matched = next((u for u in batch if u.email == user_info["email"]), None)
+        # User already exists in auth.users — resolve their id through our own
+        # profiles table instead of paging auth.admin.list_users (H7: the old
+        # listing skipped users at indices ~51–1000 and was O(N) per login;
+        # gotrue 2.x has no admin get-user-by-email).
+        # profiles.id is a FK to auth.users.id and a row is guaranteed by the
+        # on_auth_user_created trigger, so the profile id IS the auth user id.
+        # The trigger stores the raw auth email; a completed login rewrites it
+        # normalized — so match either form (prefer normalized).
+        normalized_email = normalize_email(user_info["email"])
+        candidates = [normalized_email]
+        if user_info["email"] != normalized_email:
+            candidates.append(user_info["email"])
+        lookup = (
+            service_client.table("profiles")
+            .select("id, email_address")
+            .in_("email_address", candidates)
+            .execute()
+        )
+        by_email = {row["email_address"]: row for row in (lookup.data or [])}
+        matched = by_email.get(normalized_email) or by_email.get(user_info["email"])
         if not matched:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to resolve auth user",
             )
-        profile_id = matched.id
+        profile_id = matched["id"]
 
     profile_data = {
         "id": profile_id,
