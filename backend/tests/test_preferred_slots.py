@@ -295,6 +295,42 @@ def test_delete_preferred_slot_success(mock_dep_svc, mock_router_svc):
 
 @patch("app.services.preferred_slots_service.service_client")
 @patch("app.dependencies.service_client")
+def test_delete_preferred_slot_sets_regeneration_flag(mock_dep_svc, mock_router_svc):
+    """DELETE should set proposals_needs_regeneration=true on the event,
+    symmetric with create (M10)."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile("user-uuid-1")
+    )
+
+    slot_row = _make_slot_row(user_id="user-uuid-1")  # event_id = event-db-id-1
+
+    events_mock = MagicMock()
+
+    slots_mock = MagicMock()
+    slots_mock.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=slot_row)
+    slots_mock.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    def make_table(name):
+        if name == "events":
+            return events_mock
+        elif name == "preferred_slots":
+            return slots_mock
+        return MagicMock()
+
+    mock_router_svc.table.side_effect = make_table
+
+    response = client.delete(
+        "/api/events/event-uid-1/preferred-slots/slot-uuid-1",
+        headers=_auth_headers("user-uuid-1"),
+    )
+    assert response.status_code == 204
+    # Verify update was called with regeneration flag on the slot's event
+    events_mock.update.assert_called_once_with({"proposals_needs_regeneration": True})
+    events_mock.update.return_value.eq.assert_called_once_with("id", "event-db-id-1")
+
+
+@patch("app.services.preferred_slots_service.service_client")
+@patch("app.dependencies.service_client")
 def test_delete_preferred_slot_403_not_owner(mock_dep_svc, mock_router_svc):
     """DELETE → 403 when slot belongs to a different user."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(

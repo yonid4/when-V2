@@ -166,11 +166,14 @@ def test_sync_source_upserts_busy_events(mock_svc):
         return MagicMock(execute=MagicMock(return_value=MagicMock()))
 
     mock_svc.table.return_value.upsert.side_effect = capture_upsert
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(data=[])
+    mock_svc.table.return_value.select.return_value.eq.return_value.gte.return_value.lt.return_value.execute.return_value = MagicMock(data=[])
 
-    count = sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max)
+    upserted_count, deleted_count = sync_service._sync_source(
+        "user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max
+    )
 
-    assert count == 2
+    assert upserted_count == 2
+    assert deleted_count == 0
     assert {r["provider_event_id"] for r in upserted} == {"evt-1", "evt-2"}
     assert all(r["calendar_source_id"] == "src-1" for r in upserted)
 
@@ -322,14 +325,14 @@ def test_sync_source_propagates_auth_error(mock_svc):
 
 @patch("app.services.sync_service.service_client")
 def test_sync_source_api_error_skips_source_without_deleting(mock_svc):
-    """A ProviderAPIError skips the source (returns 0) and never deletes slots."""
+    """A ProviderAPIError skips the source (no changes) and never deletes slots."""
     now = datetime.now(timezone.utc)
     prov = MagicMock()
     prov.fetch_busy_events.side_effect = ProviderAPIError("boom")
 
     count = sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), now, now + timedelta(days=90))
 
-    assert count == 0
+    assert count == (0, 0)
     mock_svc.table.return_value.delete.assert_not_called()
 
 
@@ -397,6 +400,106 @@ def test_sync_user_marks_needs_reauth_on_auth_error(mock_svc, mock_get_provider,
     sync_service._sync_user("user-1", now, now + timedelta(days=90))
 
     mock_mark.assert_called_once_with("acct-1")
+
+
+# ─── 3b. _sync_user: proposals_needs_regeneration on slot changes (H6) ───────
+
+def _account_row(source_id: str = "src-1") -> dict:
+    return {
+        "id": "acct-1",
+        "provider": "google",
+        "credentials": {"access_token": "tok", "refresh_token": "r1"},
+        "calendar_sources": [{"id": source_id, "calendar_id": "cal", "is_enabled": True}],
+    }
+
+
+def _stale_flag_tables(mock_svc, stale_rows=None, participant_event_ids=None):
+    """Route service_client.table(name) to per-table mocks and return
+    (accounts, busy_slots, event_participants, events) mocks."""
+    accounts_tbl = MagicMock()
+    accounts_tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[_account_row()]
+    )
+
+    busy_tbl = MagicMock()
+    busy_tbl.upsert.return_value.execute.return_value = MagicMock()
+    busy_tbl.select.return_value.eq.return_value.gte.return_value.lt.return_value.execute.return_value = MagicMock(
+        data=list(stale_rows or [])
+    )
+
+    participants_tbl = MagicMock()
+    participants_tbl.select.return_value.eq.return_value.neq.return_value.execute.return_value = MagicMock(
+        data=[{"event_id": eid} for eid in (participant_event_ids or [])]
+    )
+
+    events_tbl = MagicMock()
+
+    tables = {
+        "calendar_accounts": accounts_tbl,
+        "busy_slots": busy_tbl,
+        "event_participants": participants_tbl,
+        "events": events_tbl,
+    }
+    mock_svc.table.side_effect = lambda name: tables[name]
+    return accounts_tbl, busy_tbl, participants_tbl, events_tbl
+
+
+@patch("app.services.sync_service.get_provider")
+@patch("app.services.sync_service.service_client")
+def test_sync_user_flags_planning_events_when_slots_change(mock_svc, mock_get_provider):
+    """A sync that upserts busy slots flags the user's planning events with
+    proposals_needs_regeneration so cached proposals are not served stale."""
+    now = datetime.now(timezone.utc)
+    _, _, _, events_tbl = _stale_flag_tables(
+        mock_svc, participant_event_ids=["evt-planning-1", "evt-planning-2"]
+    )
+    mock_get_provider.return_value = _provider_returning(
+        [_busy("evt-1", now, now + timedelta(hours=1))]
+    )
+
+    sync_service._sync_user("user-1", now, now + timedelta(days=90))
+
+    events_tbl.update.assert_called_once_with({"proposals_needs_regeneration": True})
+    events_tbl.update.return_value.in_.assert_called_once_with(
+        "id", ["evt-planning-1", "evt-planning-2"]
+    )
+    events_tbl.update.return_value.in_.return_value.eq.assert_called_once_with(
+        "status", "planning"
+    )
+
+
+@patch("app.services.sync_service.get_provider")
+@patch("app.services.sync_service.service_client")
+def test_sync_user_flags_events_on_stale_deletion_only(mock_svc, mock_get_provider):
+    """A sync whose only change is deleting a stale slot still flags the
+    user's planning events (freed availability also invalidates proposals)."""
+    now = datetime.now(timezone.utc)
+    _, _, _, events_tbl = _stale_flag_tables(
+        mock_svc,
+        stale_rows=[{"provider_event_id": "evt-stale"}],
+        participant_event_ids=["evt-planning-1"],
+    )
+    mock_get_provider.return_value = _provider_returning([])  # nothing upserted
+
+    sync_service._sync_user("user-1", now, now + timedelta(days=90))
+
+    events_tbl.update.assert_called_once_with({"proposals_needs_regeneration": True})
+
+
+@patch("app.services.sync_service.get_provider")
+@patch("app.services.sync_service.service_client")
+def test_sync_user_does_not_flag_events_when_nothing_changed(mock_svc, mock_get_provider):
+    """A sync that upserts and deletes nothing must not touch the flag."""
+    now = datetime.now(timezone.utc)
+    _, _, participants_tbl, events_tbl = _stale_flag_tables(
+        mock_svc, participant_event_ids=["evt-planning-1"]
+    )
+    mock_get_provider.return_value = _provider_returning([])  # no upserts, no stale rows
+
+    sync_service._sync_user("user-1", now, now + timedelta(days=90))
+
+    events_tbl.update.assert_not_called()
+    participants_tbl.select.assert_not_called()
 
 
 # ─── 4. Event-scoped sync uses event's datetime window ───────────────────────
