@@ -5,10 +5,12 @@ const PUBLIC_PATHS = [...PUBLIC_ONLY_PATHS, '/auth/callback', '/privacy', '/term
 
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl
-  const token = req.cookies.get('token')?.value
+  // Presence check only — middleware runs server-side, so it can read the
+  // HttpOnly `session` cookie (the JWT itself is verified by the backend).
+  const session = req.cookies.get('session')?.value
 
   // Redirect authenticated users away from public-only pages
-  if (PUBLIC_ONLY_PATHS.includes(pathname) && token) {
+  if (PUBLIC_ONLY_PATHS.includes(pathname) && session) {
     return NextResponse.redirect(new URL('/dashboard', req.url))
   }
 
@@ -22,7 +24,7 @@ export function middleware(req: NextRequest): NextResponse {
     return NextResponse.next()
   }
 
-  if (!token) {
+  if (!session) {
     return NextResponse.redirect(new URL('/', req.url))
   }
 

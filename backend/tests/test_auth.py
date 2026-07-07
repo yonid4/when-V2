@@ -4,6 +4,7 @@ Tests the auth router, auth service, and get_current_user dependency with mocked
 Supabase clients and mocked Google OAuth flow.
 """
 
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, call
 from urllib.parse import parse_qs, urlparse
@@ -24,6 +25,10 @@ from app.config import settings
 from app.models.user import User
 from app.services import auth_service
 from app.dependencies import get_current_user
+from app.utils.login_code import (
+    DEFAULT_MAX_AGE_SECONDS as LOGIN_CODE_MAX_AGE,
+    create_login_code,
+)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -117,15 +122,19 @@ def test_auth_google_redirect_binds_state_to_cookie():
 # Fresh clients per test so the module-level cookie jar (populated by the
 # login-start tests) can't leak an oauth_login_state cookie into these.
 
-@patch("app.services.auth_service.exchange_code_and_upsert_user", return_value="fake.jwt.token")
+@patch("app.services.auth_service.exchange_code_and_upsert_user", return_value="fake-login-code")
 def test_login_callback_valid_state_proceeds(mock_exchange):
     """Matching cookie + query state → code is exchanged and the browser is
-    redirected to the frontend with the token; the state cookie is cleared."""
+    redirected to the frontend with a short-lived login code — NEVER the session
+    JWT (?token= would leak a 7-day credential into history/Referer/logs);
+    the state cookie is cleared."""
     c = TestClient(app, follow_redirects=False, cookies={"oauth_login_state": "match-123"})
     response = c.get("/auth/google/callback?code=auth-code&state=match-123")
 
     assert response.status_code in (302, 307)
-    assert "/auth/callback?token=fake.jwt.token" in response.headers["location"]
+    location = response.headers["location"]
+    assert "/auth/callback?code=fake-login-code" in location
+    assert "token=" not in location
     mock_exchange.assert_called_once_with("auth-code", "match-123")
 
     # Cookie is single-use — cleared on success
@@ -201,6 +210,161 @@ def test_exchange_keeps_scope_validation(mock_build_flow, mock_svc):
     assert mock_flow.oauth2session.scope is not None
 
 
+# ─── 1d. Session exchange / realtime token / logout (M4+M5) ───────────────────
+
+@patch("app.services.auth_service.service_client")
+def test_session_exchange_sets_cookie_and_returns_user(mock_svc):
+    """Valid login code → HttpOnly `session` cookie carrying the JWT is set and
+    the body carries the User payload only (no token field)."""
+    profile = _make_profile_row()
+    mock_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+
+    code = create_login_code("user-uuid-1")
+    c = TestClient(app)
+    response = c.post("/auth/session/exchange", json={"code": code})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "user-uuid-1"
+    assert data["email_address"] == "alice@example.com"
+    # The JWT travels ONLY in the cookie — never the response body
+    assert "token" not in data
+
+    set_cookie = response.headers["set-cookie"]
+    assert "session=" in set_cookie
+    assert "httponly" in set_cookie.lower()
+    assert "samesite=lax" in set_cookie.lower()
+    assert "path=/" in set_cookie.lower()
+
+    # The cookie really is the session JWT for the right user
+    payload = jwt.decode(
+        response.cookies["session"],
+        settings.jwt_secret_key,
+        algorithms=[settings.jwt_algorithm],
+    )
+    assert payload["sub"] == "user-uuid-1"
+    assert payload["email"] == "alice@example.com"
+
+
+@patch("app.services.auth_service.service_client")
+def test_session_exchange_tampered_code_rejected(mock_svc):
+    """A signature-tampered login code → 401, no cookie, no DB work."""
+    code = create_login_code("user-uuid-1")
+    tampered = code[:-1] + ("A" if code[-1] != "A" else "B")
+
+    c = TestClient(app)
+    response = c.post("/auth/session/exchange", json={"code": tampered})
+
+    assert response.status_code == 401
+    assert "set-cookie" not in response.headers
+    mock_svc.table.assert_not_called()
+
+
+@patch("app.services.auth_service.service_client")
+def test_session_exchange_garbage_code_rejected(mock_svc):
+    """A malformed code → 401, no cookie, no DB work."""
+    c = TestClient(app)
+    response = c.post("/auth/session/exchange", json={"code": "not-a-real-code"})
+
+    assert response.status_code == 401
+    assert "set-cookie" not in response.headers
+    mock_svc.table.assert_not_called()
+
+
+@patch("app.services.auth_service.service_client")
+def test_session_exchange_expired_code_rejected(mock_svc):
+    """A login code past its 60s TTL → 401, no cookie, no DB work."""
+    code = create_login_code("user-uuid-1")
+
+    c = TestClient(app)
+    with patch(
+        "app.utils.login_code.time.time",
+        return_value=time.time() + LOGIN_CODE_MAX_AGE + 5,
+    ):
+        response = c.post("/auth/session/exchange", json={"code": code})
+
+    assert response.status_code == 401
+    assert "set-cookie" not in response.headers
+    mock_svc.table.assert_not_called()
+
+
+@patch("app.dependencies.service_client")
+def test_realtime_token_is_short_lived(mock_svc):
+    """A session-cookie-authenticated request gets a ~1h JWT for supabase
+    realtime, with its lifetime in the body so the client can cache it."""
+    profile = _make_profile_row()
+    mock_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+
+    c = TestClient(app, cookies={"session": _make_valid_jwt()})
+    response = c.get("/auth/realtime-token")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["expires_in"] == 3600
+
+    payload = jwt.decode(
+        data["token"], settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+    )
+    assert payload["sub"] == "user-uuid-1"
+    assert payload["email"] == "alice@example.com"
+    remaining = payload["exp"] - datetime.now(timezone.utc).timestamp()
+    # ~1 hour, definitely not the 7-day session lifetime
+    assert 3300 < remaining <= 3660
+
+
+def test_realtime_token_requires_auth():
+    """No header and no session cookie → rejected (403, matching the repo's
+    missing-credentials convention), no token minted."""
+    c = TestClient(app)
+    response = c.get("/auth/realtime-token")
+    assert response.status_code == 403
+
+
+def test_logout_clears_session_cookie():
+    """POST /auth/logout expires the session cookie."""
+    c = TestClient(app, cookies={"session": _make_valid_jwt()})
+    response = c.post("/auth/logout")
+
+    assert response.status_code == 204
+    set_cookie = response.headers["set-cookie"]
+    assert "session=" in set_cookie
+    assert "max-age=0" in set_cookie.lower()
+
+
+@patch("app.dependencies.service_client")
+def test_get_current_user_accepts_session_cookie(mock_svc):
+    """get_current_user resolves the user from the HttpOnly session cookie
+    (the browser path — no Authorization header)."""
+    profile = _make_profile_row()
+    mock_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+
+    with patch("app.services.auth_service.service_client") as mock_auth_svc:
+        mock_auth_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+        c = TestClient(app, cookies={"session": _make_valid_jwt()})
+        response = c.get("/auth/me")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "user-uuid-1"
+
+
+@patch("app.dependencies.service_client")
+def test_get_current_user_header_takes_precedence_over_cookie(mock_svc):
+    """When both are present the Authorization header wins: a valid header with
+    a garbage cookie must still authenticate."""
+    profile = _make_profile_row()
+    mock_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+
+    with patch("app.services.auth_service.service_client") as mock_auth_svc:
+        mock_auth_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+        c = TestClient(app, cookies={"session": "garbage-not-a-jwt"})
+        response = c.get(
+            "/auth/me", headers={"Authorization": f"Bearer {_make_valid_jwt()}"}
+        )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "user-uuid-1"
+
+
 # ─── 2. test_auth_me_success ──────────────────────────────────────────────────
 
 @patch("app.dependencies.service_client")
@@ -220,6 +384,8 @@ def test_auth_me_success(mock_svc):
     data = response.json()
     assert data["id"] == "user-uuid-1"
     assert data["email_address"] == "alice@example.com"
+    # The internal per-request JWT field must never be serialized
+    assert "token" not in data
 
 
 # ─── 3. test_auth_me_no_token ─────────────────────────────────────────────────

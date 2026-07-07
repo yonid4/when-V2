@@ -5,9 +5,9 @@ import DashboardClient from './DashboardClient'
 
 export default async function DashboardPage() {
   const cookieStore = await cookies()
-  const token = cookieStore.get('token')?.value
+  const session = cookieStore.get('session')?.value
 
-  if (!token) {
+  if (!session) {
     redirect('/')
   }
 

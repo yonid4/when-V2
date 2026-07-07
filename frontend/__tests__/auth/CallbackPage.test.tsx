@@ -1,22 +1,21 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act } from 'react'
 
 // ── Mock next/navigation ─────────────────────────────────────────────────────
 const mockReplace = vi.fn()
-let mockToken: string | null = null
+let mockCode: string | null = null
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: mockReplace }),
   useSearchParams: () => ({
-    get: (key: string) => (key === 'token' ? mockToken : null),
+    get: (key: string) => (key === 'code' ? mockCode : null),
   }),
 }))
 
 // ── Mock lib/api ──────────────────────────────────────────────────────────────
-const mockApiGet = vi.fn()
+const mockApiPost = vi.fn()
 vi.mock('@/lib/api', () => ({
-  api: { get: (...args: unknown[]) => mockApiGet(...args) },
+  api: { post: (...args: unknown[]) => mockApiPost(...args) },
 }))
 
 // ── Mock authStore ─────────────────────────────────────────────────────────────
@@ -31,12 +30,12 @@ import AuthCallbackPage from '@/app/auth/callback/page'
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
-  mockToken = null
+  mockCode = null
 })
 
 describe('AuthCallbackPage', () => {
-  it('stores token in localStorage, calls setUser, and redirects to /dashboard when token is present', async () => {
-    mockToken = 'valid-jwt-token'
+  it('exchanges the login code for a session, calls setUser with the user only, and redirects to /dashboard', async () => {
+    mockCode = 'signed-login-code'
     const fakeUser = {
       id: 'user-1',
       email_address: 'alice@example.com',
@@ -47,37 +46,43 @@ describe('AuthCallbackPage', () => {
       created_at: '2026-04-01T00:00:00Z',
       updated_at: '2026-04-01T00:00:00Z',
     }
-    mockApiGet.mockResolvedValueOnce(fakeUser)
+    mockApiPost.mockResolvedValueOnce(fakeUser)
 
     render(<AuthCallbackPage />)
 
     await waitFor(() => {
-      expect(localStorage.getItem('token')).toBe('valid-jwt-token')
-      expect(mockSetUser).toHaveBeenCalledWith(fakeUser, 'valid-jwt-token')
+      expect(mockApiPost).toHaveBeenCalledWith('/auth/session/exchange', {
+        code: 'signed-login-code',
+      })
+      expect(mockSetUser).toHaveBeenCalledWith(fakeUser)
       expect(mockReplace).toHaveBeenCalledWith('/dashboard')
     })
+    // The JWT lives in the HttpOnly cookie — nothing token-like touches JS storage
+    expect(localStorage.getItem('token')).toBeNull()
+    expect(document.cookie).not.toContain('token=')
   })
 
-  it('redirects to / when no token param is present', async () => {
-    mockToken = null
+  it('redirects to / when no code param is present', async () => {
+    mockCode = null
 
     render(<AuthCallbackPage />)
 
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith('/')
     })
-    expect(localStorage.getItem('token')).toBeNull()
+    expect(mockApiPost).not.toHaveBeenCalled()
     expect(mockSetUser).not.toHaveBeenCalled()
   })
 
-  it('redirects to / when API call fails', async () => {
-    mockToken = 'some-token'
-    mockApiGet.mockRejectedValueOnce(new Error('Unauthorized'))
+  it('redirects to / when the exchange fails (expired/tampered code)', async () => {
+    mockCode = 'stale-code'
+    mockApiPost.mockRejectedValueOnce(new Error('Unauthorized'))
 
     render(<AuthCallbackPage />)
 
     await waitFor(() => {
       expect(mockReplace).toHaveBeenCalledWith('/')
     })
+    expect(mockSetUser).not.toHaveBeenCalled()
   })
 })

@@ -10,6 +10,7 @@ from jose import jwt
 from app.config import settings
 from app.models.user import User
 from app.utils.email import normalize_email
+from app.utils.login_code import create_login_code
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,13 @@ def get_authorization_url(state: str) -> str:
 
 
 def exchange_code_and_upsert_user(code: str, state: str) -> str:
-    """Exchange OAuth code, upsert profile, check pending invites, return JWT.
+    """Exchange OAuth code, upsert profile, check pending invites, and return a
+    short-lived signed login code (NOT the session JWT).
+
+    The code is handed to the frontend via the post-login redirect and traded
+    for the real 7-day JWT at POST /auth/session/exchange, which delivers it as
+    an HttpOnly cookie. Redirecting with the JWT itself would leak a 7-day
+    credential into browser history, Referer headers, and logs (M4).
 
     ``state`` is threaded through oauthlib's own API rather than a private
     attribute. Login CSRF protection is enforced upstream in the router, which
@@ -88,7 +95,37 @@ def exchange_code_and_upsert_user(code: str, state: str) -> str:
     profile = _upsert_profile(user_info, credentials)
     _process_pending_invitations(profile["id"], normalize_email(user_info["email"]))
 
-    return _create_jwt(user_id=profile["id"], email=user_info["email"])
+    return create_login_code(profile["id"])
+
+
+def create_session_for_user(user_id: str) -> tuple[str, User]:
+    """Mint the 7-day session JWT for ``user_id`` and return it with the user.
+
+    Called by the session-exchange endpoint after the login code's signature
+    and freshness have been verified. The router sets the JWT as the HttpOnly
+    ``session`` cookie and returns only the User payload in the body.
+    """
+    result = service_client.table("profiles").select("*").eq("id", user_id).single().execute()
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    token = _create_jwt(user_id=user_id, email=result.data["email_address"])
+    return token, User(**result.data)
+
+
+# Realtime tokens are handed to JavaScript (supabase-js needs a readable JWT to
+# join channels as `authenticated`), so they must be short-lived: an XSS that
+# steals one gets 1 hour, not 7 days.
+REALTIME_TOKEN_EXPIRE_MINUTES = 60
+
+
+def create_realtime_token(user: User) -> str:
+    """Mint a short-lived JWT (same claims as the session JWT, shorter exp)
+    for the Supabase realtime client."""
+    return _create_jwt(
+        user_id=user.id,
+        email=user.email_address,
+        expires_minutes=REALTIME_TOKEN_EXPIRE_MINUTES,
+    )
 
 
 def _fetch_google_user_info(credentials: Credentials) -> dict:
@@ -182,8 +219,10 @@ def _process_pending_invitations(user_id: str, email: str) -> None:
         ).execute()
 
 
-def _create_jwt(user_id: str, email: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+def _create_jwt(user_id: str, email: str, expires_minutes: int | None = None) -> str:
+    if expires_minutes is None:
+        expires_minutes = settings.jwt_expire_minutes
+    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
     payload = {
         "sub": user_id,
         "email": email,
