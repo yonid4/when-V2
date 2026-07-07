@@ -244,7 +244,7 @@ events
 |---|---|---|
 | profiles | Own row only | Own row only |
 | events | Coordinator or participant | Coordinator only (except status updates) |
-| event_participants | All participants of the event | Coordinator (add/remove); self-update limited to `rsvp_status` (column-level grant + WITH CHECK own row); `can_invite` changes via backend service role after coordinator check |
+| event_participants | All participants of the event | Coordinator adds/removes anyone; a participant may delete (leave) their own row; self-update limited to `rsvp_status` (column-level grant + WITH CHECK own row); `can_invite` changes via backend service role after coordinator check |
 | event_invitations | Inviter or invitee | Coordinator or can_invite participant |
 | calendar_accounts | Own rows only | Own rows only |
 | calendar_sources | Own rows (via account) | Own rows only |

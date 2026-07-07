@@ -1035,6 +1035,10 @@ CREATE POLICY "event_participants_delete" ON "public"."event_participants" FOR D
 
 
 
+CREATE POLICY "event_participants_delete_self" ON "public"."event_participants" FOR DELETE USING (("user_id" = "auth"."uid"()));
+
+
+
 CREATE POLICY "event_participants_insert" ON "public"."event_participants" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."events"
   WHERE (("events"."id" = "event_participants"."event_id") AND ("events"."coordinator_id" = "auth"."uid"())))));
