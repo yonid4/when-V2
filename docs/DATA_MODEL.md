@@ -205,6 +205,7 @@ In-app inbox. One row per user per notification event.
 - `event_finalized` — coordinator confirmed a time
 - `event_deleted` — event was deleted
 - `event_time_changed` — finalized time was updated
+- `invite_accepted` — an invitee accepted your invitation
 
 ---
 

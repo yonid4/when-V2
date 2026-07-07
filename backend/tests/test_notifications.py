@@ -278,3 +278,17 @@ def test_notifications_require_auth():
     """GET /api/notifications without token → 403 (HTTPBearer)."""
     response = client.get("/api/notifications")
     assert response.status_code == 403
+
+
+# ─── 7. notification_type Literal covers all DB enum values (M16) ────────────
+
+@pytest.mark.parametrize("notif_type", ["event_time_changed", "invite_accepted"])
+def test_notification_response_accepts_all_enum_types(notif_type):
+    """M16: NotificationResponse must accept every value of the DB
+    notification_type_enum without raising, so a fetched row does not 500."""
+    from app.models.notification import NotificationResponse
+
+    model = NotificationResponse(
+        **_make_notification_row(notification_type=notif_type, event_uid=None)
+    )
+    assert model.notification_type == notif_type
