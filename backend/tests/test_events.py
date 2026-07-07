@@ -519,3 +519,12 @@ def test_event_create_accepts_none_video_call_link():
 def test_event_update_accepts_none_video_call_link():
     data = EventUpdate(video_call_link=None)
     assert data.video_call_link is None
+
+
+def test_row_to_event_response_allows_null_coordinator_id():
+    """M1: the DB column is nullable (ON DELETE SET NULL — account deletion
+    anonymizes confirmed/cancelled events that stay visible to participants).
+    Mapping such a row must not raise a ValidationError (which would 500)."""
+    row = _make_event_row(coordinator_id=None)
+    response = event_service._row_to_event_response(row, [])
+    assert response.coordinator_id is None

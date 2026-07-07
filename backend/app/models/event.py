@@ -65,7 +65,7 @@ class EventResponse(BaseModel):
     name: str
     description: str | None
     event_type: EventType
-    coordinator_id: str
+    coordinator_id: str | None
     earliest_datetime_utc: datetime
     latest_datetime_utc: datetime
     duration_minutes: int
