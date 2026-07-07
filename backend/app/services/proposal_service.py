@@ -90,6 +90,7 @@ def _build_day_candidates(
     end_hour: int,
     duration: timedelta,
     earliest_dt: datetime,
+    reference_time_utc: datetime,
 ) -> list[datetime]:
     """Build candidate start times for each day in [start_date, end_date].
 
@@ -100,11 +101,13 @@ def _build_day_candidates(
     - Wrap: each day has two segments [start_hour, midnight) and [midnight, end_hour).
       The wrap segment that trails into the next calendar day is attached to the
       *previous* day's iteration so scoring/conflict logic stays per-event-day.
-    - Every segment is clamped to now so past slots are never generated.
+    - Every segment is clamped to reference_time_utc so past slots are never
+      generated. This reference is an explicit input, never the wall clock, to
+      keep proposal generation deterministic.
     - First day: also clamped to earliest_dt.
     - Last day: only segments that fall within the event window are included.
     """
-    now = datetime.now(timezone.utc)
+    now = reference_time_utc
     candidates: list[datetime] = []
 
     # end_hour == 0 with a wrap means end at midnight (full wrap to end of day)
@@ -160,8 +163,14 @@ def _build_day_candidates(
     return candidates
 
 
-def generate_proposals(event_id: str, db=None) -> list[dict]:
+def generate_proposals(event_id: str, *, reference_time_utc: datetime, db=None) -> list[dict]:
     """Generate ranked time proposals for an event and persist them.
+
+    ``reference_time_utc`` is the request instant, supplied by the caller (the
+    router). It is used to clamp out past slots and to stamp
+    ``proposals_last_generated_at``. It is a required, explicit input — the
+    service never reads the wall clock — so generation is a pure function of
+    (event data, reference_time_utc) and stays deterministic.
 
     Steps:
     1. Fetch event metadata (duration, window).
@@ -243,7 +252,14 @@ def generate_proposals(event_id: str, db=None) -> list[dict]:
         end_hour=end_hour,
         duration=duration,
         earliest_dt=earliest_dt,
+        reference_time_utc=reference_time_utc,
     )
+
+    # Clamp to the window's upper bound: a meeting must END within the event
+    # window. This drops spurious wrap-around candidates on the last day whose
+    # evening segment lies entirely after latest_dt (M8). No-op for normal
+    # windows, where segment ends are already bounded by end_hour <= latest_dt.
+    candidates = [c for c in candidates if c + duration <= latest_dt]
 
     # 6. Score each candidate
     scored = []
@@ -292,7 +308,7 @@ def generate_proposals(event_id: str, db=None) -> list[dict]:
     # 8. Delete old proposed_times rows and insert new ones
     client.table("proposed_times").delete().eq("event_id", event_id).execute()
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = reference_time_utc.isoformat()
     rows_to_insert = []
     for rank, item in enumerate(top5, start=1):
         rows_to_insert.append({

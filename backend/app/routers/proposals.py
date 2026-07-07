@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 
 from app.dependencies import get_current_user
@@ -28,7 +30,10 @@ def get_or_generate_proposals(
         if cached:
             return cached
 
-    return generate_proposals(event["id"])
+    # Capture the request instant here (transport concern) and inject it so the
+    # scheduling service stays deterministic and never reads the wall clock.
+    reference_time_utc = datetime.now(timezone.utc)
+    return generate_proposals(event["id"], reference_time_utc=reference_time_utc)
 
 
 @router.post(
@@ -41,4 +46,7 @@ def refresh_proposals(
 ):
     """Force regenerate proposals regardless of cache state."""
     event = get_event_and_check_access(uid, current_user.id, coordinator_only=True)
-    return generate_proposals(event["id"])
+    # Capture the request instant here (transport concern) and inject it so the
+    # scheduling service stays deterministic and never reads the wall clock.
+    reference_time_utc = datetime.now(timezone.utc)
+    return generate_proposals(event["id"], reference_time_utc=reference_time_utc)
