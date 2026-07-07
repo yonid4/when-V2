@@ -190,7 +190,7 @@ def test_stale_deletion_uses_query_time_max(mock_svc):
         result.execute.return_value = MagicMock(data=[])
         return result
 
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.side_effect = capture_lt
+    mock_svc.table.return_value.select.return_value.eq.return_value.gte.return_value.lt.side_effect = capture_lt
 
     sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max)
 
@@ -207,7 +207,7 @@ def test_stale_slot_deleted_when_event_no_longer_returned(mock_svc):
     prov = _provider_returning([_busy("evt-active", now, now + timedelta(hours=1))])
 
     mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock()
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
+    mock_svc.table.return_value.select.return_value.eq.return_value.gte.return_value.lt.return_value.execute.return_value = MagicMock(
         data=[{"provider_event_id": "evt-active"}, {"provider_event_id": "evt-stale"}]
     )
 
@@ -234,13 +234,79 @@ def test_no_stale_slots_delete_not_called(mock_svc):
     prov = _provider_returning([_busy("evt-active", now, now + timedelta(hours=1))])
 
     mock_svc.table.return_value.upsert.return_value.execute.return_value = MagicMock()
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(
+    mock_svc.table.return_value.select.return_value.eq.return_value.gte.return_value.lt.return_value.execute.return_value = MagicMock(
         data=[{"provider_event_id": "evt-active"}]
     )
 
     sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max)
 
     mock_svc.table.return_value.delete.assert_not_called()
+
+
+@patch("app.services.sync_service.service_client")
+def test_scoped_sync_does_not_delete_slots_outside_window(mock_svc):
+    """Regression (H5): the stale-slot query must be bounded below by time_min.
+
+    A narrow event-scoped sync only fetches provider events inside
+    [time_min, time_max]; slots ending before time_min were never fetched and
+    must not be treated as stale. Simulates Supabase's server-side filtering:
+    without the .gte bound the out-of-window slot would be returned and
+    deleted."""
+    now = datetime.now(timezone.utc)
+    time_min = now + timedelta(days=5)          # narrow 2-hour event window
+    time_max = now + timedelta(days=5, hours=2)
+    prov = _provider_returning([])              # provider returns nothing in window
+
+    stored_slots = [
+        # Synced weeks earlier, ends long before time_min — must survive.
+        {"provider_event_id": "evt-out-of-window", "end_time_utc": now.isoformat()},
+        # Inside the window but no longer returned by the provider — stale.
+        {"provider_event_id": "evt-stale-in-window",
+         "end_time_utc": (time_min + timedelta(hours=1)).isoformat()},
+    ]
+
+    class FakeStaleQuery:
+        """Applies gte/lt filters like PostgREST would."""
+
+        def __init__(self):
+            self.min = None
+            self.max = None
+
+        def gte(self, column, value):
+            assert column == "end_time_utc"
+            self.min = datetime.fromisoformat(value)
+            return self
+
+        def lt(self, column, value):
+            assert column == "end_time_utc"
+            self.max = datetime.fromisoformat(value)
+            return self
+
+        def execute(self):
+            data = [
+                s for s in stored_slots
+                if (self.min is None or datetime.fromisoformat(s["end_time_utc"]) >= self.min)
+                and (self.max is None or datetime.fromisoformat(s["end_time_utc"]) < self.max)
+            ]
+            return MagicMock(data=data)
+
+    mock_svc.table.return_value.select.return_value.eq.side_effect = lambda *a: FakeStaleQuery()
+
+    deleted_ids = []
+
+    def capture_in(column, ids):
+        if column == "provider_event_id":
+            deleted_ids.extend(ids)
+        return MagicMock(execute=MagicMock(return_value=MagicMock()))
+
+    mock_svc.table.return_value.delete.return_value.eq.return_value.in_.side_effect = capture_in
+
+    sync_service._sync_source("user-1", "src-1", "primary", prov, TokenBundle({}), time_min, time_max)
+
+    assert "evt-out-of-window" not in deleted_ids, (
+        "scoped sync must not delete busy slots ending before time_min"
+    )
+    assert "evt-stale-in-window" in deleted_ids
 
 
 @patch("app.services.sync_service.service_client")
@@ -282,7 +348,7 @@ def test_sync_user_persists_rotated_credentials(mock_svc, mock_get_provider):
         "calendar_sources": [{"id": "src-1", "calendar_id": "cal", "is_enabled": True}],
     }
     mock_svc.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[account])
-    mock_svc.table.return_value.select.return_value.eq.return_value.lt.return_value.execute.return_value = MagicMock(data=[])
+    mock_svc.table.return_value.select.return_value.eq.return_value.gte.return_value.lt.return_value.execute.return_value = MagicMock(data=[])
 
     prov = MagicMock()
 

@@ -228,12 +228,17 @@ def _sync_source(
         ).execute()
 
     # Delete stale slots: any slot for this source within the fetch window that
-    # was not returned by Google (or was returned as cancelled).
+    # was not returned by the provider (or was returned as cancelled). Both
+    # bounds matter: without the lower bound, a narrow event-scoped sync would
+    # treat every stored slot ending before time_max as stale and wipe busy
+    # data outside the window it actually fetched.
+    time_min_iso = time_min.isoformat()
     time_max_iso = time_max.isoformat()
     existing = (
         service_client.table("busy_slots")
         .select("provider_event_id")
         .eq("calendar_source_id", source_id)
+        .gte("end_time_utc", time_min_iso)
         .lt("end_time_utc", time_max_iso)
         .execute()
     )
