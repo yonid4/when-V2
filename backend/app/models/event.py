@@ -49,7 +49,12 @@ class EventUpdate(BaseModel):
     duration_minutes: int | None = None
     location: str | None = None
     video_call_link: str | None = None
-    status: EventStatus | None = None
+    # NOTE: no `status` field (H11). Status transitions are state-machine
+    # moves owned by dedicated flows — finalize_service sets 'confirmed'
+    # (with finalized_* + calendar write), delete_event handles cancellation.
+    # Exposing status here let a plain PATCH mark an event 'confirmed' with
+    # no finalized times and no calendar event. Unknown body fields are
+    # ignored by Pydantic, so stale clients sending `status` are harmless.
 
     _validate_video_call_link = field_validator('video_call_link')(validate_video_call_link)
 

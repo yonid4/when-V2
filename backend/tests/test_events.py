@@ -379,6 +379,70 @@ def test_update_event_non_coordinator_forbidden(mock_get_client):
     assert exc_info.value.status_code == 403
 
 
+# ─── 9b. update_event must not mass-assign status (H11) ──────────────────────
+#
+# Status transitions are owned by dedicated flows (finalize_service →
+# 'confirmed', delete_event → cancellation). A plain PATCH carrying
+# status='confirmed' used to mark the event confirmed with no finalized
+# times and no calendar event — EventUpdate must not expose the field.
+
+def test_event_update_model_drops_status():
+    """A PATCH body with `status` parses (stale clients stay compatible) but
+    the field is dropped — it can never reach the DB update payload."""
+    assert "status" not in EventUpdate.model_fields
+    data = EventUpdate.model_validate({"name": "X", "status": "confirmed"})
+    assert "status" not in data.model_dump(exclude_none=True)
+
+
+@patch("app.services.event_service.get_authed_client")
+def test_update_event_ignores_status_and_stays_planning(mock_get_client):
+    """PATCH with legitimate fields + status='confirmed': the update proceeds
+    without status and the event remains 'planning'."""
+    user = _make_user()
+    db = _mock_db()
+    mock_get_client.return_value = db
+
+    event_row = _make_event_row()
+    updated_row = _make_event_row(name="Updated Name")  # status stays 'planning'
+
+    events_table = db.table("events")
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+    events_table.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[updated_row])
+
+    ep_table = db.table("event_participants")
+    ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    data = EventUpdate.model_validate({"name": "Updated Name", "status": "confirmed"})
+    result = event_service.update_event("abc123def456", data, user)
+
+    update_call_data = events_table.update.call_args[0][0]
+    assert "status" not in update_call_data
+    assert result.status == "planning"
+
+
+@patch("app.services.event_service.get_authed_client")
+def test_update_event_status_only_patch_is_noop(mock_get_client):
+    """PATCH carrying ONLY status: nothing survives parsing, so no DB update
+    is issued and the event stays 'planning'."""
+    user = _make_user()
+    db = _mock_db()
+    mock_get_client.return_value = db
+
+    event_row = _make_event_row()
+
+    events_table = db.table("events")
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+
+    ep_table = db.table("event_participants")
+    ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    data = EventUpdate.model_validate({"status": "confirmed"})
+    result = event_service.update_event("abc123def456", data, user)
+
+    events_table.update.assert_not_called()
+    assert result.status == "planning"
+
+
 # ─── 10. delete_event — sends notifications and deletes ──────────────────────
 
 @patch("app.utils.notifications.service_client")
