@@ -2,6 +2,7 @@
 participant's own calendar (via that calendar's provider)."""
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -109,10 +110,13 @@ def finalize_event(
     3. Fetch accepted participants.
     4. Map every user's write calendar; the coordinator must have one (422).
     5. Split participants into direct-write (have a write calendar) vs emailed.
-    6. Create the coordinator's copy (required); then best-effort write to each
-       other participant's own calendar.
-    7. Mark the event confirmed and insert notifications.
-    8. Return the updated event row.
+    6. Atomically claim the event (planning → confirmed) — the optimistic lock
+       that makes concurrent finalizes safe; the loser gets the same 409.
+    7. Create the coordinator's copy (required); then best-effort write to each
+       other participant's own calendar. If the coordinator write fails, the
+       claim is rolled back (confirmed → planning) before the error surfaces.
+    8. Write the finalized fields and insert notifications.
+    9. Return the updated event row.
     """
     client = db if db is not None else service_client
 
@@ -128,8 +132,10 @@ def finalize_event(
         raise HTTPException(status_code=404, detail="Event not found")
     event = event_result.data
 
-    # Idempotency guard: refuse to re-finalize an already-confirmed event so we
-    # don't create a second Google Calendar event or duplicate notifications.
+    # Idempotency guard (fast path): refuse to re-finalize an already-confirmed
+    # event so we don't create a second calendar event or duplicate
+    # notifications. This read is racy on its own — the authoritative guard is
+    # the atomic status claim in step 6 below.
     if event["status"] == "confirmed":
         raise HTTPException(status_code=409, detail="event_already_finalized")
 
@@ -244,8 +250,47 @@ def finalize_event(
             attendee_emails=attendee_emails,
         )
 
-    # 6. Create the coordinator's (organizer) copy — REQUIRED. It carries the
-    #    emailed attendees. Abort the whole finalize if this fails.
+    # 6. Atomically claim the event (optimistic lock). The conditional update
+    #    only matches while status is still 'planning', so of two concurrent
+    #    finalize requests exactly one gets the row back; the loser matches
+    #    zero rows and gets the same 409 as the fast-path guard. This MUST
+    #    happen before any provider write — the race window otherwise spans
+    #    the slow external Google/Microsoft API calls.
+    claim_result = (
+        client.table("events")
+        .update({"status": "confirmed"})
+        .eq("id", event["id"])
+        .eq("status", "planning")
+        .execute()
+    )
+    if not claim_result or not claim_result.data:
+        raise HTTPException(status_code=409, detail="event_already_finalized")
+
+    def _rollback_claim() -> None:
+        """Compensating action: release the claim if the required provider
+        write fails, so the event isn't stuck 'confirmed' with no calendar
+        event. Guarded on status='confirmed' (and no finalized fields have
+        been written at any call site) so a concurrent cancel is preserved.
+        Never raises — the original error must surface, not a rollback one."""
+        try:
+            (
+                client.table("events")
+                .update({"status": "planning"})
+                .eq("id", event["id"])
+                .eq("status", "confirmed")
+                .execute()
+            )
+        except Exception as rollback_exc:
+            logger.error(
+                "Failed to roll back finalize claim for event %s — event may be "
+                "stuck in 'confirmed' without a calendar event: %s",
+                event["id"],
+                rollback_exc,
+            )
+
+    # 7. Create the coordinator's (organizer) copy — REQUIRED. It carries the
+    #    emailed attendees. Abort the whole finalize if this fails, releasing
+    #    the claim first.
     try:
         calendar_event_id = _create_event_on_write_calendar(
             client, coordinator_write, _build_payload(emailed_attendees)
@@ -257,12 +302,14 @@ def finalize_event(
             exc,
         )
         mark_account_needs_reauth(coordinator_account_id)
+        _rollback_claim()
         raise HTTPException(status_code=422, detail="calendar_credentials_expired")
     except Exception as exc:
         logger.error("Calendar API error during finalization: %s", exc)
+        _rollback_claim()
         raise HTTPException(status_code=502, detail="calendar_create_failed")
 
-    # 6b. Best-effort: write the event onto each other participant's own calendar
+    # 7b. Best-effort: write the event onto each other participant's own calendar
     #     via their own provider. A failure here never aborts finalization — the
     #     event is already confirmed and When. tracks RSVP independently.
     for participant_id in direct_write_user_ids:
@@ -281,11 +328,15 @@ def finalize_event(
                 "Failed to write event to participant %s calendar: %s", participant_id, exc
             )
 
-    # 8. Atomically update DB (only after successful calendar creation)
+    # 8. Write the finalized fields (only after successful calendar creation).
+    #    Guarded on status='confirmed' — consistent with the claim — so a
+    #    concurrent cancel that lands between the claim and this write is not
+    #    clobbered back to 'confirmed'.
     update_payload: dict = {
         "status": "confirmed",
         "finalized_start_time_utc": proposed_time["start_time_utc"],
         "finalized_end_time_utc": proposed_time["end_time_utc"],
+        "finalized_at": datetime.now(timezone.utc).isoformat(),
         "calendar_event_id": calendar_event_id,
         "location": location or None,
         "video_call_link": video_call_link or None,
@@ -297,6 +348,7 @@ def finalize_event(
         client.table("events")
         .update(update_payload)
         .eq("id", event["id"])
+        .eq("status", "confirmed")
         .execute()
     )
 
