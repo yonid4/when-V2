@@ -32,6 +32,51 @@ Findings corroborated by more than one audit stream are marked **⨯N streams** 
 
 ---
 
+## Remediation status
+
+Remediation was carried out on branch **`audit-fixes`** (off `main`). Every Critical, High, and Medium finding was addressed except **H9** (deferred — see below), plus the schema-truth Low **L18** and dependency Low **L17**. One fix per commit; finding IDs appear in each commit message. Test status after remediation: **backend 299 passed / 0 failed** (includes the live-DB integration tests); **frontend 187 passed / 7 failed** — the 7 failures are pre-existing (unrelated `sprint9` realtime hook tests) and are unchanged by this work.
+
+**⚠ Database migrations are committed but NOT yet applied to the live project.** The RLS/grant fixes ship as SQL migrations under `supabase/migrations/` and must be applied at deploy time (Supabase SQL editor or `psql`), in this order:
+`20260706000001` (H2), `20260706000002` (H3), `20260706000003` (M3), `20260707000001` (M2). Each carries verification queries. `schema.sql` already reflects their post-apply state.
+
+| ID | Severity | Status | Commit / note |
+|----|----------|--------|---------------|
+| C1 | Critical | ✅ Fixed | `9ac46ae` — signed/bound OAuth `state` |
+| H1 | High | ✅ Fixed | `6fdf185` — protocol-allowlist `video_call_link` (server+client) |
+| H2 | High | ✅ Fixed | `8411024` — scope `realtime.messages` (migration `20260706000001`) |
+| H3 | High | ✅ Fixed | `8b67d1c` — `WITH CHECK` + column grant (migration `20260706000002`) |
+| H4 | High | ✅ Fixed | `228f46b` — login OAuth state bound to browser session |
+| H5 | High | ✅ Fixed | `66f7240` — lower bound on stale-slot deletion |
+| H6 | High | ✅ Fixed | `a0e6294` — `proposals_needs_regeneration` on sync |
+| H7 | High | ✅ Fixed | `0163382` — returning-user lookup via profiles, not paging |
+| H8 | High | ✅ Fixed | `20c543f` — atomic claim before provider writes |
+| H9 | High | ⏸ Deferred | Next.js 14→16 is a two-major upgrade; out of scope for this security pass — track as a dedicated framework-upgrade effort (also clears the transitive `postcss` XSS). |
+| H10 | High | ✅ Fixed | `33f39d0` — `npm audit fix` (`ws`, `qs`) |
+| H11 | High | ✅ Fixed | `3effeea` — drop mass-assignable `status` from `EventUpdate` |
+| M1 | Medium | ✅ Fixed | `33773bd` — nullable `coordinator_id` |
+| M2 | Medium | ✅ Fixed | `c28ab6f` — self-delete RLS policy (migration `20260707000001`) |
+| M3 | Medium | ✅ Fixed | `b58fedf` — revoke `clear_write_calendar_for_user` (migration `20260706000003`) |
+| M4 | Medium | ✅ Fixed | `2d15652` — JWT via HttpOnly cookie, not URL |
+| M5 | Medium | ✅ Fixed | `2d15652` — JWT off `localStorage` |
+| M6 | Medium | ◑ Partially fixed | `e0a70f0` — credential-clobbering closed via compare-and-swap on the refresh token at both write sites. **Deferred:** per-account sync serialization (advisory lock / claim flag) — an invasive schema + control-flow change to the calendar-sync integrity path; warrants explicit sign-off per the repo safety rule. H5 already mitigates the overlapping-delete effect. |
+| M7 | Medium | ✅ Fixed | `910bb7f` — Google `list_calendars` raises instead of returning `[]` |
+| M8 | Medium | ✅ Fixed | `8e90a41` — clamp wrap-around candidates to window |
+| M9 | Medium | ✅ Fixed | `8e90a41` — explicit `reference_time_utc` (determinism restored) |
+| M10 | Medium | ✅ Fixed | `a0e6294` — regeneration flag on preferred-slot delete |
+| M11 | Medium | ✅ Fixed | `cf30c71` — lowercase in `normalize_email` |
+| M12 | Medium | ✅ Fixed | `156398d` — `python-jose` 3.5.0, `fastapi`/`starlette` bump |
+| M13 | Medium | ✅ Fixed | `56b2180` — static OAuth-exchange error detail |
+| M14 | Medium | ✅ Fixed | `32dad1b` — `EmailStr` + recipient cap on finalize |
+| M15 | Medium | ✅ Fixed | `c3293f8` — proposal-notes check moved to service; 404 |
+| M16 | Medium | ✅ Fixed | `14e4c26` — align `notification_type` (enum/model/docs) |
+| M17 | Medium | ✅ Fixed | `2d15652` — cookie set server-side HttpOnly+Secure |
+| L1 | Low | ✅ Fixed (incidental) | `20c543f` — `finalized_at` now populated on finalize |
+| L17 | Low | ✅ Fixed | `33f39d0` — dev-tree advisories cleared |
+| L18 | Low | ✅ Fixed | `53b74e1` — `DATA_MODEL.md` reconciled to live schema (foundation: `a015cd3` reconciled `schema.sql` to live) |
+| L2–L16, L19, L20 | Low | ⏸ Deferred | Out of scope for this pass (posture/consistency items). L10 — the systemic `service_client`/RLS posture — is the largest structural follow-up and is best addressed incrementally. |
+
+---
+
 ## CRITICAL
 
 ### C1. OAuth calendar-connect trusts unsigned `state` as `user_id` — cross-user account linking ✓ verified · ⨯2 streams
