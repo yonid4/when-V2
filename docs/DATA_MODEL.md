@@ -16,11 +16,8 @@ One row per user. Created on first Google OAuth login.
 | avatar_url | text | From Google profile |
 | email_address | varchar(255) | Unique, used for invite matching |
 | timezone | varchar(50) | User preference, e.g. "America/Los_Angeles" |
-| primary_calendar_provider | text | Always "google" in v2 |
+| primary_calendar_provider | text | 'google' or 'microsoft' (default 'google') |
 | created_at / updated_at | timestamptz | |
-| google_auth_token | jsonb | **Legacy — do not use in v2. Remove in Sprint 7.** |
-| microsoft_auth_token | jsonb | **Legacy — do not use in v2. Remove in Sprint 7.** |
-| google_calendar_id | varchar(255) | **Legacy — do not use in v2.** |
 
 **v2 rule:** OAuth credentials live in `calendar_accounts.credentials` only.
 
@@ -36,7 +33,7 @@ Core coordination record.
 | name | text | |
 | description | text | Nullable |
 | event_type | enum | meeting / social / birthday / other |
-| coordinator_id | uuid | FK → profiles. Only this user can finalize/delete |
+| coordinator_id | uuid | FK → profiles. Only this user can finalize/delete. Nullable — set null via ON DELETE SET NULL when the coordinator deletes their account (event stays visible to participants). |
 | earliest_datetime_utc | timestamptz | Start of scheduling window |
 | latest_datetime_utc | timestamptz | End of scheduling window |
 | duration_minutes | int | Desired event length |
@@ -62,8 +59,8 @@ Junction table. One row per user per event.
 |---|---|---|
 | event_id | uuid | FK → events |
 | user_id | uuid | FK → profiles |
-| status | varchar(50) | invited / accepted / declined / maybe |
-| rsvp_status | enum | going / maybe / not_going. Nullable until set by user |
+| status | enum | invited / accepted / declined / maybe |
+| rsvp_status | enum | going / maybe / not_going / pending. Nullable until set by user |
 | can_invite | boolean | Whether this participant can invite others |
 | joined_at | timestamptz | |
 
@@ -81,7 +78,7 @@ Tracks invitations, including to users who don't have an account yet.
 | inviter_id | uuid | FK → profiles |
 | invitee_id | uuid | FK → profiles. **Nullable** — null when invitee has no account yet |
 | invitee_email | varchar(255) | Always populated. Used for matching on signup |
-| status | varchar(20) | pending / accepted / declined |
+| status | enum | pending / accepted / declined |
 | created_at / updated_at | timestamptz | |
 
 **Pending invite flow:**
@@ -175,11 +172,26 @@ Output of the scheduling algorithm. Cached and regenerated when stale.
 | start_time_utc | timestamptz | |
 | end_time_utc | timestamptz | |
 | conflicts | int | Number of participants with a conflict in this window |
+| preferred_count | int | Number of participants who marked this window preferred |
 | reasoning | text | Human-readable: "3/5 free, 2 marked as preferred" |
 | rank | int | 1 = best. Unique per event |
 | created_at | timestamptz | |
 
 **Unique constraint:** (event_id, rank)
+
+---
+
+### proposed_time_notes
+Free-text notes participants attach to a specific proposed time.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid | PK |
+| proposed_time_id | uuid | FK → proposed_times |
+| user_id | uuid | FK → profiles. The note author |
+| content | text | Note body |
+| created_at | timestamptz | |
+| event_uid | text | Denormalized event uid (the event's short uid) |
 
 ---
 
@@ -191,7 +203,7 @@ In-app inbox. One row per user per notification event.
 | id | uuid | PK |
 | user_id | uuid | FK → profiles. The recipient |
 | event_id | uuid | FK → events. Nullable |
-| notification_type | varchar(50) | See valid types below |
+| notification_type | enum | See valid types below |
 | title | text | Short display title |
 | message | text | Full message body |
 | is_read | boolean | Default false |
@@ -205,6 +217,7 @@ In-app inbox. One row per user per notification event.
 - `event_finalized` — coordinator confirmed a time
 - `event_deleted` — event was deleted
 - `event_time_changed` — finalized time was updated
+- `invite_accepted` — an invitee accepted your invitation
 
 ---
 
@@ -232,6 +245,7 @@ events
   ├── busy_slots (via participants — no direct FK)
   ├── preferred_slots (1:many)
   ├── proposed_times (1:many)
+  │     └── proposed_time_notes (1:many)
   └── notifications (1:many)
 ```
 
@@ -243,11 +257,25 @@ events
 |---|---|---|
 | profiles | Own row only | Own row only |
 | events | Coordinator or participant | Coordinator only (except status updates) |
-| event_participants | All participants of the event | Coordinator (add/remove), self (RSVP update) |
+| event_participants | All participants of the event | Coordinator adds/removes anyone; a participant may delete (leave) their own row; self-update limited to `rsvp_status` (column-level grant + WITH CHECK own row); `can_invite` changes via backend service role after coordinator check |
 | event_invitations | Inviter or invitee | Coordinator or can_invite participant |
 | calendar_accounts | Own rows only | Own rows only |
 | calendar_sources | Own rows (via account) | Own rows only |
 | busy_slots | Own rows only | Service role only (written by sync) |
 | preferred_slots | All participants of the event | Own rows only |
 | proposed_times | All participants of the event | Service role only (written by algorithm) |
+| proposed_time_notes | Participants of the event | Author writes own notes (via backend) |
 | notifications | Own rows only | Service role only (written by notification service) |
+
+### Realtime broadcasts (`realtime.messages`)
+
+DB triggers publish broadcast payloads into `realtime.messages`. Its RLS allows reads only through topic-scoped SELECT policies — there is no INSERT policy, so clients cannot send broadcasts:
+
+| Topic pattern | Readable by |
+|---|---|
+| `event:<id>:participants` | Event coordinator or participant |
+| `event:<id>:preferred_slots` | Event coordinator or participant |
+| `user:<uid>:busy_slots` | That user only |
+| `user:<uid>:notifications` | That user only |
+
+The frontend does not consume broadcasts; it subscribes via `postgres_changes` (governed by the per-table policies above) and presence.

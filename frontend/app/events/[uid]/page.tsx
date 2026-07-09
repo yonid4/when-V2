@@ -8,9 +8,9 @@ export default async function EventDetailPage({
   params: Promise<{ uid: string }>
 }) {
   const [{ uid }, cookieStore] = await Promise.all([params, cookies()])
-  const token = cookieStore.get('token')?.value
+  const session = cookieStore.get('session')?.value
 
-  if (!token) {
+  if (!session) {
     redirect('/')
   }
 

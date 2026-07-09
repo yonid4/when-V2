@@ -194,9 +194,10 @@ def test_update_rsvp_other_user_forbidden(mock_dep_svc, mock_get_authed):
 
 # ─── 5. test_update_permissions_coordinator_only ─────────────────────────────
 
+@patch("app.services.participant_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
-def test_update_permissions_coordinator_only(mock_dep_svc, mock_get_authed):
+def test_update_permissions_coordinator_only(mock_dep_svc, mock_get_authed, mock_part_svc):
     """PUT .../permissions → 403 when non-coordinator attempts it."""
     profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
@@ -214,6 +215,8 @@ def test_update_permissions_coordinator_only(mock_dep_svc, mock_get_authed):
         headers=_auth_headers(),
     )
     assert response.status_code == 403
+    # The 403 path must never reach the privileged service-client write.
+    mock_part_svc.table.assert_not_called()
 
 
 # ─── 6. test_remove_participant_self ─────────────────────────────────────────
@@ -282,10 +285,15 @@ def test_get_participants_event_not_found(mock_dep_svc, mock_get_authed):
 # ─── 9. test_update_permissions_success ──────────────────────────────────────
 
 @patch("app.services.event_service.service_client")
+@patch("app.services.participant_service.service_client")
 @patch("app.services.participant_service.get_authed_client")
 @patch("app.dependencies.service_client")
-def test_update_permissions_success(mock_dep_svc, mock_get_authed, mock_svc):
-    """PUT .../permissions → 200 when coordinator grants can_invite."""
+def test_update_permissions_success(mock_dep_svc, mock_get_authed, mock_part_svc, mock_svc):
+    """PUT .../permissions → 200 when coordinator grants can_invite.
+
+    The can_invite write must go through the service client — the column-level
+    grant restricts the authenticated role to rsvp_status only.
+    """
     profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
     mock_svc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
@@ -307,8 +315,8 @@ def test_update_permissions_success(mock_dep_svc, mock_get_authed, mock_svc):
     }
 
     db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
-    db.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
     db.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[updated_participant])
+    mock_part_svc.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
 
     response = client.put(
         "/api/events/event-uid-1/participants/target-user-id/permissions",
@@ -317,3 +325,6 @@ def test_update_permissions_success(mock_dep_svc, mock_get_authed, mock_svc):
     )
     assert response.status_code == 200
     assert response.json()["can_invite"] is True
+    # The privileged write went through the service client, not the authed one.
+    mock_part_svc.table.return_value.update.assert_called_once_with({"can_invite": True})
+    db.table.return_value.update.assert_not_called()

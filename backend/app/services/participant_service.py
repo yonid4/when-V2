@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from app.models.participant import ParticipantResponse
 from app.models.user import User
 from app.services.event_service import fetch_event_by_uid, _fetch_participants_raw
-from app.utils.supabase import get_authed_client
+from app.utils.supabase import get_authed_client, service_client
 
 
 def _require_member(participants: list[dict], user_id: str) -> None:
@@ -55,8 +55,12 @@ def update_permissions(uid: str, target_user_id: str, current_user: User, can_in
     if event['coordinator_id'] != current_user.id:
         raise HTTPException(status_code=403, detail='Only the coordinator can update permissions')
 
+    # can_invite is not updatable by the authenticated role (column-level grant
+    # restricts it to rsvp_status) and the self-only RLS policy never matched
+    # another user's row anyway. The coordinator check above is the
+    # authorization gate; the write itself goes through the service client.
     result = (
-        db.table('event_participants')
+        service_client.table('event_participants')
         .update({'can_invite': can_invite})
         .eq('event_id', event['id'])
         .eq('user_id', target_user_id)

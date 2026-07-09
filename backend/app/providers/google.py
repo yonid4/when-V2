@@ -52,10 +52,11 @@ class GoogleProvider(CalendarProvider):
         return auth_url
 
     def exchange_code(self, code: str, state: str) -> ConnectedIdentity:
-        flow = build_calendar_flow()
-        # oauthlib validates the echoed state against the flow's own state; we
-        # build a fresh flow per callback, so force it to the incoming value.
-        object.__setattr__(flow, "_state", state)
+        # Build the flow with the echoed state via oauthlib's own API rather than
+        # poking a private attribute. Cross-user CSRF protection comes from the
+        # signed-state check in the router (see app.utils.oauth_state), verified
+        # before this is ever called.
+        flow = build_calendar_flow(state=state)
         flow.fetch_token(code=code)
         credentials = flow.credentials
         assert isinstance(credentials, Credentials)
@@ -78,9 +79,12 @@ class GoogleProvider(CalendarProvider):
             items = calendar_list.get("items", [])
         except RefreshError as exc:
             raise ProviderAuthError(str(exc)) from exc
-        except Exception as exc:  # tolerate listing failures, mirror old connect
+        except Exception as exc:
+            # Surface the failure instead of returning [] — an empty list is
+            # indistinguishable from "no sources / no write calendar" to
+            # connect_account, which would silently save a broken account.
             logger.error("Failed to fetch Google calendar list: %s", exc)
-            return []
+            raise ProviderAPIError(str(exc)) from exc
         self._capture_tokens(creds, tokens)
         return [
             ProviderCalendar(

@@ -3,6 +3,21 @@ from fastapi import HTTPException, status
 from app.utils.supabase import service_client
 
 
+def ensure_proposed_time_in_event(proposed_time_id: str, event_id: str) -> None:
+    result = (
+        service_client.table("proposed_times")
+        .select("id")
+        .eq("id", proposed_time_id)
+        .eq("event_id", event_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Proposed time not found"
+        )
+
+
 def get_notes(proposed_time_id: str) -> list[dict]:
     result = (
         service_client.table("proposed_time_notes")

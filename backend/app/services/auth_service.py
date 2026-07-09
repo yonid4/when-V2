@@ -10,6 +10,7 @@ from jose import jwt
 from app.config import settings
 from app.models.user import User
 from app.utils.email import normalize_email
+from app.utils.login_code import create_login_code
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ SCOPES = [
 ]
 
 
-def build_oauth_flow() -> Flow:
+def build_oauth_flow(state: str | None = None) -> Flow:
     client_config = {
         "web": {
             "client_id": settings.google_client_id,
@@ -31,37 +32,60 @@ def build_oauth_flow() -> Flow:
             "redirect_uris": [settings.google_redirect_uri],
         }
     }
-    flow = Flow.from_client_config(client_config, scopes=SCOPES)
+    # ``state`` is threaded through oauthlib's own API (OAuth2Session state) so we
+    # never reach into private flow attributes — mirrors build_calendar_flow.
+    flow = Flow.from_client_config(client_config, scopes=SCOPES, state=state)
     flow.redirect_uri = settings.google_redirect_uri
     return flow
 
 
-def get_authorization_url() -> str:
+def get_authorization_url(state: str) -> str:
+    """Build the Google login consent URL, embedding ``state`` for CSRF binding.
+
+    The caller (auth router) generates a random ``state``, pins it to the browser
+    in an HttpOnly cookie on the redirect response, and re-checks it in the
+    callback before the code is exchanged. See app/routers/auth.py.
+    """
     flow = build_oauth_flow()
+    # include_granted_scopes=false (matching the calendar flow): login credentials
+    # are used only to fetch userinfo and are never persisted, so the incremental-
+    # auth scope union buys login nothing — and with it off, Google echoes exactly
+    # the requested scopes, so oauthlib's strict scope validation passes.
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
+        include_granted_scopes="false",
         prompt="consent",
-        state="stateless",
+        state=state,
     )
     return auth_url
 
 
-def exchange_code_and_upsert_user(code: str, state: str = "stateless") -> str:
-    """Exchange OAuth code, upsert profile, check pending invites, return JWT."""
-    flow = build_oauth_flow()
-    # Use the state value from the callback to match what we sent
-    object.__setattr__(flow, "_state", state)
-    # Disable scope change validation — calendar scopes may not be returned
-    # immediately if the consent screen is in testing mode
-    flow.oauth2session.scope = None
+def exchange_code_and_upsert_user(code: str, state: str) -> str:
+    """Exchange OAuth code, upsert profile, check pending invites, and return a
+    short-lived signed login code (NOT the session JWT).
+
+    The code is handed to the frontend via the post-login redirect and traded
+    for the real 7-day JWT at POST /auth/session/exchange, which delivers it as
+    an HttpOnly cookie. Redirecting with the JWT itself would leak a 7-day
+    credential into browser history, Referer headers, and logs (M4).
+
+    ``state`` is threaded through oauthlib's own API rather than a private
+    attribute. Login CSRF protection is enforced upstream in the router, which
+    compares the returned ``state`` against the ``oauth_login_state`` cookie set
+    in the initiating browser before this is ever called.
+
+    oauthlib's scope validation is deliberately left enabled: the login URL
+    requests include_granted_scopes=false, so Google returns exactly the
+    requested scopes and any mismatch here is genuinely suspicious.
+    """
+    flow = build_oauth_flow(state=state)
     try:
         flow.fetch_token(code=code)
     except Exception as exc:
         logger.error("fetch_token failed: %s", exc, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to exchange OAuth code: {exc}",
+            detail="oauth_exchange_failed",
         )
 
     credentials = flow.credentials
@@ -71,7 +95,37 @@ def exchange_code_and_upsert_user(code: str, state: str = "stateless") -> str:
     profile = _upsert_profile(user_info, credentials)
     _process_pending_invitations(profile["id"], normalize_email(user_info["email"]))
 
-    return _create_jwt(user_id=profile["id"], email=user_info["email"])
+    return create_login_code(profile["id"])
+
+
+def create_session_for_user(user_id: str) -> tuple[str, User]:
+    """Mint the 7-day session JWT for ``user_id`` and return it with the user.
+
+    Called by the session-exchange endpoint after the login code's signature
+    and freshness have been verified. The router sets the JWT as the HttpOnly
+    ``session`` cookie and returns only the User payload in the body.
+    """
+    result = service_client.table("profiles").select("*").eq("id", user_id).single().execute()
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    token = _create_jwt(user_id=user_id, email=result.data["email_address"])
+    return token, User(**result.data)
+
+
+# Realtime tokens are handed to JavaScript (supabase-js needs a readable JWT to
+# join channels as `authenticated`), so they must be short-lived: an XSS that
+# steals one gets 1 hour, not 7 days.
+REALTIME_TOKEN_EXPIRE_MINUTES = 60
+
+
+def create_realtime_token(user: User) -> str:
+    """Mint a short-lived JWT (same claims as the session JWT, shorter exp)
+    for the Supabase realtime client."""
+    return _create_jwt(
+        user_id=user.id,
+        email=user.email_address,
+        expires_minutes=REALTIME_TOKEN_EXPIRE_MINUTES,
+    )
 
 
 def _fetch_google_user_info(credentials: Credentials) -> dict:
@@ -93,26 +147,32 @@ def _upsert_profile(user_info: dict, credentials: Credentials) -> dict:
         profile_id = auth_user.user.id
     except Exception as e:
         logger.error("create_user failed: %s", e)
-        # User already exists in auth.users — look them up by email
-        response = service_client.auth.admin.list_users()
-        users = response if isinstance(response, list) else getattr(response, "users", [])
-        matched = next((u for u in users if u.email == user_info["email"]), None)
-        if not matched:
-            # Try fetching all pages
-            page = 1
-            while not matched:
-                page += 1
-                response = service_client.auth.admin.list_users(page=page, per_page=1000)
-                batch = response if isinstance(response, list) else getattr(response, "users", [])
-                if not batch:
-                    break
-                matched = next((u for u in batch if u.email == user_info["email"]), None)
+        # User already exists in auth.users — resolve their id through our own
+        # profiles table instead of paging auth.admin.list_users (H7: the old
+        # listing skipped users at indices ~51–1000 and was O(N) per login;
+        # gotrue 2.x has no admin get-user-by-email).
+        # profiles.id is a FK to auth.users.id and a row is guaranteed by the
+        # on_auth_user_created trigger, so the profile id IS the auth user id.
+        # The trigger stores the raw auth email; a completed login rewrites it
+        # normalized — so match either form (prefer normalized).
+        normalized_email = normalize_email(user_info["email"])
+        candidates = [normalized_email]
+        if user_info["email"] != normalized_email:
+            candidates.append(user_info["email"])
+        lookup = (
+            service_client.table("profiles")
+            .select("id, email_address")
+            .in_("email_address", candidates)
+            .execute()
+        )
+        by_email = {row["email_address"]: row for row in (lookup.data or [])}
+        matched = by_email.get(normalized_email) or by_email.get(user_info["email"])
         if not matched:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to resolve auth user",
             )
-        profile_id = matched.id
+        profile_id = matched["id"]
 
     profile_data = {
         "id": profile_id,
@@ -165,8 +225,10 @@ def _process_pending_invitations(user_id: str, email: str) -> None:
         ).execute()
 
 
-def _create_jwt(user_id: str, email: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+def _create_jwt(user_id: str, email: str, expires_minutes: int | None = None) -> str:
+    if expires_minutes is None:
+        expires_minutes = settings.jwt_expire_minutes
+    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
     payload = {
         "sub": user_id,
         "email": email,

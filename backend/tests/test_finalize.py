@@ -140,7 +140,10 @@ def _make_finalize_db(
             tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
                 data=event_row
             )
-            tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(
+            # Serves all three conditional updates finalize issues — the claim
+            # (.eq(id).eq(status='planning')), the rollback and the final write
+            # (.eq(id).eq(status='confirmed')). Non-empty data = claim won.
+            tbl.update.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
                 data=[updated_event]
             )
         elif name == "proposed_times":
@@ -434,6 +437,84 @@ def test_finalize_409_already_confirmed(mock_dep_svc, mock_svc_svc):
 
 @patch("app.services.finalize_service.service_client")
 @patch("app.dependencies.service_client")
+def test_finalize_409_when_claim_lost_to_concurrent_request(mock_dep_svc, mock_svc_svc):
+    """H8 race: the event still reads as 'planning' (fast-path guard passes) but
+    the atomic claim UPDATE ... eq(status='planning') matches zero rows because
+    a concurrent finalize got there first — 409 event_already_finalized, and the
+    provider is NEVER called, so no duplicate calendar event, no duplicate
+    notifications, and no final write."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row()  # status='planning' → passes the fast-path guard
+    proposed_time = _make_proposed_time_row()
+    update_payloads: list[dict] = []
+    notifications_inserted: list = []
+
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=event_row
+            )
+
+            def capture_update(payload):
+                update_payloads.append(payload)
+                chain = MagicMock()
+                # Zero rows returned: another request already claimed the event.
+                chain.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+                return chain
+
+            tbl.update.side_effect = capture_update
+        elif name == "proposed_times":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=proposed_time
+            )
+        elif name == "event_participants":
+            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[]
+            )
+        elif name == "calendar_sources":
+            tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[_make_write_cal_row()]
+            )
+        elif name == "notifications":
+            def capture_insert(data):
+                notifications_inserted.append(data)
+                chain = MagicMock()
+                chain.execute.return_value = MagicMock(data=[])
+                return chain
+
+            tbl.insert.side_effect = capture_insert
+        return tbl
+
+    mock_svc_svc.table.side_effect = make_table
+
+    with _patched_provider() as prov:
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "event_already_finalized"
+    assert prov.create_event.call_count == 0
+    assert notifications_inserted == []
+    # Only the claim attempt was issued — no rollback, no final write.
+    assert update_payloads == [{"status": "confirmed"}]
+
+
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
 def test_finalize_422_no_write_calendar(mock_dep_svc, mock_svc_svc):
     """Returns 422 when coordinator has no write calendar configured."""
     mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
@@ -494,6 +575,86 @@ def test_finalize_502_calendar_api_error(mock_dep_svc, mock_svc_svc):
         )
     assert response.status_code == 502
     assert response.json()["detail"] == "calendar_create_failed"
+
+
+@patch("app.services.finalize_service.service_client")
+@patch("app.dependencies.service_client")
+def test_finalize_provider_failure_rolls_back_claim(mock_dep_svc, mock_svc_svc):
+    """If the coordinator's calendar write fails AFTER the claim, the claim is
+    rolled back (confirmed → planning, guarded on status='confirmed') so the
+    event is not stuck 'confirmed' with no calendar event — and the original
+    502 still surfaces."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    event_row = _make_event_row()
+    proposed_time = _make_proposed_time_row()
+    update_calls: list[dict] = []
+
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=event_row
+            )
+
+            def capture_update(payload):
+                entry = {"payload": payload, "filters": []}
+                update_calls.append(entry)
+                chain = MagicMock()
+
+                def record_eq(column, value):
+                    entry["filters"].append((column, value))
+                    return chain
+
+                chain.eq.side_effect = record_eq
+                chain.execute.return_value = MagicMock(data=[{**event_row, **payload}])
+                return chain
+
+            tbl.update.side_effect = capture_update
+        elif name == "proposed_times":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=proposed_time
+            )
+        elif name == "event_participants":
+            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[]
+            )
+        elif name == "calendar_sources":
+            tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[_make_write_cal_row()]
+            )
+        return tbl
+
+    mock_svc_svc.table.side_effect = make_table
+
+    with _patched_provider(error=Exception("Calendar API failed")):
+        response = client.post(
+            "/api/events/event-uid-1/finalize",
+            json={
+                "proposed_time_id": "pt-uuid-1",
+                "name": "Team Lunch",
+                "note": "",
+                "excluded_user_ids": [],
+                "extra_emails": [],
+                "location": "",
+                "video_call_link": "",
+            },
+            headers=_auth_headers(),
+        )
+    assert response.status_code == 502
+    assert response.json()["detail"] == "calendar_create_failed"
+    # Exactly two updates: the optimistic claim, then the compensating rollback.
+    assert [c["payload"] for c in update_calls] == [
+        {"status": "confirmed"},
+        {"status": "planning"},
+    ]
+    # The claim only fires while the event is still planning...
+    assert ("status", "planning") in update_calls[0]["filters"]
+    # ...and the rollback is guarded so a concurrent cancel is not clobbered.
+    assert ("id", event_row["id"]) in update_calls[1]["filters"]
+    assert ("status", "confirmed") in update_calls[1]["filters"]
 
 
 @patch("app.services.finalize_service.service_client")
@@ -819,7 +980,8 @@ def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc):
             def capture_update(payload):
                 captured_update.update(payload)
                 m = MagicMock()
-                m.eq.return_value.execute.return_value = MagicMock(
+                # Both the claim and the final write chain two .eq() filters.
+                m.eq.return_value.eq.return_value.execute.return_value = MagicMock(
                     data=[{**event_row, "status": "confirmed", "name": payload.get("name", event_row["name"])}]
                 )
                 return m
@@ -862,6 +1024,8 @@ def test_finalize_name_differs_updates_event_name(mock_dep_svc, mock_svc_svc):
     assert response.status_code == 200
     assert captured_update.get("name") == "Renamed Lunch"
     assert captured_update.get("calendar_event_id") == "cal-1"
+    # The final write stamps finalized_at (audit L1: it was never populated).
+    assert captured_update.get("finalized_at") is not None
 
 
 # ─── Direct-write to participants' own calendars (cross-provider) ─────────────
@@ -957,6 +1121,71 @@ def test_finalize_participant_write_failure_does_not_abort(mock_dep_svc, mock_sv
         )
     assert response.status_code == 200
     mock_mark.assert_called_once_with("bob-acct")
+
+
+# ─── CAS credentials persistence (M6) ────────────────────────────────────────
+
+@patch("app.services.finalize_service.get_provider")
+def test_create_event_applies_cas_filter_on_rotated_credentials(mock_get_provider):
+    """M6: when create_event rotates credentials (Microsoft rotates its refresh
+    token on every refresh), the persist is a compare-and-swap keyed on the
+    ORIGINAL refresh token — so a concurrently rotated token is never clobbered."""
+    from app.providers.base import EventPayload
+    from app.services.finalize_service import _create_event_on_write_calendar
+
+    write_cal_row = {
+        "id": "src-1",
+        "calendar_id": "primary",
+        "calendar_accounts": {
+            "id": "acct-1",
+            "user_id": "u1",
+            "provider": "microsoft",
+            "credentials": {"access_token": "old", "refresh_token": "r1"},
+        },
+    }
+
+    prov = MagicMock()
+
+    def _create(tokens, calendar_id, payload):
+        tokens.update({"access_token": "new", "refresh_token": "r2"})
+        return "evt-1"
+
+    prov.create_event.side_effect = _create
+    mock_get_provider.return_value = prov
+
+    update_calls = []
+
+    def capture_update(payload):
+        entry = {"payload": payload, "eq_calls": []}
+        update_calls.append(entry)
+        chain = MagicMock()
+
+        def record_eq(column, value):
+            entry["eq_calls"].append((column, value))
+            return chain
+
+        chain.eq.side_effect = record_eq
+        chain.execute.return_value = MagicMock(data=[])
+        return chain
+
+    db = MagicMock()
+    db.table.return_value.update.side_effect = capture_update
+
+    payload = EventPayload(
+        summary="s",
+        description="",
+        start_utc="2026-01-01T00:00:00+00:00",
+        end_utc="2026-01-01T01:00:00+00:00",
+    )
+
+    result = _create_event_on_write_calendar(db, write_cal_row, payload)
+
+    assert result == "evt-1"
+    cred_calls = [c for c in update_calls if "credentials" in c["payload"]]
+    assert len(cred_calls) == 1
+    assert ("id", "acct-1") in cred_calls[0]["eq_calls"]
+    assert ("credentials->>refresh_token", "r1") in cred_calls[0]["eq_calls"]
+    assert cred_calls[0]["payload"]["credentials"]["refresh_token"] == "r2"
 
 
 # ─── GET /api/events/{uid}/finalize/status ────────────────────────────────────

@@ -410,7 +410,11 @@ def test_generate_proposals_returns_empty_when_event_not_found():
     db = MagicMock()
     db.table.side_effect = make_table
 
-    result = generate_proposals("nonexistent-id", db=db)
+    result = generate_proposals(
+        "nonexistent-id",
+        reference_time_utc=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        db=db,
+    )
     assert result == []
 
 
@@ -459,7 +463,11 @@ def test_generate_proposals_scores_conflicts():
     db = MagicMock()
     db.table.side_effect = make_table
 
-    generate_proposals("event-db-id-1", db=db)
+    generate_proposals(
+        "event-db-id-1",
+        reference_time_utc=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        db=db,
+    )
 
     # Verify insert was called and the rank-1 row has 0 conflicts (conflict-free slots ranked first)
     call_args = proposed_times_mock.insert.call_args
@@ -512,7 +520,11 @@ def test_generate_proposals_preferred_count_scored():
     db = MagicMock()
     db.table.side_effect = make_table
 
-    generate_proposals("event-db-id-1", db=db)
+    generate_proposals(
+        "event-db-id-1",
+        reference_time_utc=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        db=db,
+    )
 
     call_args = proposed_times_mock.insert.call_args
     assert call_args is not None
@@ -557,8 +569,123 @@ def test_generate_proposals_updates_event_metadata():
     db = MagicMock()
     db.table.side_effect = make_table
 
-    generate_proposals("event-db-id-1", db=db)
+    generate_proposals(
+        "event-db-id-1",
+        reference_time_utc=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        db=db,
+    )
 
     update_call = events_mock.update.call_args[0][0]
     assert update_call["proposals_needs_regeneration"] is False
     assert "proposals_last_generated_at" in update_call
+
+
+# ─── Regression: M8 wrap-around window upper-bound clamp ──────────────────────
+
+def test_generate_proposals_clamps_wraparound_candidates_to_window():
+    """M8 regression: a wrap-around (overnight) window must never propose a slot
+    whose meeting extends past latest_datetime_utc.
+
+    Window Jul 6 20:00 → Jul 10 03:00 UTC is a wrap window (20:00–03:00). The
+    last day (Jul 10) would otherwise emit an evening segment starting 20:00,
+    which lies entirely after the 03:00 upper bound. Duration is 240 min so that
+    only in-window nightly slots exist and, without the clamp, the spurious
+    Jul 10 evening candidate ranks into the persisted top-5 — making this a true
+    regression test rather than one masked by top-5 truncation. Every inserted
+    row's end must be <= latest_datetime_utc.
+    """
+    latest_iso = "2026-07-10T03:00:00+00:00"
+    duration_min = 240
+    event_row = {
+        "id": "event-db-id-1",
+        "duration_minutes": duration_min,
+        "earliest_datetime_utc": "2026-07-06T20:00:00+00:00",
+        "latest_datetime_utc": latest_iso,
+    }
+
+    proposed_times_mock = MagicMock()
+    proposed_times_mock.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+    proposed_times_mock.insert.return_value.execute.return_value = MagicMock(data=[])
+
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+            tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+        elif name == "event_participants":
+            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+        elif name == "busy_slots":
+            tbl.select.return_value.in_.return_value.lt.return_value.gt.return_value.execute.return_value = MagicMock(data=[])
+        elif name == "preferred_slots":
+            tbl.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(data=[])
+        elif name == "proposed_times":
+            return proposed_times_mock
+        return tbl
+
+    db = MagicMock()
+    db.table.side_effect = make_table
+
+    generate_proposals(
+        "event-db-id-1",
+        reference_time_utc=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        db=db,
+    )
+
+    call_args = proposed_times_mock.insert.call_args
+    assert call_args is not None
+    inserted = call_args[0][0]
+    assert inserted, "expected at least one in-window candidate"
+
+    latest_dt = datetime.fromisoformat(latest_iso)
+    duration = timedelta(minutes=duration_min)
+    for row in inserted:
+        start = datetime.fromisoformat(row["start_time_utc"])
+        end = datetime.fromisoformat(row["end_time_utc"])
+        assert end <= latest_dt, f"candidate {row['start_time_utc']} extends past window end"
+        assert start + duration <= latest_dt
+
+
+# ─── Regression: M9 determinism ──────────────────────────────────────────────
+
+def test_generate_proposals_is_deterministic_for_fixed_reference_time():
+    """M9 regression: identical inputs and the same reference_time_utc must yield
+    byte-identical persisted candidate rows, proving no wall-clock dependence."""
+    event_row = {
+        "id": "event-db-id-1",
+        "duration_minutes": 60,
+        "earliest_datetime_utc": "2026-04-10T09:00:00+00:00",
+        "latest_datetime_utc": "2026-04-10T17:00:00+00:00",
+    }
+    reference_time = datetime(2026, 4, 1, tzinfo=timezone.utc)
+
+    def run_once() -> list[dict]:
+        proposed_times_mock = MagicMock()
+        proposed_times_mock.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+        proposed_times_mock.insert.return_value.execute.return_value = MagicMock(data=[])
+
+        def make_table(name):
+            tbl = MagicMock()
+            if name == "events":
+                tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+                tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+            elif name == "event_participants":
+                tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+            elif name == "busy_slots":
+                tbl.select.return_value.in_.return_value.lt.return_value.gt.return_value.execute.return_value = MagicMock(data=[])
+            elif name == "preferred_slots":
+                tbl.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(data=[])
+            elif name == "proposed_times":
+                return proposed_times_mock
+            return tbl
+
+        db = MagicMock()
+        db.table.side_effect = make_table
+        generate_proposals("event-db-id-1", reference_time_utc=reference_time, db=db)
+        return proposed_times_mock.insert.call_args[0][0]
+
+    first = run_once()
+    second = run_once()
+
+    assert first == second
+    assert [r["start_time_utc"] for r in first] == [r["start_time_utc"] for r in second]
+    assert [r["end_time_utc"] for r in first] == [r["end_time_utc"] for r in second]

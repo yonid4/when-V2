@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.models.event import EventCreate, EventUpdate, EventResponse
 from app.models.participant import ParticipantResponse
@@ -378,6 +379,70 @@ def test_update_event_non_coordinator_forbidden(mock_get_client):
     assert exc_info.value.status_code == 403
 
 
+# ─── 9b. update_event must not mass-assign status (H11) ──────────────────────
+#
+# Status transitions are owned by dedicated flows (finalize_service →
+# 'confirmed', delete_event → cancellation). A plain PATCH carrying
+# status='confirmed' used to mark the event confirmed with no finalized
+# times and no calendar event — EventUpdate must not expose the field.
+
+def test_event_update_model_drops_status():
+    """A PATCH body with `status` parses (stale clients stay compatible) but
+    the field is dropped — it can never reach the DB update payload."""
+    assert "status" not in EventUpdate.model_fields
+    data = EventUpdate.model_validate({"name": "X", "status": "confirmed"})
+    assert "status" not in data.model_dump(exclude_none=True)
+
+
+@patch("app.services.event_service.get_authed_client")
+def test_update_event_ignores_status_and_stays_planning(mock_get_client):
+    """PATCH with legitimate fields + status='confirmed': the update proceeds
+    without status and the event remains 'planning'."""
+    user = _make_user()
+    db = _mock_db()
+    mock_get_client.return_value = db
+
+    event_row = _make_event_row()
+    updated_row = _make_event_row(name="Updated Name")  # status stays 'planning'
+
+    events_table = db.table("events")
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+    events_table.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[updated_row])
+
+    ep_table = db.table("event_participants")
+    ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    data = EventUpdate.model_validate({"name": "Updated Name", "status": "confirmed"})
+    result = event_service.update_event("abc123def456", data, user)
+
+    update_call_data = events_table.update.call_args[0][0]
+    assert "status" not in update_call_data
+    assert result.status == "planning"
+
+
+@patch("app.services.event_service.get_authed_client")
+def test_update_event_status_only_patch_is_noop(mock_get_client):
+    """PATCH carrying ONLY status: nothing survives parsing, so no DB update
+    is issued and the event stays 'planning'."""
+    user = _make_user()
+    db = _mock_db()
+    mock_get_client.return_value = db
+
+    event_row = _make_event_row()
+
+    events_table = db.table("events")
+    events_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+
+    ep_table = db.table("event_participants")
+    ep_table.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    data = EventUpdate.model_validate({"status": "confirmed"})
+    result = event_service.update_event("abc123def456", data, user)
+
+    events_table.update.assert_not_called()
+    assert result.status == "planning"
+
+
 # ─── 10. delete_event — sends notifications and deletes ──────────────────────
 
 @patch("app.utils.notifications.service_client")
@@ -409,3 +474,57 @@ def test_delete_event_notifies_participants(mock_get_client, mock_notif_svc):
     assert len(notif_insert_data) == 2
     assert all(n["notification_type"] == "event_deleted" for n in notif_insert_data)
     assert {n["user_id"] for n in notif_insert_data} == {"user-2", "user-3"}
+
+
+# ─── 11. video_call_link validation (stored-XSS guard, H1) ───────────────────
+
+def _valid_create_kwargs(**overrides) -> dict:
+    """Minimal valid EventCreate kwargs; override individual fields per test."""
+    defaults = {
+        "name": "Team Standup",
+        "event_type": "meeting",
+        "earliest_datetime_utc": datetime(2026, 4, 10, 9, tzinfo=timezone.utc),
+        "latest_datetime_utc": datetime(2026, 4, 10, 17, tzinfo=timezone.utc),
+        "duration_minutes": 30,
+    }
+    return {**defaults, **overrides}
+
+
+def test_event_create_rejects_javascript_video_call_link():
+    """A javascript: scheme is rejected (422) — it would be a stored-XSS href."""
+    with pytest.raises(ValidationError):
+        EventCreate(**_valid_create_kwargs(video_call_link="javascript:alert(1)"))
+
+
+def test_event_update_rejects_javascript_video_call_link():
+    with pytest.raises(ValidationError):
+        EventUpdate(video_call_link="javascript:alert(1)")
+
+
+def test_event_create_accepts_https_video_call_link():
+    data = EventCreate(**_valid_create_kwargs(video_call_link="https://meet.example.com/x"))
+    assert data.video_call_link == "https://meet.example.com/x"
+
+
+def test_event_update_accepts_https_video_call_link():
+    data = EventUpdate(video_call_link="https://meet.example.com/x")
+    assert data.video_call_link == "https://meet.example.com/x"
+
+
+def test_event_create_accepts_none_video_call_link():
+    data = EventCreate(**_valid_create_kwargs(video_call_link=None))
+    assert data.video_call_link is None
+
+
+def test_event_update_accepts_none_video_call_link():
+    data = EventUpdate(video_call_link=None)
+    assert data.video_call_link is None
+
+
+def test_row_to_event_response_allows_null_coordinator_id():
+    """M1: the DB column is nullable (ON DELETE SET NULL — account deletion
+    anonymizes confirmed/cancelled events that stay visible to participants).
+    Mapping such a row must not raise a ValidationError (which would 500)."""
+    row = _make_event_row(coordinator_id=None)
+    response = event_service._row_to_event_response(row, [])
+    assert response.coordinator_id is None

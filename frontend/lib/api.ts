@@ -4,22 +4,16 @@ import { useAuthStore } from '@/stores/authStore'
 
 const API_BASE = '/api'
 
-function getToken(): string | null {
-  if (typeof window === 'undefined') return null
-  return localStorage.getItem('token')
-}
-
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 async function request<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
-  const token = getToken()
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
 
+  // Auth rides on the HttpOnly `session` cookie, sent automatically on these
+  // same-origin requests and forwarded to the backend by the /api proxy. No
+  // token ever touches JavaScript here.
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
@@ -56,4 +50,18 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   delete: <T>(path: string) => request<T>('DELETE', path),
+}
+
+/**
+ * Fire-and-forget logout — clears the HttpOnly session cookie server-side.
+ *
+ * Deliberately not `request()`: `keepalive` lets the call outlive the page
+ * navigation that typically follows clearAuth(), so a stale session cookie is
+ * reliably cleared (otherwise middleware's cookie-presence check and an
+ * expired token's 401s can redirect-loop). Never throws.
+ */
+export function logout(): Promise<void> {
+  return fetch(`${API_BASE}/auth/logout`, { method: 'POST', keepalive: true })
+    .then(() => undefined)
+    .catch(() => undefined)
 }

@@ -8,7 +8,7 @@ class NotificationResponse(BaseModel):
     user_id: str
     event_id: str | None
     event_uid: str | None
-    notification_type: Literal['event_invitation', 'invite_accepted', 'event_finalized', 'event_deleted']
+    notification_type: Literal['event_invitation', 'invite_accepted', 'event_finalized', 'event_deleted', 'event_time_changed']
     title: str
     message: str
     is_read: bool

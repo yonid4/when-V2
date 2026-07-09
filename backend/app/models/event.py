@@ -1,11 +1,30 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, field_validator
 
 from app.models.participant import ParticipantResponse  # noqa: F401 — re-exported for callers
 
 EventType = Literal['meeting', 'social', 'birthday', 'other']
 EventStatus = Literal['planning', 'confirmed', 'cancelled']
+
+
+def validate_video_call_link(value: str | None) -> str | None:
+    """Shared validator for user-supplied video-call links.
+
+    A link is later rendered into an anchor `href` on the frontend, so a
+    `javascript:` (or any non-http) scheme would be a stored-XSS sink. This is
+    the server-side security boundary: `None`/empty means "no link"; any other
+    value must be an http(s) URL with a network location. Rejection raises a
+    ValueError, which Pydantic surfaces as a natural 422 at the router.
+    """
+    if value is None or not value.strip():
+        return value
+    parsed = urlparse(value)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        raise ValueError('video_call_link must be an http(s) URL')
+    return value
 
 
 class EventCreate(BaseModel):
@@ -18,6 +37,8 @@ class EventCreate(BaseModel):
     location: str | None = None
     video_call_link: str | None = None
 
+    _validate_video_call_link = field_validator('video_call_link')(validate_video_call_link)
+
 
 class EventUpdate(BaseModel):
     name: str | None = None
@@ -28,7 +49,14 @@ class EventUpdate(BaseModel):
     duration_minutes: int | None = None
     location: str | None = None
     video_call_link: str | None = None
-    status: EventStatus | None = None
+    # NOTE: no `status` field (H11). Status transitions are state-machine
+    # moves owned by dedicated flows — finalize_service sets 'confirmed'
+    # (with finalized_* + calendar write), delete_event handles cancellation.
+    # Exposing status here let a plain PATCH mark an event 'confirmed' with
+    # no finalized times and no calendar event. Unknown body fields are
+    # ignored by Pydantic, so stale clients sending `status` are harmless.
+
+    _validate_video_call_link = field_validator('video_call_link')(validate_video_call_link)
 
 
 class EventResponse(BaseModel):
@@ -37,7 +65,7 @@ class EventResponse(BaseModel):
     name: str
     description: str | None
     event_type: EventType
-    coordinator_id: str
+    coordinator_id: str | None
     earliest_datetime_utc: datetime
     latest_datetime_utc: datetime
     duration_minutes: int

@@ -488,10 +488,10 @@ CREATE TABLE IF NOT EXISTS "public"."calendar_sources" (
     "calendar_name" character varying(255) NOT NULL,
     "is_enabled" boolean DEFAULT true NOT NULL,
     "is_write_calendar" boolean DEFAULT false NOT NULL,
-    "is_writable" boolean DEFAULT true NOT NULL,
     "color" character varying(20),
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "is_writable" boolean DEFAULT true NOT NULL,
     CONSTRAINT "calendar_sources_write_requires_writable" CHECK (("is_writable" OR NOT "is_write_calendar"))
 );
 
@@ -1035,6 +1035,10 @@ CREATE POLICY "event_participants_delete" ON "public"."event_participants" FOR D
 
 
 
+CREATE POLICY "event_participants_delete_self" ON "public"."event_participants" FOR DELETE USING (("user_id" = "auth"."uid"()));
+
+
+
 CREATE POLICY "event_participants_insert" ON "public"."event_participants" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."events"
   WHERE (("events"."id" = "event_participants"."event_id") AND ("events"."coordinator_id" = "auth"."uid"())))));
@@ -1045,7 +1049,7 @@ CREATE POLICY "event_participants_select" ON "public"."event_participants" FOR S
 
 
 
-CREATE POLICY "event_participants_update_self" ON "public"."event_participants" FOR UPDATE USING (("user_id" = "auth"."uid"()));
+CREATE POLICY "event_participants_update_self" ON "public"."event_participants" FOR UPDATE USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
 
 
 
@@ -1180,11 +1184,30 @@ ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."proposed_time_not
 
 
 -- RLS policies for realtime.messages (pg_dump cannot capture cross-schema objects)
-CREATE POLICY "authenticated can receive broadcasts"
-  ON "realtime"."messages" FOR SELECT TO "authenticated" USING (true);
+-- Broadcasts are readable only via topic-scoped SELECT policies; there is no
+-- INSERT policy, so clients cannot send broadcasts
+-- (see supabase/migrations/20260706000001_scope_realtime_broadcast_policies.sql).
+CREATE POLICY "event coordinator can read participants topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:participants'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."events" "e"
+  WHERE (("e"."coordinator_id" = "auth"."uid"()) AND ("e"."id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
 
-CREATE POLICY "authenticated can send broadcasts"
-  ON "realtime"."messages" FOR INSERT TO "authenticated" WITH CHECK (true);
+CREATE POLICY "event coordinator can read preferred slots topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:preferred_slots'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."events" "e"
+  WHERE (("e"."coordinator_id" = "auth"."uid"()) AND ("e"."id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
+
+CREATE POLICY "event participants can read participants topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:participants'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."event_participants" "ep"
+  WHERE (("ep"."user_id" = "auth"."uid"()) AND ("ep"."event_id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
+
+CREATE POLICY "event participants can read preferred slots topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING ((("topic" ~~ 'event:%:preferred_slots'::"text") AND (EXISTS ( SELECT 1
+   FROM "public"."event_participants" "ep"
+  WHERE (("ep"."user_id" = "auth"."uid"()) AND ("ep"."event_id" = ("split_part"("messages"."topic", ':'::"text", 2))::"uuid"))))));
+
+ALTER TABLE "realtime"."messages" ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user can read busy_slots topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING (("topic" = (('user:'::"text" || ("auth"."uid"())::"text") || ':busy_slots'::"text")));
+
+CREATE POLICY "user can read notifications topic" ON "realtime"."messages" FOR SELECT TO "authenticated" USING (("topic" = (('user:'::"text" || ("auth"."uid"())::"text") || ':notifications'::"text")));
 
 
 
@@ -1376,9 +1399,16 @@ GRANT ALL ON FUNCTION "public"."busy_slots_broadcast_trigger"() TO "service_role
 
 
 
-GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "anon";
-GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "authenticated";
+-- SECURITY DEFINER with no internal auth check: executable by service_role only
+-- (see supabase/migrations/20260706000003_revoke_clear_write_calendar_grants.sql).
+REVOKE ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."clear_write_calendar_for_user"("p_user_id" "uuid", "p_exclude_source_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."enforce_single_write_calendar"() TO "anon";
+GRANT ALL ON FUNCTION "public"."enforce_single_write_calendar"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."enforce_single_write_calendar"() TO "service_role";
 
 
 
@@ -1469,8 +1499,11 @@ GRANT ALL ON TABLE "public"."event_invitations" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."event_participants" TO "anon";
-GRANT ALL ON TABLE "public"."event_participants" TO "authenticated";
+-- authenticated may UPDATE only rsvp_status; anon holds no UPDATE at all
+-- (see supabase/migrations/20260706000002_restrict_event_participants_self_update.sql).
+GRANT INSERT,SELECT,DELETE,TRUNCATE,REFERENCES,TRIGGER ON TABLE "public"."event_participants" TO "anon";
+GRANT INSERT,SELECT,DELETE,TRUNCATE,REFERENCES,TRIGGER ON TABLE "public"."event_participants" TO "authenticated";
+GRANT UPDATE("rsvp_status") ON TABLE "public"."event_participants" TO "authenticated";
 GRANT ALL ON TABLE "public"."event_participants" TO "service_role";
 
 

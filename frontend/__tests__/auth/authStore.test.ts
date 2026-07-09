@@ -1,20 +1,31 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act } from 'react'
+
+// ── Mock lib/api (clearAuth fires the logout endpoint) ────────────────────────
+const mockLogout = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/lib/api', () => ({
+  logout: () => mockLogout(),
+  api: {},
+}))
+
+// ── Mock lib/supabase (realtime re-auth + token cache reset) ──────────────────
+const mockSetAuth = vi.fn()
+const mockResetRealtimeTokenCache = vi.fn()
+vi.mock('@/lib/supabase', () => ({
+  supabase: { realtime: { setAuth: () => mockSetAuth() } },
+  resetRealtimeTokenCache: () => mockResetRealtimeTokenCache(),
+}))
+
 import { useAuthStore } from '@/stores/authStore'
 import type { User } from '@/types'
 
-// authStore uses document.cookie — mock it for jsdom
-const cookieStore: Record<string, string> = {}
-
 beforeEach(() => {
+  vi.clearAllMocks()
+  localStorage.clear()
   // Reset Zustand store between tests
   act(() => {
-    useAuthStore.setState({ user: null, token: null })
+    useAuthStore.setState({ user: null })
   })
-  // Clear localStorage
-  localStorage.clear()
-  // Reset cookie mock state
-  Object.keys(cookieStore).forEach((k) => delete cookieStore[k])
 })
 
 function makeUser(overrides: Partial<User> = {}): User {
@@ -32,51 +43,46 @@ function makeUser(overrides: Partial<User> = {}): User {
 }
 
 describe('authStore', () => {
-  it('initial state has no user and no token', () => {
-    const state = useAuthStore.getState()
-    expect(state.user).toBeNull()
-    expect(state.token).toBeNull()
+  it('initial state has no user', () => {
+    expect(useAuthStore.getState().user).toBeNull()
   })
 
-  it('setUser() sets the user and token in store', () => {
+  it('setUser() sets the user and refreshes the realtime token path', () => {
     const user = makeUser()
     act(() => {
-      useAuthStore.getState().setUser(user, 'jwt-token-abc')
+      useAuthStore.getState().setUser(user)
     })
-    const state = useAuthStore.getState()
-    expect(state.user).toEqual(user)
-    expect(state.token).toBe('jwt-token-abc')
+    expect(useAuthStore.getState().user).toEqual(user)
+    // Old realtime token dropped, then the client pulls a fresh one
+    expect(mockResetRealtimeTokenCache).toHaveBeenCalledOnce()
+    expect(mockSetAuth).toHaveBeenCalledOnce()
   })
 
-  it('clearAuth() resets state to initial', () => {
-    const user = makeUser()
+  it('clearAuth() resets state, calls the logout endpoint, and re-auths realtime', () => {
     act(() => {
-      useAuthStore.getState().setUser(user, 'jwt-token-abc')
+      useAuthStore.getState().setUser(makeUser())
     })
+    vi.clearAllMocks()
     act(() => {
       useAuthStore.getState().clearAuth()
     })
-    const state = useAuthStore.getState()
-    expect(state.user).toBeNull()
-    expect(state.token).toBeNull()
+    expect(useAuthStore.getState().user).toBeNull()
+    // The HttpOnly session cookie can only be cleared server-side
+    expect(mockLogout).toHaveBeenCalledOnce()
+    expect(mockResetRealtimeTokenCache).toHaveBeenCalledOnce()
+    expect(mockSetAuth).toHaveBeenCalledOnce()
   })
 
-  it('token persists in localStorage after setUser()', () => {
-    const user = makeUser()
+  it('never persists a token: no localStorage writes, no JS-readable cookie', () => {
     act(() => {
-      useAuthStore.getState().setUser(user, 'persisted-token')
+      useAuthStore.getState().setUser(makeUser())
     })
-    expect(localStorage.getItem('token')).toBe('persisted-token')
-  })
-
-  it('token is cleared from localStorage after clearAuth()', () => {
-    const user = makeUser()
-    act(() => {
-      useAuthStore.getState().setUser(user, 'persisted-token')
-    })
+    expect(localStorage.getItem('token')).toBeNull()
+    expect(document.cookie).not.toContain('token=')
     act(() => {
       useAuthStore.getState().clearAuth()
     })
     expect(localStorage.getItem('token')).toBeNull()
+    expect(document.cookie).not.toContain('token=')
   })
 })

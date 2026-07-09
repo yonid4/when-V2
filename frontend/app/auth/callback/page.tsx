@@ -14,22 +14,20 @@ export default function AuthCallbackPage() {
   const setUser = useAuthStore((s) => s.setUser)
 
   useEffect(() => {
-    const token = searchParams.get('token')
-    if (!token) {
+    // The backend redirects here with a short-lived signed login code — never
+    // the session JWT. Exchanging it through the same-origin /api proxy lets
+    // the backend set the HttpOnly `session` cookie on this origin; no token
+    // ever touches JavaScript, localStorage, or a JS-readable cookie.
+    const code = searchParams.get('code')
+    if (!code) {
       router.replace('/')
       return
     }
 
-    // Store token first (setUser writes to localStorage + cookie)
-    // Then fetch the user profile to populate the store
-    localStorage.setItem('token', token)
-    // Also set cookie immediately so middleware can read it on redirect
-    document.cookie = `token=${token}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`
-
     api
-      .get<User>('/auth/me')
+      .post<User>('/auth/session/exchange', { code })
       .then((user) => {
-        setUser(user, token)
+        setUser(user)
         router.replace('/dashboard')
       })
       .catch(() => {

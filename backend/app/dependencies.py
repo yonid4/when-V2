@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
@@ -6,13 +6,30 @@ from app.config import settings
 from app.models.user import User
 from app.utils.supabase import service_client
 
-bearer_scheme = HTTPBearer()
+# auto_error=False so a missing Authorization header falls through to the
+# session cookie instead of an immediate 403.
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    session: str | None = Cookie(default=None),
 ) -> User:
-    token = credentials.credentials
+    """Resolve the authenticated user from a JWT.
+
+    Accepts the token from either source, in this order:
+    1. ``Authorization: Bearer`` header — explicit, used by tests and any
+       non-browser client; takes precedence when both are present.
+    2. ``session`` HttpOnly cookie — the browser path (set by
+       /auth/session/exchange, forwarded by the frontend /api proxy).
+    """
+    token = credentials.credentials if credentials else session
+    if not token:
+        # Same status/detail HTTPBearer(auto_error=True) used, so existing
+        # clients and tests see an unchanged contract for missing credentials.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authenticated"
+        )
     try:
         payload = jwt.decode(
             token,

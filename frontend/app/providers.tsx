@@ -2,25 +2,43 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
+import { usePathname } from 'next/navigation'
 import { useAuthStore } from '@/stores/authStore'
 import { api } from '@/lib/api'
 import { User } from '@/types'
 
+// Keep in sync with PUBLIC_PATHS in middleware.ts. On these paths a visitor
+// may legitimately be unauthenticated, so probing /auth/me would just produce
+// a guaranteed 401 (and its clearAuth/redirect side effects) for every
+// anonymous visitor. Everywhere else, middleware has already verified the
+// session cookie exists, so rehydration is expected to succeed.
+const PUBLIC_PATHS = ['/', '/auth/callback', '/privacy', '/terms']
+
 function AuthRehydrator() {
+  const pathname = usePathname()
   const setUser = useAuthStore((s) => s.setUser)
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const user = useAuthStore((s) => s.user)
 
   useEffect(() => {
+    // One-time migration hygiene: purge credentials persisted by the previous
+    // localStorage/JS-cookie auth. Any token there is still XSS-readable until
+    // removed. Safe to run repeatedly; no-ops once clean.
+    localStorage.removeItem('token')
+    document.cookie = 'token=; Max-Age=0; path=/'
+  }, [])
+
+  useEffect(() => {
     if (user) return
-    const token = localStorage.getItem('token')
-    if (!token) return
+    if (PUBLIC_PATHS.includes(pathname)) return
+    // The HttpOnly session cookie (invisible to JS by design) authenticates
+    // this call via the /api proxy.
     api.get<User>('/auth/me').then((fetchedUser) => {
-      setUser(fetchedUser, token)
+      setUser(fetchedUser)
     }).catch(() => {
       clearAuth()
     })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return null
 }

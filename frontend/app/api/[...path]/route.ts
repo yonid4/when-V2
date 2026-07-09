@@ -12,6 +12,12 @@ async function proxyRequest(req: NextRequest, params: { path: string[] }): Promi
   if (authorization) {
     headers.set('authorization', authorization)
   }
+  // Forward cookies so the backend can authenticate via the HttpOnly `session`
+  // cookie. Route handlers (unlike rewrites) must do this explicitly.
+  const cookie = req.headers.get('cookie')
+  if (cookie) {
+    headers.set('cookie', cookie)
+  }
   const contentType = req.headers.get('content-type')
   if (contentType) {
     headers.set('content-type', contentType)
@@ -32,6 +38,15 @@ async function proxyRequest(req: NextRequest, params: { path: string[] }): Promi
   const backendContentType = backendRes.headers.get('content-type')
   if (backendContentType) {
     responseHeaders.set('content-type', backendContentType)
+  }
+  // Relay Set-Cookie so the backend's `session` cookie lands on the frontend
+  // origin (this response is what the browser actually sees).
+  const setCookies =
+    typeof backendRes.headers.getSetCookie === 'function'
+      ? backendRes.headers.getSetCookie()
+      : []
+  for (const value of setCookies) {
+    responseHeaders.append('set-cookie', value)
   }
 
   const responseBody = await backendRes.text()

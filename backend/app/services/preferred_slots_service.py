@@ -79,7 +79,7 @@ def get_preferred_slots(uid: str, user_id: str) -> list[dict]:
 def delete_preferred_slot(uid: str, slot_id: str, user_id: str) -> None:
     slot_result = (
         service_client.table("preferred_slots")
-        .select("id, user_id")
+        .select("id, user_id, event_id")
         .eq("id", slot_id)
         .maybe_single()
         .execute()
@@ -91,3 +91,9 @@ def delete_preferred_slot(uid: str, slot_id: str, user_id: str) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your slot")
 
     service_client.table("preferred_slots").delete().eq("id", slot_id).execute()
+
+    # Preferred slots feed proposal generation, so removal invalidates cached
+    # proposals — symmetric with create_preferred_slot.
+    service_client.table("events").update(
+        {"proposals_needs_regeneration": True}
+    ).eq("id", slot_result.data["event_id"]).execute()

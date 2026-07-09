@@ -79,6 +79,10 @@ def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
 
     Dispatches to the provider for each account based on ``account.provider`` so
     Google and Microsoft accounts sync through the same flow.
+
+    If the sync changed any busy slot (upsert or stale deletion), the user's
+    planning events are flagged ``proposals_needs_regeneration`` so cached
+    proposals are not served against stale availability data.
     """
     accounts = (
         service_client.table("calendar_accounts")
@@ -88,17 +92,24 @@ def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
     )
 
     total = 0
+    changed = False
     for account in accounts.data or []:
         provider = get_provider(account["provider"])
-        tokens = TokenBundle(account.get("credentials") or {})
+        credentials = account.get("credentials") or {}
+        # Capture the refresh token BEFORE any provider call: TokenBundle.update()
+        # replaces .data wholesale, so the pre-refresh token is not retained.
+        original_refresh_token = credentials.get("refresh_token")
+        tokens = TokenBundle(credentials)
 
         try:
             for source in account.get("calendar_sources") or []:
                 if not source["is_enabled"]:
                     continue
-                total += _sync_source(
+                upserted, deleted = _sync_source(
                     user_id, source["id"], source["calendar_id"], provider, tokens, time_min, time_max
                 )
+                total += upserted
+                changed = changed or bool(upserted or deleted)
         except ProviderAuthError as exc:
             logger.warning(
                 "Refresh token invalid for account %s — marking needs_reauth: %s",
@@ -108,19 +119,66 @@ def _sync_user(user_id: str, time_min: datetime, time_max: datetime) -> int:
             mark_account_needs_reauth(account["id"])
             continue
 
-        _persist_account_after_sync(account["id"], tokens)
+        _persist_account_after_sync(account["id"], tokens, original_refresh_token)
+
+    if changed:
+        _mark_user_events_stale(user_id)
 
     return total
 
 
-def _persist_account_after_sync(account_id: str, tokens: TokenBundle) -> None:
+def _mark_user_events_stale(user_id: str) -> None:
+    """Set ``proposals_needs_regeneration`` on planning events the user is a
+    non-declined participant of (the coordinator is always a participant row).
+
+    DATA_MODEL staleness rule: any write to busy_slots for participants of an
+    event must flag that event so the proposal service regenerates instead of
+    serving cached results.
+    """
+    participant_rows = (
+        service_client.table("event_participants")
+        .select("event_id")
+        .eq("user_id", user_id)
+        .neq("status", "declined")
+        .execute()
+    )
+    event_ids = [r["event_id"] for r in (participant_rows.data or [])]
+    if not event_ids:
+        return
+
+    service_client.table("events").update(
+        {"proposals_needs_regeneration": True}
+    ).in_("id", event_ids).eq("status", "planning").execute()
+
+
+def _persist_account_after_sync(
+    account_id: str, tokens: TokenBundle, original_refresh_token: str | None
+) -> None:
     """Stamp last_synced_at and persist rotated credentials if the provider
     refreshed them during the sync (whole dict, so Microsoft's rotated refresh
     token is saved too)."""
-    update_payload: dict = {"last_synced_at": datetime.now(timezone.utc).isoformat()}
-    if tokens.dirty:
-        update_payload["credentials"] = tokens.data
-    service_client.table("calendar_accounts").update(update_payload).eq("id", account_id).execute()
+    # last_synced_at is harmless best-effort metadata — always write it,
+    # unconditionally (never gated by the CAS below).
+    service_client.table("calendar_accounts").update(
+        {"last_synced_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("id", account_id).execute()
+
+    if not tokens.dirty:
+        return
+
+    # Compare-and-swap (CAS) to avoid clobbering a concurrently-rotated Microsoft
+    # refresh token (M6): only overwrite credentials if the row still holds the
+    # refresh token we started from. If a concurrent sync/finalize already rotated
+    # it, the jsonb-path filter matches zero rows and our stale write is silently
+    # skipped (correct — not an error).
+    query = (
+        service_client.table("calendar_accounts")
+        .update({"credentials": tokens.data})
+        .eq("id", account_id)
+    )
+    if original_refresh_token:
+        query = query.eq("credentials->>refresh_token", original_refresh_token)
+    query.execute()
 
 
 def sync_event_participants_scoped(
@@ -189,11 +247,12 @@ def _sync_source(
     tokens: TokenBundle,
     time_min: datetime,
     time_max: datetime,
-) -> int:
+) -> tuple[int, int]:
     """Fetch busy events from one calendar source and upsert as busy slots.
 
-    Returns the number of slots upserted. A :class:`ProviderAuthError` bubbles up
-    so ``_sync_user`` can mark the account ``needs_reauth``; any other provider
+    Returns ``(upserted, deleted)`` slot counts so the caller can tell whether
+    the sync changed anything. A :class:`ProviderAuthError` bubbles up so
+    ``_sync_user`` can mark the account ``needs_reauth``; any other provider
     API error skips this source without touching its existing slots.
     """
     try:
@@ -202,7 +261,7 @@ def _sync_source(
         raise
     except ProviderAPIError as exc:
         logger.error("Failed to fetch events for calendar %s: %s", calendar_id, exc)
-        return 0
+        return 0, 0
 
     # The provider already expanded recurring events, dropped cancelled/all-day
     # events, and normalised times to UTC. Events the provider no longer returns
@@ -228,12 +287,17 @@ def _sync_source(
         ).execute()
 
     # Delete stale slots: any slot for this source within the fetch window that
-    # was not returned by Google (or was returned as cancelled).
+    # was not returned by the provider (or was returned as cancelled). Both
+    # bounds matter: without the lower bound, a narrow event-scoped sync would
+    # treat every stored slot ending before time_max as stale and wipe busy
+    # data outside the window it actually fetched.
+    time_min_iso = time_min.isoformat()
     time_max_iso = time_max.isoformat()
     existing = (
         service_client.table("busy_slots")
         .select("provider_event_id")
         .eq("calendar_source_id", source_id)
+        .gte("end_time_utc", time_min_iso)
         .lt("end_time_utc", time_max_iso)
         .execute()
     )
@@ -252,7 +316,7 @@ def _sync_source(
             "calendar_source_id", source_id
         ).in_("provider_event_id", stale_event_ids).execute()
 
-    return len(slots_to_upsert)
+    return len(slots_to_upsert), len(stale_event_ids)
 
 
 def sync_all_users() -> dict[str, int]:
