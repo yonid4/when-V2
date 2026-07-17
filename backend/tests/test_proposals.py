@@ -689,3 +689,109 @@ def test_generate_proposals_is_deterministic_for_fixed_reference_time():
     assert first == second
     assert [r["start_time_utc"] for r in first] == [r["start_time_utc"] for r in second]
     assert [r["end_time_utc"] for r in first] == [r["end_time_utc"] for r in second]
+
+
+# ─── Spread: equally-good slots fan out across the window ─────────────────────
+
+def _run_generate_and_capture_insert(
+    event_row: dict,
+    participants: list[dict],
+    busy_slots: list[dict],
+    preferred_slots: list[dict],
+    reference_time: datetime,
+) -> list[dict]:
+    """Run generate_proposals against a stub db and return the inserted rows."""
+    proposed_times_mock = MagicMock()
+    proposed_times_mock.delete.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+    proposed_times_mock.insert.return_value.execute.return_value = MagicMock(data=[])
+
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+            tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+        elif name == "event_participants":
+            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=participants)
+        elif name == "busy_slots":
+            tbl.select.return_value.in_.return_value.lt.return_value.gt.return_value.execute.return_value = MagicMock(data=busy_slots)
+        elif name == "preferred_slots":
+            tbl.select.return_value.eq.return_value.in_.return_value.execute.return_value = MagicMock(data=preferred_slots)
+        elif name == "proposed_times":
+            return proposed_times_mock
+        return tbl
+
+    db = MagicMock()
+    db.table.side_effect = make_table
+
+    generate_proposals(event_row["id"], reference_time_utc=reference_time, db=db)
+
+    call_args = proposed_times_mock.insert.call_args
+    assert call_args is not None, "expected an insert of proposed_times"
+    return call_args[0][0]
+
+
+def test_generate_proposals_spreads_equal_quality_slots_across_window():
+    """A wide all-free window (many equally-good candidates) must yield 5 slots
+    spread across the window, not clustered at the earliest times.
+
+    Window 09:00–17:00 UTC, 60-min duration → 15 conflict-free candidates. The old
+    'earliest 5' behavior returned 09:00–11:00 (2h span, 30-min gaps); the spread
+    selection must fan the picks out across the full range.
+    """
+    event_row = {
+        "id": "event-db-id-1",
+        "duration_minutes": 60,
+        "earliest_datetime_utc": "2026-04-10T09:00:00+00:00",
+        "latest_datetime_utc": "2026-04-10T17:00:00+00:00",
+    }
+    participants = [{"user_id": "alice"}, {"user_id": "bob"}]
+
+    inserted = _run_generate_and_capture_insert(
+        event_row, participants, busy_slots=[], preferred_slots=[],
+        reference_time=datetime(2026, 4, 1, tzinfo=timezone.utc),
+    )
+
+    assert len(inserted) == 5
+    assert all(r["conflicts"] == 0 for r in inserted)
+
+    starts = sorted(datetime.fromisoformat(r["start_time_utc"]) for r in inserted)
+    span = starts[-1] - starts[0]
+    assert span >= timedelta(hours=6), f"picks not spread: span only {span}"
+
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    assert min(gaps) >= timedelta(minutes=60), f"picks too close together: gaps {gaps}"
+
+
+def test_generate_proposals_spread_never_surfaces_worse_tier_while_better_remains():
+    """Strict quality-first: when >5 conflict-free candidates exist, spreading must
+    never pull in a conflicted slot — even though the conflicted slots sit at the
+    far end of the window, exactly where farthest-point spreading is drawn.
+
+    Window 09:00–17:00 UTC, 60-min duration. Bob is busy 15:00–17:00, so the four
+    latest candidates (14:30/15:00/15:30/16:00) each carry 1 conflict while the 11
+    earlier candidates (09:00–14:00) are conflict-free. All 5 picks must be
+    conflict-free and must fall at or before 14:00.
+    """
+    event_row = {
+        "id": "event-db-id-1",
+        "duration_minutes": 60,
+        "earliest_datetime_utc": "2026-04-10T09:00:00+00:00",
+        "latest_datetime_utc": "2026-04-10T17:00:00+00:00",
+    }
+    participants = [{"user_id": "alice"}, {"user_id": "bob"}]
+    busy_slots = [
+        {"user_id": "bob", "start_time_utc": "2026-04-10T15:00:00+00:00", "end_time_utc": "2026-04-10T17:00:00+00:00"}
+    ]
+
+    inserted = _run_generate_and_capture_insert(
+        event_row, participants, busy_slots=busy_slots, preferred_slots=[],
+        reference_time=datetime(2026, 4, 1, tzinfo=timezone.utc),
+    )
+
+    assert len(inserted) == 5
+    assert all(r["conflicts"] == 0 for r in inserted), "spread pulled in a conflicted slot"
+
+    latest_free = datetime(2026, 4, 10, 14, 0, tzinfo=timezone.utc)
+    for r in inserted:
+        start = datetime.fromisoformat(r["start_time_utc"])
+        assert start <= latest_free, f"selected a slot in the conflicted tier: {r['start_time_utc']}"

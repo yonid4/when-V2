@@ -1,6 +1,7 @@
 """Scheduling algorithm service — generates ranked time proposals for an event."""
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
@@ -163,6 +164,71 @@ def _build_day_candidates(
     return candidates
 
 
+def _farthest_point_select(pool: list[dict], k: int, anchors: list[datetime]) -> list[dict]:
+    """Greedily pick up to ``k`` candidates from ``pool``, maximizing spacing on
+    start time (deterministic farthest-point sampling).
+
+    With no anchors, seeds the earliest-start candidate so the single best slot
+    stays eligible for rank 1. Thereafter repeatedly adds the candidate whose
+    nearest-anchor distance is largest, breaking ties by earliest start.
+    ``anchors`` are start datetimes of already-selected slots that new picks
+    should spread away from. Inputs are not mutated.
+    """
+    remaining = list(pool)
+    refs = list(anchors)
+    chosen: list[dict] = []
+
+    if not refs and remaining:
+        seed = min(remaining, key=lambda c: c["start"])
+        chosen.append(seed)
+        refs.append(seed["start"])
+        remaining.remove(seed)
+
+    while remaining and len(chosen) < k:
+        best = max(
+            remaining,
+            key=lambda c: (
+                min(abs((c["start"] - r).total_seconds()) for r in refs),
+                -c["start"].timestamp(),
+            ),
+        )
+        chosen.append(best)
+        refs.append(best["start"])
+        remaining.remove(best)
+
+    return chosen
+
+
+def _select_spread_topk(scored: list[dict], k: int = 5) -> list[dict]:
+    """Select up to ``k`` proposals: strict quality tiers, spread within the window.
+
+    Tiers are ordered best→worst by (conflict_count ASC, preferred_count DESC). A
+    worse tier is only drawn from once better tiers are exhausted, so spreading
+    never surfaces a lower-quality slot over a higher-quality one. Within the tier
+    that overflows the remaining budget, farthest-point sampling decides which
+    slots to keep, spreading them away from slots already chosen from better tiers.
+    The result is re-sorted by the quality key so rank 1 remains the single best slot.
+    """
+    tiers: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    for c in scored:
+        tiers[(c["conflict_count"], -c["preferred_count"])].append(c)
+
+    selected: list[dict] = []
+    for key in sorted(tiers):
+        if len(selected) >= k:
+            break
+        tier = tiers[key]
+        budget = k - len(selected)
+        if len(tier) <= budget:
+            selected.extend(tier)
+        else:
+            anchors = [s["start"] for s in selected]
+            selected.extend(_farthest_point_select(tier, budget, anchors))
+
+    selected.sort(key=lambda x: (x["conflict_count"], -x["preferred_count"], x["start"]))
+    return selected
+
+
 def generate_proposals(event_id: str, *, reference_time_utc: datetime, db=None) -> list[dict]:
     """Generate ranked time proposals for an event and persist them.
 
@@ -178,7 +244,9 @@ def generate_proposals(event_id: str, *, reference_time_utc: datetime, db=None) 
     3. Fetch busy and preferred slots within the window.
     4. Generate candidate 30-min-stride windows of duration_minutes length.
     5. Score each candidate (conflict_count, preferred_count).
-    6. Rank: conflict_count ASC, preferred_count DESC, start_time ASC — take top 5.
+    6. Select top 5: strict quality tiers (conflict_count ASC, preferred_count
+       DESC), with farthest-point spreading among equally-good slots so the picks
+       fan out across the window instead of clustering at the earliest times.
     7. If no candidates, log a warning and return [] without touching existing proposals or flags.
     8. Delete old proposed_times rows, insert new ones.
     9. Update event: proposals_last_generated_at, proposals_needs_regeneration=false.
@@ -297,9 +365,12 @@ def generate_proposals(event_id: str, *, reference_time_utc: datetime, db=None) 
             "reasoning": reasoning,
         })
 
-    # 7. Rank: conflict_count ASC, preferred_count DESC, start_time ASC — take top 5
-    scored.sort(key=lambda x: (x["conflict_count"], -x["preferred_count"], x["start"]))
-    top5 = scored[:5]
+    # 7. Select up to 5: strict quality tiers, spread across the window.
+    # Better quality (conflict_count ASC, preferred_count DESC) always wins; among
+    # equally-good slots, farthest-point sampling spreads picks across the window
+    # instead of clustering at the earliest times. Result is quality-ranked so
+    # rank 1 stays the single best slot.
+    top5 = _select_spread_topk(scored, k=5)
 
     if not top5:
         logger.warning("generate_proposals: no candidates found for event %s — keeping existing proposals", event_id)

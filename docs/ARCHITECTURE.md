@@ -324,9 +324,15 @@ Step 3 — Build reasoning string
   "{preferred_count}/{total} participants marked this time as preferred,
    {conflict_count}/{total} have a conflict"
 
-Step 4 — Rank
-  Sort by: conflict_count ASC, then preferred_count DESC
-  Take top 5
+Step 4 — Select top 5 (quality-first, spread across the window)
+  Group candidates into quality tiers by (conflict_count ASC, preferred_count DESC).
+  Fill 5 strictly best-tier-first: a worse tier is only drawn from once better tiers
+  are exhausted, so a lower-quality slot never displaces a higher-quality one.
+  Within the tier that overflows the remaining budget, choose by farthest-point
+  sampling on start time (deterministic — seed = earliest slot, ties broken by
+  earliest start) so the picks fan out across the window instead of clustering at
+  the earliest times. Re-rank the chosen ≤5 by the quality key so rank 1 stays the
+  single best slot.
 
 Step 5 — Store
   Delete existing proposed_times for this event
