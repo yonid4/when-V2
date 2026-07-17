@@ -1,6 +1,6 @@
 fastapi==0.115.14
 uvicorn[standard]==0.29.0
-pydantic==2.7.1
+pydantic==2.13.4
 pydantic-settings==2.2.1
 email-validator==2.2.0
 supabase==2.4.3
@@ -13,3 +13,10 @@ msal==1.37.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 httpx==0.27.0
+# Agentic chat (LangGraph + Gemini). langchain-google-genai is held at 3.2.0
+# (google-ai-generativelanguage/grpc backend) on purpose: the 4.x line pulls in
+# google-genai, which forces httpx>=0.28 and google-auth>=2.48 — both would
+# disturb the calendar OAuth/transport stack. 3.2.0 keeps httpx and google-auth
+# at their existing pins. langchain-core requires pydantic>=2.7.4 (see bump above).
+langgraph==1.2.9
+langchain-google-genai==3.2.0

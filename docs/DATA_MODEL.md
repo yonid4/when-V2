@@ -221,6 +221,46 @@ In-app inbox. One row per user per notification event.
 
 ---
 
+### chat_threads
+Per-user conversation with the agentic scheduling assistant. **One row per thread.** The LangGraph graph is stateless — the workflow state needed to resume a multi-turn interaction is persisted on this row between turns.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid | PK |
+| user_id | uuid | FK → profiles. **Owner.** ON DELETE CASCADE |
+| title | text | Nullable. Display label for the thread |
+| status | enum `chat_thread_status_enum` | `idle` / `collecting` / `awaiting_email` / `awaiting_choice` / `awaiting_confirmation`. Default `idle`. Where the workflow is paused waiting on the user |
+| workflow | text | Active workflow: `'create_event'` / `'edit_event'` / null. Nullable |
+| draft | jsonb | Workflow-shaped in-progress draft (e.g. the event being built). Nullable |
+| participants | jsonb | Collected participants for the active workflow. Nullable |
+| pending_person | jsonb | The person currently being resolved/collected (e.g. awaiting an email). Nullable |
+| candidate_slots | jsonb | Proposed time slots offered to the user for selection. Nullable |
+| booking_mode | text | Create-workflow sub-mode: `'direct'` / `'in_app'` / null. Nullable |
+| last_event_uid | varchar(12) | Short uid of the most recent event the thread acted on. Nullable |
+| created_at / updated_at | timestamptz | `updated_at` maintained by the `chat_threads_updated_at` trigger |
+
+**Thread-state rule:** The graph carries no memory across turns. Every turn rehydrates from the thread row's `status` + `workflow` + `draft` + `participants` + `pending_person` + `candidate_slots` + `booking_mode` + `last_event_uid`, advances the workflow, and writes the new state back. `status` records exactly what the assistant is waiting for so the next user message can be routed deterministically.
+
+**Index:** `user_id`.
+
+---
+
+### chat_messages
+Ordered transcript for a thread. **One row per message.**
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid | PK |
+| thread_id | uuid | FK → chat_threads. ON DELETE CASCADE |
+| role | enum `chat_role_enum` | `user` / `assistant` |
+| content | text | Message body. NOT NULL |
+| payload | jsonb | Structured sidecar. For `user`: the action payload behind a button tap. For `assistant`: `{"card": …, "buttons": […]}` render spec. Nullable |
+| created_at | timestamptz | |
+
+**Index:** (thread_id, created_at) — ordered replay of a thread.
+
+---
+
 ## Key relationships
 
 ```
@@ -237,7 +277,10 @@ profiles
   │
   ├── preferred_slots (1:many, scoped to event)
   │
-  └── notifications (1:many)
+  ├── notifications (1:many)
+  │
+  └── chat_threads (1:many)
+        └── chat_messages (1:many)
 
 events
   ├── event_participants (1:many)
@@ -266,6 +309,8 @@ events
 | proposed_times | All participants of the event | Service role only (written by algorithm) |
 | proposed_time_notes | Participants of the event | Author writes own notes (via backend) |
 | notifications | Own rows only | Service role only (written by notification service) |
+| chat_threads | Own rows only (`chat_threads_own`: `user_id = auth.uid()`) | Own rows only (same policy, USING + WITH CHECK). No service_role — chat uses the authed user client |
+| chat_messages | Rows of own threads (`chat_messages_own`: EXISTS owning `chat_threads` row where `user_id = auth.uid()`) | Same (USING + WITH CHECK via the owning thread). No service_role |
 
 ### Realtime broadcasts (`realtime.messages`)
 

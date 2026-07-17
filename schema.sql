@@ -1577,6 +1577,133 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 
 
 
+-- ============================================================
+-- AGENTIC CHAT (single-user assistant)
+--
+-- Per-user chat threads + messages backing the LangGraph assistant. The graph
+-- itself is stateless: workflow state is persisted on the chat_threads row
+-- between turns (status/workflow/draft/participants/pending_person/
+-- candidate_slots/booking_mode/last_event_uid). Strictly single-user — all
+-- access is via the authenticated user's client (get_authed_client), guarded by
+-- the RLS policies below. These tables are NOT added to supabase_realtime.
+-- ============================================================
+
+CREATE TYPE "public"."chat_thread_status_enum" AS ENUM (
+    'idle',
+    'collecting',
+    'awaiting_email',
+    'awaiting_choice',
+    'awaiting_confirmation'
+);
+
+
+ALTER TYPE "public"."chat_thread_status_enum" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."chat_role_enum" AS ENUM (
+    'user',
+    'assistant'
+);
+
+
+ALTER TYPE "public"."chat_role_enum" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_threads" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "title" "text",
+    "status" "public"."chat_thread_status_enum" DEFAULT 'idle'::"public"."chat_thread_status_enum" NOT NULL,
+    "workflow" "text",
+    "draft" "jsonb",
+    "participants" "jsonb",
+    "pending_person" "jsonb",
+    "candidate_slots" "jsonb",
+    "booking_mode" "text",
+    "last_event_uid" character varying(12),
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."chat_threads" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_messages" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "thread_id" "uuid" NOT NULL,
+    "role" "public"."chat_role_enum" NOT NULL,
+    "content" "text" NOT NULL,
+    "payload" "jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."chat_messages" OWNER TO "postgres";
+
+
+ALTER TABLE ONLY "public"."chat_threads"
+    ADD CONSTRAINT "chat_threads_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_messages"
+    ADD CONSTRAINT "chat_messages_pkey" PRIMARY KEY ("id");
+
+
+
+CREATE INDEX "chat_threads_user_id_idx" ON "public"."chat_threads" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "chat_messages_thread_id_created_at_idx" ON "public"."chat_messages" USING "btree" ("thread_id", "created_at");
+
+
+
+CREATE OR REPLACE TRIGGER "chat_threads_updated_at" BEFORE UPDATE ON "public"."chat_threads" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+ALTER TABLE ONLY "public"."chat_threads"
+    ADD CONSTRAINT "chat_threads_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_messages"
+    ADD CONSTRAINT "chat_messages_thread_id_fkey" FOREIGN KEY ("thread_id") REFERENCES "public"."chat_threads"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE "public"."chat_threads" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "chat_threads_own" ON "public"."chat_threads" USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."chat_messages" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "chat_messages_own" ON "public"."chat_messages" USING ((EXISTS ( SELECT 1
+   FROM "public"."chat_threads"
+  WHERE (("chat_threads"."id" = "chat_messages"."thread_id") AND ("chat_threads"."user_id" = "auth"."uid"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."chat_threads"
+  WHERE (("chat_threads"."id" = "chat_messages"."thread_id") AND ("chat_threads"."user_id" = "auth"."uid"())))));
+
+
+
+GRANT ALL ON TABLE "public"."chat_threads" TO "anon";
+GRANT ALL ON TABLE "public"."chat_threads" TO "authenticated";
+GRANT ALL ON TABLE "public"."chat_threads" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."chat_messages" TO "anon";
+GRANT ALL ON TABLE "public"."chat_messages" TO "authenticated";
+GRANT ALL ON TABLE "public"."chat_messages" TO "service_role";
+
+
+
 
 
 

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     microsoft_calendar_redirect_uri: str = (
         "http://localhost:8000/api/calendar-accounts/callback/microsoft"
     )
+    # Gemini (agentic chat). Left blank disables chat; deployments without an
+    # API key run normally with the chat feature turned off.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 10080  # 7 days

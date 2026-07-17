@@ -6,6 +6,9 @@ class User(BaseModel):
     email_address: str
     full_name: str | None = None
     avatar_url: str | None = None
+    # IANA timezone name from profiles.timezone (e.g. "America/Los_Angeles").
+    # Optional so it auto-populates from the profiles select("*") row.
+    timezone: str | None = None
     # JWT for this request — used to authenticate Supabase queries. Internal
     # only: endpoints that serialize User must exclude it (the session JWT is
     # delivered exclusively via the HttpOnly ``session`` cookie).
