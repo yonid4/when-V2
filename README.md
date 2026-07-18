@@ -62,7 +62,7 @@ cp .env.example .env   # fill in Supabase keys, Google OAuth credentials, JWT se
 ```bash
 cd frontend
 npm install
-cp .env.local.example .env.local   # fill in Supabase public key, API URL
+cp .env.example .env.local   # fill in Supabase public key, API URL
 ```
 
 ### Microsoft (Outlook) Calendar setup
