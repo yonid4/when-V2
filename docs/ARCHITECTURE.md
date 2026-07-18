@@ -357,6 +357,47 @@ User opens event detail (any role)
 
 ---
 
+## Agentic chat (services/agent/)
+
+A conversational layer for creating, booking, and editing events by chat. Gemini is used **only to produce structured data** — it never picks times, drives control flow, or calls tools.
+
+### LLM boundary
+
+The model's entire job is structured output: intent classification + field extraction, a name↔email pairing judgment during participant resolution, and reply wording. Candidate meeting times come exclusively from the deterministic availability ranking (`availability.py`), which reuses `proposal_service`'s candidate grid.
+
+### Writes require explicit confirmation
+
+Event create / finalize / edit run only in deterministic nodes, reachable only via structured button actions — `confirm_draft`, `book_direct`, `use_in_app` — dispatched by the graph's entry router. Free text can never trigger a write.
+
+### Stateless graph per turn
+
+There is no LangGraph checkpointer. Workflow state persists on the `chat_threads` row (`status`, `workflow`, `draft`, `participants`, `pending_person`, `candidate_slots`, `booking_mode`). Every `POST /api/chat/threads/{id}/turn` rehydrates it, and an entry router keyed on `(status, workflow, action)` selects the node to run.
+
+### Page context
+
+The client sends `{ page, event_uid? }` each turn; the backend re-verifies event access via the authed user client before the graph sees it (silently dropped on no access). Page context influences **new** intent classification only — an in-flight workflow stays pinned to the event captured at classification time.
+
+### Component map
+
+```
+routers/chat.py             thin transport; captures reference_time_utc
+  → services/chat_service.py    thread CRUD + run_turn persistence
+      → services/agent/
+          ├── graph.py        entry router + graph build
+          ├── nodes.py        deterministic workflow nodes
+          ├── editing.py      deterministic edit nodes
+          ├── llm.py          Gemini accessor + structured-output schemas
+          ├── people.py       participant resolution
+          ├── availability.py deterministic slot ranking (reuses proposal_service grid)
+          └── booking.py      orchestration over event / finalize / invitation services
+```
+
+- Chat tables are under RLS, accessed only via the authed user client.
+- Direct booking gives invited participants a real provider invite (attendees on the coordinator's calendar copy — never direct writes into their calendars) with in-app Accept / Decline.
+- A blank Gemini key disables the feature (`503`); the rest of the app is unaffected.
+
+---
+
 ## Supabase usage rules
 
 - **anon_client** — used for all user-facing queries. RLS policies enforce that users can only read/write their own data.
