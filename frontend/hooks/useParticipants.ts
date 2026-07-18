@@ -45,3 +45,14 @@ export function useRemoveParticipant(uid: string) {
     },
   })
 }
+
+export function useRespondToEventInvite(uid: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (action: 'accept' | 'decline') =>
+      api.put<Participant>(`/events/${uid}/participants/me/response`, { action }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: participantsKey(uid) })
+    },
+  })
+}

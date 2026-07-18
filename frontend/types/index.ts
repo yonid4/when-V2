@@ -265,3 +265,127 @@ export interface PopoverContextValue {
   open: boolean
   setOpen: (open: boolean) => void
 }
+
+// ─── Chat ─────────────────────────────────────────────────────────────────────
+
+export type ChatThreadStatus =
+  | 'idle'
+  | 'collecting'
+  | 'awaiting_email'
+  | 'awaiting_choice'
+  | 'awaiting_confirmation'
+
+export type ChatRole = 'user' | 'assistant'
+export type ChatWorkflow = 'create_event' | 'edit_event'
+
+export type ChatActionType =
+  | 'book_direct'
+  | 'use_in_app'
+  | 'confirm_draft'
+  | 'cancel'
+  | 'provide_email'
+  | 'pick_person'
+
+export type DraftMode = 'create_direct' | 'create_in_app' | 'edit'
+
+export interface ChatPageContext {
+  page: string
+  event_uid?: string | null
+}
+
+export interface DraftEdits {
+  title?: string | null
+  duration_minutes?: number | null
+  location?: string | null
+}
+
+export interface ChatActionPayload {
+  type: ChatActionType
+  email?: string | null
+  person_name?: string | null
+  user_id?: string | null
+  slot_index?: number | null
+  edits?: DraftEdits | null
+}
+
+// Exactly one of `message` / `action` is sent; `message` is ≤2000 chars
+// (enforced server-side).
+export interface ChatTurnRequest {
+  message?: string
+  action?: ChatActionPayload
+  context?: ChatPageContext
+}
+
+export interface DraftCardParticipant {
+  name?: string | null
+  email: string
+  in_system: boolean
+  has_calendar: boolean
+  user_id?: string | null
+}
+
+export interface DraftCardSlot {
+  start_time_utc: string
+  end_time_utc: string
+  conflict_count: number
+  free_count: number
+  total: number
+  reasoning: string
+}
+
+// `from` mirrors the literal jsonb key emitted by the backend.
+export interface EditChange {
+  field: string
+  label: string
+  from?: string | number | null
+  to?: string | number | null
+}
+
+export interface DraftCard {
+  mode: DraftMode | null
+  title: string
+  event_type?: string | null
+  earliest_datetime_utc?: string | null
+  latest_datetime_utc?: string | null
+  duration_minutes?: number | null
+  participants: DraftCardParticipant[]
+  slots: DraftCardSlot[]
+  changes?: EditChange[] | null
+  event_uid?: string | null
+}
+
+export interface ChatButton {
+  label: string
+  action: ChatActionPayload
+}
+
+// Shape of `ChatMessage.payload` for assistant messages.
+export interface ChatAssistantPayload {
+  card?: DraftCard | null
+  buttons: ChatButton[]
+}
+
+export interface ChatMessage {
+  id: string
+  thread_id: string
+  role: ChatRole
+  content: string
+  payload?: ChatAssistantPayload | null
+  created_at: string
+}
+
+export interface ChatThread {
+  id: string
+  title?: string | null
+  status: ChatThreadStatus
+  workflow?: ChatWorkflow | null
+  last_event_uid?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ChatTurnResponse {
+  thread: ChatThread
+  messages: ChatMessage[]
+  event_uid?: string | null
+}
