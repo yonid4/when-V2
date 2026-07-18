@@ -20,6 +20,7 @@ import { usePreferredSlots, useSavePreferredSlot, useDeletePreferredSlot } from 
 import { useAvailabilitySegments } from '@/hooks/useAvailabilitySegments'
 import { useProposals, useRefreshProposals } from '@/hooks/useProposals'
 import { useProposalFreshness } from '@/hooks/useProposalFreshness'
+import { useRespondToEventInvite } from '@/hooks/useParticipants'
 import { FinalizeCard } from './FinalizeCard'
 import { ProposalList } from './ProposalList'
 import { GridHeader } from './GridHeader'
@@ -393,6 +394,9 @@ function EventDetailLoaded({ event }: { event: EventWithParticipants }) {
     <div className="h-screen flex flex-col overflow-hidden">
       <Navbar />
 
+      {/* ── Invite banner — shown when the current user is still invited ── */}
+      {currentParticipant?.status === 'invited' && <InviteBanner uid={event.uid} />}
+
       {/* Two-column full-height split — stacked on mobile, side-by-side on md+ */}
       <main className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
 
@@ -730,6 +734,49 @@ function EventDetailLoaded({ event }: { event: EventWithParticipants }) {
           }}
         />
       )}
+    </div>
+  )
+}
+
+// ─── Invite banner ─────────────────────────────────────────────────────────────
+// Rendered only when the current user's participant row is still `invited`.
+// Kept as its own component so its mutation hook (and thus its QueryClient
+// dependency) is instantiated solely on the invited path.
+function InviteBanner({ uid }: { uid: string }) {
+  const queryClient = useQueryClient()
+  const { mutate: respondToInvite, isPending } = useRespondToEventInvite(uid)
+
+  function respond(action: 'accept' | 'decline') {
+    respondToInvite(action, {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: ['events', uid] }),
+    })
+  }
+
+  return (
+    <div className="shrink-0 bg-primary/8 border-b border-primary/20 px-4 md:px-6 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="flex items-center gap-3 flex-1">
+        <UserPlus className="w-5 h-5 text-primary shrink-0" />
+        <div>
+          <p className="text-sm font-bold text-on-surface">You&apos;ve been added to this event</p>
+          <p className="text-xs text-on-surface-variant">Accept to join and share your availability.</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={() => respond('decline')}
+          disabled={isPending}
+          className="px-4 py-2 rounded-lg border border-outline-variant text-on-surface-variant text-sm font-bold hover:bg-surface-container transition-colors disabled:opacity-60"
+        >
+          Decline
+        </button>
+        <button
+          onClick={() => respond('accept')}
+          disabled={isPending}
+          className="px-5 py-2 rounded-lg bg-primary text-on-primary text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-60"
+        >
+          Accept
+        </button>
+      </div>
     </div>
   )
 }
