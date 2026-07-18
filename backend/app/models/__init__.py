@@ -10,4 +10,11 @@ from app.models.invitation import (
     InvitationRespondRequest as InvitationRespondRequest, InvitationRespondResponse as InvitationRespondResponse
 )
 from app.models.calendar import CalendarAccountResponse as CalendarAccountResponse, CalendarSourceResponse as CalendarSourceResponse, CalendarSourceUpdate as CalendarSourceUpdate, BusySlotResponse as BusySlotResponse
+from app.models.chat import (
+    ChatPageContext as ChatPageContext, ChatActionType as ChatActionType, ChatActionPayload as ChatActionPayload,
+    DraftEdits as DraftEdits, ChatTurnRequest as ChatTurnRequest, DraftCard as DraftCard,
+    DraftCardParticipant as DraftCardParticipant, DraftCardSlot as DraftCardSlot, EditChange as EditChange,
+    ChatButton as ChatButton, ChatMessageResponse as ChatMessageResponse, ChatThreadResponse as ChatThreadResponse,
+    ChatTurnResponse as ChatTurnResponse,
+)
 from app.models.user import User as User

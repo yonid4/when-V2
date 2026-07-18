@@ -13,6 +13,7 @@ from app.routers import (
     busy_slots,
     calendar_accounts,
     calendar_sources,
+    chat,
     events,
     finalize,
     invitations,
@@ -61,6 +62,7 @@ app.include_router(invitations.router)
 app.include_router(notifications.router)
 app.include_router(calendar_accounts.router)
 app.include_router(calendar_sources.router)
+app.include_router(chat.router)
 app.include_router(busy_slots.router)
 app.include_router(preferred_slots.router)
 app.include_router(proposals.router)
