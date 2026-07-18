@@ -239,6 +239,24 @@ def _sync_participants_in_range(
     return results
 
 
+def sync_users_scoped(
+    user_ids, time_min: datetime, time_max: datetime
+) -> dict[str, int]:
+    """Sync busy slots for a specific set of users within [time_min, time_max].
+
+    Thin public wrapper looping over ``_sync_user`` with per-user try/except so
+    one user's failure does not abort the batch. Returns {user_id: slots_upserted}.
+    """
+    results: dict[str, int] = {}
+    for uid in user_ids:
+        try:
+            results[uid] = _sync_user(uid, time_min, time_max)
+        except Exception as exc:
+            logger.error("Failed to sync busy slots for user %s: %s", uid, exc)
+            results[uid] = 0
+    return results
+
+
 def _sync_source(
     user_id: str,
     source_id: str,
