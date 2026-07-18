@@ -328,3 +328,140 @@ def test_update_permissions_success(mock_dep_svc, mock_get_authed, mock_part_svc
     # The privileged write went through the service client, not the authed one.
     mock_part_svc.table.return_value.update.assert_called_once_with({"can_invite": True})
     db.table.return_value.update.assert_not_called()
+
+
+# ─── 10. respond_to_direct_invite: accept ────────────────────────────────────
+
+@patch("app.services.event_service.service_client")
+@patch("app.services.participant_service.service_client")
+@patch("app.services.participant_service.get_authed_client")
+@patch("app.dependencies.service_client")
+def test_respond_direct_invite_accept(mock_dep_svc, mock_get_authed, mock_part_svc, mock_svc):
+    """PUT /api/events/{uid}/participants/me/response {action: accept} →
+    updates own row to accepted/going. The event fetch goes through the authed
+    client, but the status write goes through the service client (the
+    authenticated role's column-level grant permits only rsvp_status)."""
+    profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+    mock_svc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"id": "user-uuid-1", "full_name": "Alice", "avatar_url": None, "email_address": "alice@example.com"}]
+    )
+
+    db = MagicMock()
+    mock_get_authed.return_value = db
+
+    event_row = _make_event_row(coordinator_id="other-coordinator")
+    accepted_row = {
+        "event_id": "event-db-id-1",
+        "user_id": "user-uuid-1",
+        "status": "accepted",
+        "rsvp_status": "going",
+        "can_invite": False,
+        "joined_at": "2026-04-01T00:00:00+00:00",
+    }
+
+    # Authed client: event visibility check + final participant re-read.
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+    db.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[accepted_row])
+    # Service client: guarded update chains three .eq() filters (event_id, user_id, status='invited').
+    mock_part_svc.table.return_value.update.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
+
+    response = client.put(
+        "/api/events/event-uid-1/participants/me/response",
+        json={"action": "accept"},
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "accepted"
+    assert response.json()["rsvp_status"] == "going"
+    # The privileged status write went through the service client, not the authed one.
+    mock_part_svc.table.return_value.update.assert_called_once_with({"status": "accepted", "rsvp_status": "going"})
+    db.table.return_value.update.assert_not_called()
+
+
+# ─── 11. respond_to_direct_invite: decline ───────────────────────────────────
+
+@patch("app.services.event_service.service_client")
+@patch("app.services.participant_service.service_client")
+@patch("app.services.participant_service.get_authed_client")
+@patch("app.dependencies.service_client")
+def test_respond_direct_invite_decline(mock_dep_svc, mock_get_authed, mock_part_svc, mock_svc):
+    """PUT .../me/response {action: decline} → updates own row to declined via
+    the service client."""
+    profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+    mock_svc.table.return_value.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"id": "user-uuid-1", "full_name": "Alice", "avatar_url": None, "email_address": "alice@example.com"}]
+    )
+
+    db = MagicMock()
+    mock_get_authed.return_value = db
+
+    event_row = _make_event_row(coordinator_id="other-coordinator")
+    declined_row = {
+        "event_id": "event-db-id-1",
+        "user_id": "user-uuid-1",
+        "status": "declined",
+        "rsvp_status": "pending",
+        "can_invite": False,
+        "joined_at": "2026-04-01T00:00:00+00:00",
+    }
+
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+    db.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=[declined_row])
+    mock_part_svc.table.return_value.update.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
+
+    response = client.put(
+        "/api/events/event-uid-1/participants/me/response",
+        json={"action": "decline"},
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "declined"
+    mock_part_svc.table.return_value.update.assert_called_once_with({"status": "declined"})
+    db.table.return_value.update.assert_not_called()
+
+
+# ─── 12. respond_to_direct_invite: guard rejects non-invited rows ─────────────
+
+@patch("app.services.participant_service.service_client")
+@patch("app.services.participant_service.get_authed_client")
+@patch("app.dependencies.service_client")
+def test_respond_direct_invite_guard_rejects_non_invited(mock_dep_svc, mock_get_authed, mock_part_svc):
+    """When the caller's row is not status='invited' the guarded service-client
+    update matches zero rows → 404, and no participant response is returned."""
+    profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+
+    db = MagicMock()
+    mock_get_authed.return_value = db
+
+    event_row = _make_event_row(coordinator_id="other-coordinator")
+    db.table.return_value.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=event_row)
+    # Guard: no invited row → zero rows updated.
+    mock_part_svc.table.return_value.update.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+
+    response = client.put(
+        "/api/events/event-uid-1/participants/me/response",
+        json={"action": "accept"},
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 404
+
+
+# ─── 13. respond_to_direct_invite: invalid action rejected ───────────────────
+
+@patch("app.services.participant_service.get_authed_client")
+@patch("app.dependencies.service_client")
+def test_respond_direct_invite_invalid_action(mock_dep_svc, mock_get_authed):
+    """An action other than accept/decline is rejected by request validation (422)."""
+    profile = {"id": "user-uuid-1", "email_address": "alice@example.com", "full_name": "Alice", "avatar_url": None}
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data=profile)
+    mock_get_authed.return_value = MagicMock()
+
+    response = client.put(
+        "/api/events/event-uid-1/participants/me/response",
+        json={"action": "maybe"},
+        headers=_auth_headers(),
+    )
+    assert response.status_code == 422

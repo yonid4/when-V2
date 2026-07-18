@@ -76,6 +76,59 @@ def update_permissions(uid: str, target_user_id: str, current_user: User, can_in
     return ParticipantResponse(**row)
 
 
+def respond_to_direct_invite(uid: str, current_user: User, action: str) -> ParticipantResponse:
+    """Accept or decline a direct chat invite on the caller's own participant row.
+
+    The row was created as ``status='invited'`` by the chat "book direct" flow.
+
+    The write goes through the **service client**, not the authed client: the
+    authenticated role has a column-level ``GRANT UPDATE("rsvp_status")`` on
+    ``event_participants`` (schema.sql) — it may self-update ``rsvp_status`` but
+    NOT ``status``, so an authed-client write of ``status`` would fail with a
+    column-permission error despite the row-level policy. This mirrors the
+    established pattern in this file (the ``can_invite`` write in
+    :func:`update_permissions` below) and in
+    :func:`invitation_service.respond_to_invitation` (which inserts the accepted
+    participant row via the service client). ``current_user.id`` comes from the
+    verified JWT, so the own-row property is enforced server-side; the
+    ``.eq('status','invited')`` guard rejects any row that isn't a pending direct
+    invite. No calendar side effects.
+
+    accept  → ``{status: 'accepted', rsvp_status: 'going'}`` (mirrors
+              invitation_service.respond_to_invitation)
+    decline → ``{status: 'declined'}``
+    """
+    if action == 'accept':
+        update_data = {'status': 'accepted', 'rsvp_status': 'going'}
+    elif action == 'decline':
+        update_data = {'status': 'declined'}
+    else:
+        raise HTTPException(status_code=400, detail='Invalid action')
+
+    # RLS visibility check stays on the authed client (raises 404 if the caller
+    # can't see the event).
+    db = get_authed_client(current_user.token)
+    event = fetch_event_by_uid(uid, db)
+
+    # Guarded own-row write via the service client (see docstring for why).
+    result = (
+        service_client.table('event_participants')
+        .update(update_data)
+        .eq('event_id', event['id'])
+        .eq('user_id', current_user.id)
+        .eq('status', 'invited')
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail='No pending invite to respond to')
+
+    participants = _fetch_participants_raw(event['id'], db)
+    row = next((p for p in participants if p['user_id'] == current_user.id), None)
+    if not row:
+        raise HTTPException(status_code=404, detail='Participant not found')
+    return ParticipantResponse(**row)
+
+
 def remove_participant(uid: str, target_user_id: str, current_user: User) -> None:
     db = get_authed_client(current_user.token)
     event = fetch_event_by_uid(uid, db)

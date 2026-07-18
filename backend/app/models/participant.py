@@ -24,3 +24,7 @@ class RsvpUpdate(BaseModel):
 
 class PermissionUpdate(BaseModel):
     can_invite: bool
+
+
+class DirectInviteResponse(BaseModel):
+    action: Literal['accept', 'decline']

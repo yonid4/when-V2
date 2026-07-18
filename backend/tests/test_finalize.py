@@ -1255,3 +1255,164 @@ def test_get_finalize_status_403_outsider(mock_dep_svc, mock_router_svc):
         headers=_auth_headers("outsider-uuid"),
     )
     assert response.status_code == 403
+
+
+# ─── pending_attendee_user_ids (chat "book direct" path) ──────────────────────
+
+from app.models.user import User
+from app.services.finalize_service import finalize_event
+
+
+def _coord_user() -> User:
+    return User(
+        id="coordinator-uuid-1",
+        email_address="alice@example.com",
+        full_name="Alice",
+        token="tok",
+    )
+
+
+def _make_pending_finalize_db(
+    event_row: dict,
+    proposed_time_row: dict,
+    accepted: list[dict],
+    pending: list[dict],
+    write_cal_rows: list[dict],
+) -> MagicMock:
+    """db mock supporting both the accepted fetch (.eq(event_id).eq(status)) and
+    the pending fetch (.eq(event_id).in_(user_id).neq(status))."""
+    updated_event = {**event_row, "status": "confirmed", "calendar_event_id": "cal-evt-123"}
+
+    def make_table(name):
+        tbl = MagicMock()
+        if name == "events":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=event_row
+            )
+            tbl.update.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=[updated_event]
+            )
+        elif name == "proposed_times":
+            tbl.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
+                data=proposed_time_row
+            )
+        elif name == "event_participants":
+            # accepted fetch
+            tbl.select.return_value.eq.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=accepted
+            )
+            # pending fetch (.in_().neq())
+            tbl.select.return_value.eq.return_value.in_.return_value.neq.return_value.execute.return_value = MagicMock(
+                data=pending
+            )
+        elif name == "calendar_sources":
+            tbl.select.return_value.eq.return_value.execute.return_value = MagicMock(
+                data=write_cal_rows
+            )
+        elif name == "calendar_accounts":
+            tbl.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[])
+        return tbl
+
+    db = MagicMock()
+    db.table.side_effect = make_table
+    return db
+
+
+@patch("app.services.finalize_service.create_notifications")
+@patch("app.services.finalize_service.get_provider")
+def test_finalize_pending_attendees_emailed_and_notified(mock_get_provider, mock_create_notif):
+    """Pending users are added as email attendees on the coordinator's copy, are
+    NEVER written onto their own calendar (even though one has a write calendar),
+    and receive an event_finalized notification."""
+    calls: list = []
+
+    def _create(tokens, calendar_id, payload):
+        calls.append((calendar_id, payload))
+        return "cal-evt-123"
+
+    prov = MagicMock()
+    prov.create_event.side_effect = _create
+    mock_get_provider.return_value = prov
+
+    coord_cal = _make_user_write_cal("coordinator-uuid-1", "coord-cal", "coord-acct", "google")
+    # The pending user HAS a write calendar — proving they are still not direct-written.
+    pending_cal = _make_user_write_cal("pending-uuid", "pending-cal", "pending-acct", "microsoft")
+
+    db = _make_pending_finalize_db(
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        accepted=[],
+        pending=[_make_participant("pending-uuid", "pending@example.com")],
+        write_cal_rows=[coord_cal, pending_cal],
+    )
+
+    result = finalize_event(
+        "event-uid-1",
+        "pt-uuid-1",
+        "Team Lunch",
+        _coord_user(),
+        db=db,
+        pending_attendee_user_ids=["pending-uuid"],
+    )
+
+    assert result["status"] == "confirmed"
+    # Exactly one calendar write — the coordinator copy. The pending user's own
+    # calendar is never touched.
+    assert len(calls) == 1
+    cal_id, payload = calls[0]
+    assert cal_id == "coord-cal"
+    assert "pending@example.com" in payload.attendee_emails
+    assert all(c[0] != "pending-cal" for c in calls)
+
+    # Notifications include the pending user, all typed event_finalized.
+    notif_rows = mock_create_notif.call_args[0][0]
+    notif_user_ids = [r["user_id"] for r in notif_rows]
+    assert "pending-uuid" in notif_user_ids
+    assert all(r["notification_type"] == "event_finalized" for r in notif_rows)
+
+
+@patch("app.services.finalize_service.create_notifications")
+@patch("app.services.finalize_service.get_provider")
+def test_finalize_pending_none_skips_pending(mock_get_provider, mock_create_notif):
+    """pending_attendee_user_ids=None → the pending fetch is skipped entirely: a
+    would-be pending email never lands in the attendees and no pending
+    notification is created (regression-identical behavior)."""
+    calls: list = []
+
+    def _create(tokens, calendar_id, payload):
+        calls.append((calendar_id, payload))
+        return "cal-evt-123"
+
+    prov = MagicMock()
+    prov.create_event.side_effect = _create
+    mock_get_provider.return_value = prov
+
+    coord_cal = _make_user_write_cal("coordinator-uuid-1", "coord-cal", "coord-acct", "google")
+
+    db = _make_pending_finalize_db(
+        event_row=_make_event_row(),
+        proposed_time_row=_make_proposed_time_row(),
+        accepted=[_make_participant("bob-uuid", "bob@example.com")],
+        # Configured but must NEVER be read when pending is None.
+        pending=[_make_participant("pending-uuid", "shouldnotappear@example.com")],
+        write_cal_rows=[coord_cal],
+    )
+
+    finalize_event(
+        "event-uid-1",
+        "pt-uuid-1",
+        "Team Lunch",
+        _coord_user(),
+        db=db,
+        pending_attendee_user_ids=None,
+    )
+
+    assert len(calls) == 1
+    _, payload = calls[0]
+    assert "bob@example.com" in payload.attendee_emails
+    assert "shouldnotappear@example.com" not in payload.attendee_emails
+
+    notif_rows = mock_create_notif.call_args[0][0]
+    notif_user_ids = [r["user_id"] for r in notif_rows]
+    assert notif_user_ids == ["bob-uuid"]
+    assert "pending-uuid" not in notif_user_ids

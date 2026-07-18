@@ -104,6 +104,8 @@ def finalize_event(
     location: str = "",
     video_call_link: str = "",
     db=None,
+    *,
+    pending_attendee_user_ids: list[str] | None = None,
 ) -> dict:
     """Finalize an event: confirm it and put it on everyone's calendar.
 
@@ -116,6 +118,12 @@ def finalize_event(
 
     Participants without a connected write calendar, plus any extra (external,
     non-app) emails, are invited as email attendees on the coordinator's copy.
+
+    ``pending_attendee_user_ids`` (keyword-only): non-accepted participants (used
+    by the chat "book direct" flow) who should receive a real provider invite as
+    email attendees on the coordinator's copy. They are never written directly
+    onto anyone's calendar. ``None`` → byte-identical to the pre-existing
+    behavior.
 
     Steps:
     1. Fetch event by uid — 404 if not found, 409 if already confirmed, 403 if
@@ -186,6 +194,25 @@ def finalize_event(
     )
     participants = participants_result.data or []
 
+    # Optional (chat "book direct" path): fetch pending (non-accepted)
+    # participants who should receive a real provider invite as email attendees
+    # on the coordinator's copy. They are NEVER written onto anyone's calendar
+    # directly (never added to direct_write_user_ids) — see agent/booking.py.
+    pending_participants: list[dict] = []
+    if pending_attendee_user_ids:
+        pending_result = (
+            client.table("event_participants")
+            .select(
+                "user_id, "
+                "profiles(email_address, full_name, calendar_accounts(provider, provider_email))"
+            )
+            .eq("event_id", event["id"])
+            .in_("user_id", pending_attendee_user_ids)
+            .neq("status", "accepted")
+            .execute()
+        )
+        pending_participants = pending_result.data or []
+
     # Resolve excluded_user_ids / extra_emails defaults
     _excluded = set(excluded_user_ids or [])
     _extra = list(extra_emails or [])
@@ -242,6 +269,14 @@ def finalize_event(
                 emailed_attendees.append(email)
 
     for email in _extra:
+        if email and email not in seen_emails:
+            seen_emails.add(email)
+            emailed_attendees.append(email)
+
+    # Pending (chat direct-invite) attendees: real provider invite as email
+    # attendees on the coordinator copy. Deduped against everything above.
+    for p in pending_participants:
+        email = _pick_attendee_email(p, coordinator_provider)
         if email and email not in seen_emails:
             seen_emails.add(email)
             emailed_attendees.append(email)
@@ -377,6 +412,22 @@ def finalize_event(
             "notification_type": "event_finalized",
             "title": f"{event['name']} has been scheduled",
             "message": "The event time has been confirmed.",
+            "is_read": False,
+            "metadata": {
+                "finalized_start_time_utc": proposed_time["start_time_utc"],
+                "finalized_end_time_utc": proposed_time["end_time_utc"],
+                "calendar_event_id": calendar_event_id,
+            },
+        })
+
+    # Notify pending (chat direct-invite) users too — they're invited attendees.
+    for p in pending_participants:
+        notification_rows.append({
+            "user_id": p["user_id"],
+            "event_id": event["id"],
+            "notification_type": "event_finalized",
+            "title": f"{event['name']} has been scheduled",
+            "message": "You're invited to this event.",
             "is_read": False,
             "metadata": {
                 "finalized_start_time_utc": proposed_time["start_time_utc"],
