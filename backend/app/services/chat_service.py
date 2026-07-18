@@ -206,6 +206,8 @@ def run_turn(
         # per-turn injected
         'user_id': current_user.id,
         'user_token': current_user.token,
+        'user_email': current_user.email_address,
+        'user_full_name': current_user.full_name,
         'user_timezone': current_user.timezone,
         'reference_time_utc': reference_time_utc,
         'user_message': request.message,
