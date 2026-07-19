@@ -293,12 +293,15 @@ $$;
 ALTER FUNCTION "public"."event_participants_broadcast_trigger"() OWNER TO "postgres";
 
 
--- Auto-creates a profile row when a new auth.users row is inserted
+-- Auto-creates a profile row when a new auth.users row is inserted.
+-- search_path is pinned and the table schema-qualified because the trigger
+-- fires inside GoTrue's session, whose search_path excludes "public".
 CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" = ''
     AS $$
 begin
-  insert into profiles (id, full_name, avatar_url, email_address)
+  insert into public.profiles (id, full_name, avatar_url, email_address)
   values (
     new.id,
     new.raw_user_meta_data->>'full_name',
@@ -315,7 +318,8 @@ ALTER FUNCTION "public"."handle_new_user"() OWNER TO "postgres";
 
 
 -- Cross-schema trigger: fires handle_new_user on every new auth signup
--- (pg_dump cannot capture auth-schema triggers; added manually)
+-- (pg_dump cannot capture auth-schema triggers; created by
+-- supabase/migrations/20260719000001_create_on_auth_user_created_trigger.sql)
 CREATE TRIGGER "on_auth_user_created"
   AFTER INSERT ON "auth"."users"
   FOR EACH ROW EXECUTE FUNCTION "public"."handle_new_user"();
