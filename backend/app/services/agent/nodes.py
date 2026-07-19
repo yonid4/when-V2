@@ -13,6 +13,7 @@ The LLM is confined to: (a) intent classification + field extraction
 a slot and never decides control flow.
 """
 
+import logging
 import re
 from datetime import date, datetime, time, timezone
 
@@ -28,6 +29,8 @@ from app.models.user import User
 from app.services.agent import availability, booking, people
 from app.services.agent import llm as llm_mod
 from app.utils import dates
+
+logger = logging.getLogger(__name__)
 
 _EVENT_TYPES = {'meeting', 'social', 'birthday', 'other'}
 _EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
@@ -219,6 +222,7 @@ def make_classify_and_extract(llm):
                 extracted = llm.with_structured_output(llm_mod.ExtractedTurn).invoke(prompt)
                 break
             except Exception:
+                logger.exception("chat agent extraction LLM call failed")
                 extracted = None
         if extracted is None:
             return {
@@ -677,6 +681,7 @@ def make_compose_reply(llm):
                     text = str(content).strip()
                     break
             except Exception:
+                logger.exception("chat agent reply LLM call failed")
                 continue
         return {'assistant_text': text or baseline}
 
