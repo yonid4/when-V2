@@ -1,16 +1,15 @@
-"""People resolution for the chat-create workflow (deterministic + one LLM call).
+"""People resolution for the chat-create workflow (fully deterministic).
 
 Turns extracted mentions ``[{name?, email?}]`` into resolved participant items
 and, when a bare name is ambiguous or unknown, a single ``pending_person`` the
-graph surfaces to the coordinator. Resolution order per mention (plan §4):
+graph surfaces to the coordinator. Name↔email pairing already happened upstream
+in the extraction call (a mention that carries both name and email was paired
+there), so this module needs no LLM. Resolution order per mention (plan §4):
 
-1. Explicit email wins → ``profiles`` lookup by ``email_address`` (normalized),
-   with nested ``calendar_accounts(id)`` for ``has_calendar``. Miss →
-   ``in_system=False`` (the invitation flow covers non-users).
-2. Bare name + an unattributed email in the same message → one LLM
-   ``EmailPairing`` call; if it says same person, attach the email and treat it
-   as an explicit email.
-3. Bare name → co-participant directory: exact casefolded ``full_name`` match,
+1. Any mention carrying an email → ``profiles`` lookup by ``email_address``
+   (normalized), with nested ``calendar_accounts(id)`` for ``has_calendar``. Miss
+   → ``in_system=False`` (the invitation flow covers non-users).
+2. Bare name → co-participant directory: exact casefolded ``full_name`` match,
    else a unique first-token match. Two or more → ``ambiguous`` pending; none →
    ``no_match`` pending.
 
@@ -35,8 +34,6 @@ SDK. Deterministic logic (directory matching) never uses the LLM.
 
 import logging
 
-from agent_service import tracing
-from agent_service.llm import judge_email_pairing
 from app.utils.email import normalize_email
 from app.utils.supabase import service_client
 
@@ -58,8 +55,6 @@ def resolve_mentions(
     mentions: list[dict],
     *,
     coordinator_id: str,
-    message: str = "",
-    llm=None,
     db=None,
 ) -> tuple[list[dict], dict | None]:
     """Resolve a list of ``{name?, email?}`` mentions to participants.
@@ -70,13 +65,12 @@ def resolve_mentions(
     no directory match stops processing and is returned as ``pending_person``
     (one at a time — the graph resolves it and re-invokes with the rest).
 
-    ``llm`` is optional; when provided it is used only to pair a bare name with an
-    unattributed email in the same message. ``db`` defaults to ``service_client``.
+    Fully deterministic — name↔email pairing already happened in the extraction
+    call, so a mention arrives with its email attached when they belong together.
+    ``db`` defaults to ``service_client``.
     """
     client = db if db is not None else service_client
     working = [dict(m) for m in list(mentions)[:MAX_CHAT_PEOPLE]]
-
-    consumed_emails = _pair_names_with_loose_emails(working, message, llm)
 
     # Prefetch every mentioned email in ONE query (the explicit-email path was
     # N+1 — one profiles round-trip per emailed invitee).
@@ -91,12 +85,8 @@ def resolve_mentions(
         name = _clean(mention.get("name"))
         email = _clean(mention.get("email"))
 
-        # An email-only mention that a name already claimed via LLM pairing.
-        if email and not name and email in consumed_emails:
-            continue
-
-        # Steps 1 & 2: any mention carrying an email resolves against the
-        # prefetched map (explicit-email path). Miss → non-user participant.
+        # Step 1: any mention carrying an email resolves against the prefetched
+        # map (explicit-email path). Miss → non-user participant.
         if email:
             participants.append(
                 _email_participant(email, name, "explicit_email", profile_by_email)
@@ -164,51 +154,6 @@ def _clean(value) -> str | None:
         return None
     value = str(value).strip()
     return value or None
-
-
-def _pair_names_with_loose_emails(working: list[dict], message: str, llm) -> set[str]:
-    """LLM step: attach unattributed emails to bare names in the same message.
-
-    Mutates ``working`` in place (sets ``email`` on a paired name mention) and
-    returns the set of emails that were consumed so their standalone mentions are
-    skipped later. No-op when there is no ``llm`` or no unattributed email.
-    """
-    if llm is None:
-        return set()
-
-    # An unattributed email is one whose mention carries no name of its own.
-    loose_emails = [
-        _clean(m.get("email"))
-        for m in working
-        if _clean(m.get("email")) and not _clean(m.get("name"))
-    ]
-    if not loose_emails:
-        return set()
-
-    consumed: set[str] = set()
-    for mention in working:
-        name = _clean(mention.get("name"))
-        if not name or _clean(mention.get("email")):
-            continue
-        for email in loose_emails:
-            if email in consumed:
-                continue
-            # Degrade, never crash: an LLM failure here must not abort the turn
-            # (chat_service has already persisted the user message, so a raise
-            # would leave it with no assistant reply and an unadvanced thread).
-            # Skipping the pairing just falls through to the bare-name directory
-            # match, which surfaces the normal ask-email prompt instead.
-            try:
-                with tracing.span("llm.pair_email"):
-                    paired = judge_email_pairing(llm, name, email, message)
-            except Exception:
-                logger.exception("chat agent email-pairing LLM call failed")
-                return consumed
-            if paired:
-                mention["email"] = email
-                consumed.add(email)
-                break
-    return consumed
 
 
 def _lookup_profiles_by_email(emails, db) -> dict[str, dict]:

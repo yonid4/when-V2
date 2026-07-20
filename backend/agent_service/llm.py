@@ -9,15 +9,16 @@ any LLM SDK at import time — ``get_chat_model`` performs a LAZY import of
 
 Contents:
 
-* ``EmailPairing`` + ``judge_email_pairing`` — the name↔email pairing judgment.
 * ``ExtractedTurn`` + ``build_extraction_prompt`` — the single structured
-  intent-classification/field-extraction call.
+  intent-classification/field-extraction call. Name↔email pairing is folded into
+  this one call (the extraction model attributes emails to the people it lists),
+  so there is no separate pairing round-trip.
 * ``get_chat_model`` — the concrete Gemini chat model factory (lazy).
 
-The LLM is used ONLY for intent classification + field extraction and name↔email
-pairing. It NEVER words replies (those are deterministic templates), NEVER
-selects slots, and never drives control flow — that is 100% deterministic
-Python in the graph.
+The LLM is used ONLY for intent classification + field extraction (a single
+call). It NEVER words replies (those are deterministic templates), NEVER selects
+slots, and never drives control flow — that is 100% deterministic Python in the
+graph.
 """
 
 from typing import Literal
@@ -29,9 +30,9 @@ def get_chat_model():
     """Build the concrete Gemini chat model (temperature 0 for determinism).
 
     ``thinking_budget=0`` disables Gemini 2.5 Flash's default dynamic thinking —
-    the agent's calls are simple extraction/pairing/wording tasks that gain
-    nothing from it, and thinking adds seconds of latency per call. (Gemini 2.5
-    Pro cannot disable thinking; keep ``GEMINI_MODEL`` on a Flash-tier model.)
+    the agent's call is a simple extraction task that gains nothing from it, and
+    thinking adds seconds of latency per call. (Gemini 2.5 Pro cannot disable
+    thinking; keep ``GEMINI_MODEL`` on a Flash-tier model.)
 
     The ``langchain_google_genai`` SDK is imported HERE, lazily, so that merely
     importing this module never loads the SDK. Callers inject the returned object
@@ -49,53 +50,22 @@ def get_chat_model():
     )
 
 
-class EmailPairing(BaseModel):
-    """Judgment: does an unattributed email belong to a named person?
-
-    Used for the one place the chat agent needs an LLM — pairing a bare name with
-    a loose email in the same message. It is NOT part of deterministic slot
-    selection.
-    """
-
-    same_person: bool = Field(
-        description="True if the email address belongs to the named person, else False.",
-    )
-
-
-def judge_email_pairing(llm, name: str, email: str, message: str) -> bool:
-    """Ask the injected ``llm`` whether ``email`` belongs to ``name``.
-
-    ``llm`` must implement ``.with_structured_output(schema).invoke(prompt)`` and
-    return an :class:`EmailPairing`. The model is injected so this module never
-    depends on any LLM SDK. Returns the boolean ``same_person`` verdict.
-    """
-    prompt = _build_pairing_prompt(name, email, message)
-    result = llm.with_structured_output(EmailPairing).invoke(prompt)
-    return bool(result.same_person)
-
-
-def _build_pairing_prompt(name: str, email: str, message: str) -> str:
-    """Build the pairing prompt. Kept separate so it can be unit-tested/tuned."""
-    return (
-        "You are resolving who an email address belongs to in a scheduling "
-        "request. Given the user's message, a named person mentioned in it, and "
-        "an email address that was written without a clear owner, decide whether "
-        "the email belongs to that named person.\n\n"
-        f"Message: {message!r}\n"
-        f"Named person: {name!r}\n"
-        f"Unattributed email: {email!r}\n\n"
-        "Respond with same_person=true only if the email clearly belongs to the "
-        "named person; otherwise same_person=false."
-    )
-
-
 # ── Intent classification + field extraction ────────────────────────────────
 
 class PersonMention(BaseModel):
-    """One person the user referred to in THIS message (name and/or email)."""
+    """One person the user referred to in THIS message.
+
+    Carries the person's name and/or their email. When the message gives both a
+    name and an email that belong to the SAME person, they go on ONE mention (the
+    model attributes the email to the name — no separate pairing step). An email
+    appears with no name only when its owner is genuinely unclear.
+    """
 
     name: str | None = Field(default=None, description="The person's name as written, if any.")
-    email: str | None = Field(default=None, description="An email address for the person, if given.")
+    email: str | None = Field(
+        default=None,
+        description="This person's email, if the message gives one that belongs to them.",
+    )
 
 
 class ExtractedTurn(BaseModel):
@@ -175,10 +145,20 @@ def build_extraction_prompt(
         "single chosen meeting time.",
         "- Daypart defaults when a part of day is named: morning 08:00-12:00, "
         "afternoon 12:00-17:00, evening 17:00-21:00. Default duration 60 minutes.",
+        "- When the event is a meal or activity that implies a time of day but no "
+        "explicit time is given, set start_time/end_time to a LOCAL window that "
+        "fits it rather than the whole business day: breakfast 08:00-10:00, brunch "
+        "10:00-12:00, lunch 12:00-14:00, coffee 09:00-17:00, drinks/happy hour "
+        "17:00-20:00, dinner 18:00-21:00, late night 21:00-23:30. For any other "
+        "activity, infer the window people would normally do it in.",
         "- On a revision, fill ONLY the fields the user changed this message; leave "
         "everything else null (the app keeps prior values).",
         "- In 'people', list ONLY people newly mentioned in this message. Do not "
         "repeat people already added (shown below).",
+        "- Attribute emails: when the message gives a person's name AND an email "
+        "that belongs to them (e.g. \"invite Sarah, sarah@acme.com\"), put the name "
+        "and the email on the SAME person entry. List an email with no name only "
+        "when you genuinely cannot tell whose it is. Never list the same email twice.",
     ]
 
     if workflow == 'edit_event' or (page_context and page_context.get('uid')):

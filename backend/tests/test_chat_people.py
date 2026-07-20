@@ -1,40 +1,14 @@
 """Chat agent — people resolution tests (agent/people.py).
 
-Covers explicit-email hit/miss, normalize_email (gmail dots), has_calendar
-flag, unique first-token / ambiguous / no-match directory matching, the
-EmailPairing LLM pairing via a FakeLLM, the awaiting-email helpers, and the
-MAX_CHAT_PEOPLE cap. Supabase is mocked per-table; no network is touched.
+Covers explicit-email hit/miss (batched), normalize_email (gmail dots),
+has_calendar flag, unique first-token / ambiguous / no-match directory matching,
+name+email mentions paired upstream by extraction, the awaiting-email helpers,
+and the MAX_CHAT_PEOPLE cap. Supabase is mocked per-table; no network is touched.
 """
 
 from unittest.mock import MagicMock
 
 from agent_service import people
-from agent_service.llm import EmailPairing
-
-
-# ─── FakeLLM ──────────────────────────────────────────────────────────────────
-
-class _FakeStructured:
-    def __init__(self, result, calls):
-        self._result = result
-        self._calls = calls
-
-    def invoke(self, prompt):
-        self._calls.append(prompt)
-        return self._result
-
-
-class FakeLLM:
-    """Implements `.with_structured_output(schema).invoke(prompt)` → EmailPairing."""
-
-    def __init__(self, same_person: bool):
-        self._same = same_person
-        self.schemas: list = []
-        self.prompts: list = []
-
-    def with_structured_output(self, schema):
-        self.schemas.append(schema)
-        return _FakeStructured(EmailPairing(same_person=self._same), self.prompts)
 
 
 # ─── DB fakes ─────────────────────────────────────────────────────────────────
@@ -288,77 +262,36 @@ def test_case_insensitive_full_name_match():
     assert participants[0]["user_id"] == "u-1"
 
 
-# ─── LLM pairing (EmailPairing) ───────────────────────────────────────────────
+# ─── Name+email paired upstream (by extraction) ───────────────────────────────
 
-def test_email_pairing_true_attaches_email(monkeypatch):
-    """Bare name + loose email, FakeLLM says same person → resolved via email."""
-    llm = FakeLLM(same_person=True)
+def test_name_and_email_on_one_mention_resolves_via_email():
+    """Extraction pairs an email to a name → a single {name, email} mention that
+    resolves through the explicit-email path (no directory, no separate LLM call)."""
     db = _db_email_lookup(_profile(user_id="u-5", full_name="Sarah Chen"))
     participants, pending = people.resolve_mentions(
-        [{"name": "Sarah"}, {"email": "sarah@example.com"}],
-        coordinator_id="coord",
-        message="invite Sarah, her email is sarah@example.com",
-        llm=llm,
-        db=db,
+        [{"name": "Sarah", "email": "sarah@example.com"}],
+        coordinator_id="coord", db=db,
     )
     assert pending is None
-    # Only one participant (the email mention was consumed into the name).
     assert len(participants) == 1
     assert participants[0]["user_id"] == "u-5"
     assert participants[0]["source"] == "explicit_email"
-    assert llm.schemas == [EmailPairing]
 
 
-def test_email_pairing_false_keeps_them_separate():
-    """FakeLLM says NOT same person → name goes to directory, email stands alone."""
-    llm = FakeLLM(same_person=False)
-    # Directory has no 'Sarah' → name yields a no_match pending; the loose email
-    # is an explicit-email miss (email_profiles empty) resolved independently.
+def test_unpaired_name_and_email_resolve_independently():
+    """When extraction leaves an email unattributed (its own mention), the email
+    resolves standalone and a separate bare name goes to the directory."""
+    # Directory has no 'Sarah' → no_match; the loose email is an explicit-email
+    # miss (email_profiles empty) resolved on its own first.
     directory = [_profile(user_id="u-9", full_name="Bob Jones")]
     db = _db_directory(directory, email_profiles=[])
 
     participants, pending = people.resolve_mentions(
         [{"email": "sarah@example.com"}, {"name": "Sarah"}],
-        coordinator_id="coord",
-        message="invite sarah@example.com and Sarah",
-        llm=llm,
-        db=db,
+        coordinator_id="coord", db=db,
     )
-    # The email mention resolved as an explicit-email miss (not paired).
     assert any(p["email"] == "sarah@example.com" and not p["in_system"] for p in participants)
-    # The bare name found no directory match.
     assert pending == {"name": "Sarah", "reason": "no_match"}
-
-
-def test_email_pairing_llm_failure_degrades_instead_of_raising():
-    """A raising pairing call must not abort the turn.
-
-    chat_service has already persisted the user's message by the time the graph
-    runs, so an exception escaping here would 500 the request and strand that
-    message with no assistant reply. The name must instead fall through to the
-    normal directory path (here: no match → the ask-email prompt).
-    """
-
-    class _RaisingLLM:
-        def with_structured_output(self, schema):
-            raise RuntimeError('Gemini unavailable')
-
-    directory = [_profile(user_id="u-9", full_name="Bob Jones")]
-    db = _db_directory(directory, email_profiles=[])
-
-    participants, pending = people.resolve_mentions(
-        [{"email": "sarah@example.com"}, {"name": "Sarah"}],
-        coordinator_id="coord",
-        message="invite sarah@example.com and Sarah",
-        llm=_RaisingLLM(),
-        db=db,
-    )
-
-    # Same outcome as an explicit "not the same person" verdict: unpaired, so the
-    # email resolves on its own and the name goes to the directory (no match →
-    # a normal pending ask). A crash here would have 500'd the turn instead.
-    assert pending == {"name": "Sarah", "reason": "no_match"}
-    assert any(p["email"] == "sarah@example.com" and not p["in_system"] for p in participants)
 
 
 # ─── awaiting-email helpers ───────────────────────────────────────────────────

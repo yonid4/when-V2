@@ -1,17 +1,17 @@
 """Create-workflow + shared graph nodes (Package 5).
 
 Every node is a pure function of ``AgentState`` returning a sparse partial
-update. Only ``classify_and_extract`` and ``resolve_people`` touch the injected
-``llm`` (via node factories that close over it); everything else is
-deterministic Python — including ``compose_reply``, which renders a
+update. Only ``classify_and_extract`` touches the injected ``llm`` (via a node
+factory that closes over it); everything else is deterministic Python —
+including ``resolve_people`` and ``compose_reply``, which renders a
 fact-complete template per outcome. Nodes set an internal ``route`` key naming
 the next node so the graph's conditional edges are trivial ``state['route']``
 lookups — routing is 100% deterministic and never LLM-driven.
 
-The LLM is confined to: (a) intent classification + field extraction
-(``classify_and_extract``) and (b) name↔email pairing (inside ``people`` via
-``resolve_people``). It never words replies, never selects a slot, and never
-decides control flow.
+The LLM is confined to a SINGLE call: intent classification + field extraction
+(``classify_and_extract``), which also attributes emails to the people it lists
+so no separate name↔email pairing round-trip is needed. It never words replies,
+never selects a slot, and never decides control flow.
 """
 
 import logging
@@ -336,48 +336,43 @@ def validate_intent(state):
 
 # ─── resolve_people (deterministic + LLM pairing) ─────────────────────────────
 
-def make_resolve_people(llm):
-    """Factory: resolve draft mentions to participants (LLM used only for pairing).
+def resolve_people(state):
+    """Resolve draft mentions to participants (fully deterministic — no LLM).
 
     Reads the not-yet-processed mentions from ``draft['people']`` and appends
     cleanly-resolved participants to any already accumulated. The FIRST ambiguous
     / unknown bare name becomes ``pending_person`` → ``ask_email``; the mentions
     after it are stashed back into ``draft['people']`` for the next round. All
-    resolved → ``prepare_choice``.
+    resolved → ``prepare_choice``. Name↔email pairing already happened in the
+    extraction call, so mentions arrive with emails attached where they belong.
     """
+    draft = dict(state.get('draft') or {})
+    mentions = list(draft.get('people') or [])
+    existing = list(state.get('participants') or [])
 
-    def resolve_people(state):
-        draft = dict(state.get('draft') or {})
-        mentions = list(draft.get('people') or [])
-        existing = list(state.get('participants') or [])
+    new_parts, pending = people.resolve_mentions(
+        mentions,
+        coordinator_id=state['user_id'],
+    )
+    participants = _dedupe_participants(existing + new_parts)
 
-        new_parts, pending = people.resolve_mentions(
-            mentions,
-            coordinator_id=state['user_id'],
-            message=state.get('user_message') or '',
-            llm=llm,
-        )
-        participants = _dedupe_participants(existing + new_parts)
-
-        if pending:
-            draft['people'] = _mentions_after(mentions, pending.get('name'))
-            return {
-                'draft': draft,
-                'participants': participants,
-                'pending_person': pending,
-                'status': 'awaiting_email',
-                'route': 'ask_email',
-            }
-
-        draft['people'] = []
+    if pending:
+        draft['people'] = _mentions_after(mentions, pending.get('name'))
         return {
             'draft': draft,
             'participants': participants,
-            'pending_person': None,
-            'route': 'prepare_choice',
+            'pending_person': pending,
+            'status': 'awaiting_email',
+            'route': 'ask_email',
         }
 
-    return resolve_people
+    draft['people'] = []
+    return {
+        'draft': draft,
+        'participants': participants,
+        'pending_person': None,
+        'route': 'prepare_choice',
+    }
 
 
 # ─── ask_email / apply_email (deterministic) ─────────────────────────────────

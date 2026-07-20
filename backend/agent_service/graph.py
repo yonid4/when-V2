@@ -1,11 +1,12 @@
 """The chat agent graph (Package 5).
 
 A LangGraph ``StateGraph(AgentState)`` whose routing is 100% deterministic Python.
-The injected ``llm`` reaches only the two nodes that need it
-(``classify_and_extract``, ``resolve_people``) via node factories that close
-over it; every other node — including the terminal ``compose_reply``, which
-renders deterministic reply templates — is pure deterministic logic and every
-conditional edge is a trivial ``state['route']`` lookup.
+The injected ``llm`` reaches only ONE node — ``classify_and_extract``, the single
+intent/field-extraction call (which also attributes emails to the people it
+lists) — via a node factory that closes over it; every other node, including
+``resolve_people`` and the terminal ``compose_reply`` (deterministic reply
+templates), is pure deterministic logic and every conditional edge is a trivial
+``state['route']`` lookup.
 
 The entry router is the single security boundary for write paths: an event is
 only ever created / finalized / edited when the router dispatches a STRUCTURED
@@ -108,11 +109,11 @@ def build_graph(llm):
     def add(name: str, fn):
         g.add_node(name, _traced(name, fn))
 
-    # LLM-backed nodes (closures over the injected model).
+    # LLM-backed node (closure over the injected model). The single LLM call.
     add('classify_and_extract', nodes.make_classify_and_extract(llm))
-    add('resolve_people', nodes.make_resolve_people(llm))
 
     # Deterministic nodes.
+    add('resolve_people', nodes.resolve_people)
     add('compose_reply', nodes.compose_reply)
     add('validate_intent', nodes.validate_intent)
     add('validate_edit', editing.validate_edit)

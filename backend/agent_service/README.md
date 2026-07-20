@@ -14,14 +14,16 @@ top-level package (`from agent_service import graph`). Its single consumer is
 - **Deterministic routing.** The graph is a `StateGraph(AgentState)` whose
   every conditional edge is a plain Python lookup (`state['route']`). The LLM
   never decides control flow, never selects a slot, and never writes anything.
-- **LLM confined to two nodes.** `classify_and_extract` (intent + field
-  extraction) and `resolve_people` (name↔email pairing judgment). Everything
-  else is pure deterministic logic — including `compose_reply`, which renders a
-  fact-complete template per outcome (structured-action turns are 0-LLM).
+- **LLM confined to a single call.** `classify_and_extract` (intent + field
+  extraction) is the only LLM node — it also attributes emails to the people it
+  lists, so name↔email pairing needs no separate round-trip. Everything else,
+  `resolve_people` included, is pure deterministic logic — including
+  `compose_reply`, which renders a fact-complete template per outcome
+  (structured-action turns are 0-LLM).
 - **Thinking disabled.** The model factory passes `thinking_budget=0` — the
-  agent's calls are simple extraction/pairing tasks that gain nothing from
-  Gemini 2.5 Flash's default dynamic thinking, which adds seconds per call.
-  Keep `GEMINI_MODEL` on a Flash-tier model (Pro cannot disable thinking).
+  agent's call is a simple extraction task that gains nothing from Gemini 2.5
+  Flash's default dynamic thinking, which adds seconds per call. Keep
+  `GEMINI_MODEL` on a Flash-tier model (Pro cannot disable thinking).
 - **Security boundary at the entry router.** An event is only ever created,
   booked, or edited when the entry router dispatches a *structured action*
   (`confirm_draft` / `book_direct` / `use_in_app` / `cancel`) from a matching
@@ -33,10 +35,9 @@ top-level package (`from agent_service import graph`). Its single consumer is
   `reference_time_utc` is injected by the router.
 - **An LLM failure never kills a turn.** `chat_service` persists the user's
   message *before* invoking the graph, so an exception escaping a node would
-  strand that message with no assistant reply and an unadvanced thread. Both
-  LLM call sites degrade instead: `classify_and_extract` falls back to an
-  apology reply, and the `people` pairing call falls through to the plain
-  directory match (and stops pairing, rather than eating one timeout per name).
+  strand that message with no assistant reply and an unadvanced thread. The lone
+  LLM call, `classify_and_extract`, degrades instead: it retries once and then
+  falls back to an apology reply rather than raising.
 
 ## Module map
 
@@ -46,10 +47,10 @@ top-level package (`from agent_service import graph`). Its single consumer is
 | `state.py` | `AgentState` TypedDict — per-turn injected facts, rehydrated thread state, and turn outputs. |
 | `nodes.py` | Create-workflow + shared nodes (validation, drafting, confirmation cards, booking dispatch). |
 | `editing.py` | Edit-workflow nodes: `validate_edit` (before/after change set) and `apply_edit_node`. |
-| `people.py` | Participant resolution: explicit email → profile lookup; bare name → co-participant directory; ambiguous name + stray email → one LLM pairing call. |
+| `people.py` | Participant resolution (fully deterministic): explicit email → batched profile lookup; bare name → co-participant directory. Emails are paired to names upstream in the extraction call. |
 | `availability.py` | Deterministic slot ranking (reuses the proposal service's candidate grid) + best-effort busy-slot freshness sync. |
 | `booking.py` | Write orchestration: `book_direct` (straight onto calendars via the hardened finalize path) and `create_in_app_event` (normal When. planning flow). |
-| `llm.py` | Prompt builders, structured-output schemas (`ExtractedTurn`, `EmailPairing`), and the lazy Gemini model factory. |
+| `llm.py` | The extraction prompt builder, the `ExtractedTurn` structured-output schema, and the lazy Gemini model factory. |
 | `tracing.py` | Per-turn latency tracing (diagnostic only — see below). |
 
 ## Graph topology
@@ -65,7 +66,7 @@ Structured actions dispatch straight from the entry router:
 | `awaiting_confirmation` | `confirm_draft` | `apply_edit_node` / `book_direct_node` / `create_in_app_node` (by workflow + booking mode) |
 | anything else | — | `classify_and_extract` |
 
-Free text flows through the LLM-backed pipeline (`*` = LLM node); every branch
+Free text flows through the pipeline (`*` = the one LLM node); every branch
 fans into `compose_reply`, which renders the deterministic reply template for
 the outcome and ends the turn:
 
@@ -73,7 +74,7 @@ the outcome and ends the turn:
 flowchart TD
     CE[classify_and_extract *] --> VI[validate_intent]
     CE --> VE[validate_edit]
-    VI --> RP[resolve_people *]
+    VI --> RP[resolve_people]
     RP --> AEm[ask_email]
     RP --> PCH[prepare_choice]
     PCH --> PCF[prepare_confirmation]
@@ -99,6 +100,12 @@ flowchart TD
 - A missing or invalid timezone falls back to UTC (`dates._resolve_tz`).
 - The LLM is anchored with "today + weekday + timezone" in the extraction
   prompt and always emits **local** dates/times; the graph converts to UTC.
+- When a message names a meal or activity but gives no explicit time (e.g.
+  "brunch on Sunday"), the extraction prompt asks the model for a fitting local
+  window (breakfast 08:00–10:00, brunch 10:00–12:00, lunch 12:00–14:00, dinner
+  18:00–21:00, …) instead of the 09:00–17:00 business-hours fallback, so both the
+  in-app planning window and the direct-booking slot search land in a sensible
+  part of day.
 
 ## Latency tracing
 
