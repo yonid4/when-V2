@@ -617,6 +617,7 @@ def book_direct_node(state):
     out = _clear_workflow_state()
     out.update({
         'result_event_uid': uid,
+        'result_created': True,
         'reply': {'kind': 'booked',
                   'facts': {'title': draft.get('title') or 'your event',
                             'slot': _format_slot(slot, state.get('user_timezone'))}},
@@ -645,6 +646,7 @@ def create_in_app_node(state):
     out = _clear_workflow_state()
     out.update({
         'result_event_uid': uid,
+        'result_created': True,
         'reply': {'kind': 'created_in_app', 'facts': {'title': draft.get('title') or 'your event'}},
         'route': 'compose_reply',
     })

@@ -144,3 +144,6 @@ class ChatTurnResponse(BaseModel):
     messages: list[ChatMessageResponse]
     # Set when an event was created OR edited — triggers frontend invalidation.
     event_uid: str | None = None
+    # Set only when a brand-new event was created this turn (in-app or direct
+    # book), never on an edit — the client navigates to the new event page.
+    created_event_uid: str | None = None

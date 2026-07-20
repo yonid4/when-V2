@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { History, MessageSquare, Plus, Trash2, X } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { useChatUiStore } from '@/stores/chatStore'
@@ -13,7 +13,7 @@ import {
   useDeleteChatThread,
 } from '@/hooks/useChat'
 import { formatRelativeTime } from '@/lib/dates'
-import type { ChatActionPayload, ChatPageContext, ChatTurnRequest } from '@/types'
+import type { ChatActionPayload, ChatPageContext, ChatTurnRequest, ChatTurnResponse } from '@/types'
 import { MessageList } from './MessageList'
 import { DraftEventCard } from './DraftEventCard'
 import { ChatInput } from './ChatInput'
@@ -49,6 +49,7 @@ export function ChatWidget() {
 }
 
 function ChatWidgetInner({ pathname }: { pathname: string }) {
+  const router = useRouter()
   const isOpen = useChatUiStore((s) => s.isOpen)
   const setOpen = useChatUiStore((s) => s.setOpen)
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
@@ -113,6 +114,14 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
     if (!activeThreadId) return
     setNotice(null)
     sendTurn.mutate(body, {
+      // A brand-new event was created this turn — close the drawer and open its
+      // page so the user lands on the event they just made. Edits don't set this.
+      onSuccess: (response: ChatTurnResponse) => {
+        if (response.created_event_uid) {
+          setOpen(false)
+          router.push(`/events/${response.created_event_uid}`)
+        }
+      },
       onError: (err: unknown) => {
         const detail = (err as { detail?: string })?.detail
         setNotice(

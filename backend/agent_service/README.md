@@ -149,6 +149,14 @@ advanced thread state back. Chat requires `GEMINI_API_KEY` (the settings'
 `gemini_api_key` / `gemini_model`); without it the turn endpoint returns
 `503 chat_disabled`.
 
+A turn that creates a **brand-new event** — `create_in_app_node` or
+`book_direct_node` on their success paths — flags `result_created` in the graph
+output. `run_turn` surfaces that as `ChatTurnResponse.created_event_uid`, and the
+chat widget navigates to that event's page (closing the drawer) on receipt. An
+edit sets `event_uid` (so the client invalidates its event caches) but never
+`created_event_uid`, so it does not navigate; a partial book (finalize failed
+after the event was created) likewise leaves `created_event_uid` unset.
+
 ## Testing
 
 Tests never touch Gemini or Supabase: they call `build_graph(fake_llm)` with a

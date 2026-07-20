@@ -224,6 +224,7 @@ def test_confirm_dispatches_to_book_direct(monkeypatch):
     assert calls['slot'] == _slot()
     assert out['status'] == 'idle'
     assert out['result_event_uid'] == 'evt-booked'
+    assert out['result_created'] is True  # new event → client navigates to it
     assert out['workflow'] is None and out['draft'] is None
 
 
@@ -240,6 +241,7 @@ def test_confirm_dispatches_to_create_in_app(monkeypatch):
 
     assert out['status'] == 'idle'
     assert out['result_event_uid'] == 'evt-inapp'
+    assert out['result_created'] is True  # new event → client navigates to it
 
 
 def test_book_direct_invalid_slot_index_errors(monkeypatch):
@@ -403,6 +405,7 @@ def test_edit_confirm_calls_update_event_with_exact_payload(monkeypatch):
     assert captured['data'].model_dump(exclude_none=True) == {'name': 'Team Sync'}
     assert out['status'] == 'idle'
     assert out['result_event_uid'] == 'evt-A'
+    assert not out.get('result_created')  # an edit is not a new event → no navigation
 
 
 def test_edit_navigation_keeps_pinned_uid(monkeypatch):

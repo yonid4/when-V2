@@ -297,4 +297,7 @@ def _run_turn(
             _row_to_message_response(assistant_msg_row),
         ],
         event_uid=result_event_uid,
+        # Only set when this turn created a brand-new event (in-app or direct
+        # book), never on an edit — the client opens the new event page.
+        created_event_uid=result_event_uid if output.get('result_created') else None,
     )

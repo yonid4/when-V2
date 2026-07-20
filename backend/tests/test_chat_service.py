@@ -260,6 +260,32 @@ def test_run_turn_sets_last_event_uid_and_response_event_uid(monkeypatch):
     # Title already present → not overwritten on a later turn.
     assert "title" not in update_payload
     assert result.event_uid == "abc123def456"
+    # result_created absent (e.g. an edit) → no navigation signal to the client.
+    assert result.created_event_uid is None
+
+
+def test_run_turn_created_event_sets_created_event_uid(monkeypatch):
+    """A turn that creates a brand-new event surfaces created_event_uid for nav."""
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    user = _make_user()
+    db = _mock_db()
+
+    thread_row = _make_thread_row(title="Existing")
+    _wire_turn_db(
+        db, thread_row,
+        _make_message_row(id="u1"),
+        _make_message_row(id="a1", role="assistant"),
+        _make_thread_row(title="Existing", last_event_uid="newuid987"),
+    )
+
+    output = _graph_output(result_event_uid="newuid987", result_created=True)
+    with patch("app.services.chat_service.get_authed_client", return_value=db), \
+         patch("agent_service.graph.get_compiled_graph", return_value=_FakeGraph(output)):
+        req = ChatTurnRequest(action=ChatActionPayload(type="confirm_draft"))
+        result = chat_service.run_turn("thread-1", req, REF_TIME, user)
+
+    assert result.event_uid == "newuid987"
+    assert result.created_event_uid == "newuid987"
 
 
 def test_run_turn_action_turn_uses_deterministic_label(monkeypatch):

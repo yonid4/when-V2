@@ -53,6 +53,10 @@ class AgentState(TypedDict, total=False):
     card: dict | None
     buttons: list
     result_event_uid: str | None
+    # True only when THIS turn created a brand-new event (in-app or direct book) —
+    # tells run_turn to surface it as ``created_event_uid`` so the client opens the
+    # new event page. An edit sets ``result_event_uid`` but never this flag.
+    result_created: bool
 
     # ── Internal scratch (never persisted) ───────────────────────────────────
     intent: str | None

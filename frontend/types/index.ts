@@ -390,4 +390,7 @@ export interface ChatTurnResponse {
   thread: ChatThread
   messages: ChatMessage[]
   event_uid?: string | null
+  // Set only when a brand-new event was created this turn (in-app or direct
+  // book), never on an edit — the client navigates to the new event page.
+  created_event_uid?: string | null
 }

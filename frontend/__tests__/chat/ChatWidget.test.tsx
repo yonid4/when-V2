@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   sendPending: false,
   createThread: vi.fn(),
   deleteThread: vi.fn(),
+  push: vi.fn(),
   messagesThreadId: '',
   pathname: '/dashboard',
   threads: [] as Array<{
@@ -37,6 +38,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('next/navigation', () => ({
   usePathname: () => mocks.pathname,
+  useRouter: () => ({ push: mocks.push }),
 }))
 
 vi.mock('@/stores/authStore', () => ({
@@ -73,6 +75,7 @@ beforeEach(() => {
   mocks.sendTurn.mockReset()
   mocks.createThread.mockReset()
   mocks.deleteThread.mockReset()
+  mocks.push.mockReset()
   mocks.createThread.mockResolvedValue(makeThread({ id: 'new-thread', status: 'idle' }))
   mocks.deleteThread.mockResolvedValue(undefined)
   mocks.sendPending = false
@@ -157,6 +160,51 @@ describe('ChatWidget — sending turns', () => {
     )
     // The action is sent structurally — never encoded as a free-text message.
     expect(mocks.sendTurn.mock.calls[0][0]).not.toHaveProperty('message')
+  })
+
+  it('navigates to the new event and closes the drawer when created_event_uid is returned', async () => {
+    mocks.threads = [makeThread({ id: 't3', status: 'awaiting_confirmation' })]
+    mocks.messages = [
+      {
+        id: 'm1',
+        thread_id: 't3',
+        role: 'assistant',
+        content: "I'll set it up in When and invite everyone. Confirm to create it.",
+        payload: {
+          card: null,
+          buttons: [{ label: 'Confirm', action: { type: 'confirm_draft' } }],
+        },
+        created_at: '2026-01-02T00:00:00.000Z',
+      },
+    ]
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    fireEvent.click(await screen.findByText('Confirm'))
+
+    await waitFor(() => expect(mocks.sendTurn).toHaveBeenCalledTimes(1))
+    // The turn's onSuccess is what drives navigation; fire it with a created event.
+    const onSuccess = mocks.sendTurn.mock.calls[0][1].onSuccess
+    onSuccess({ created_event_uid: 'evt-new' })
+
+    expect(mocks.push).toHaveBeenCalledWith('/events/evt-new')
+    expect(useChatUiStore.getState().isOpen).toBe(false)
+  })
+
+  it('does not navigate when no event was created this turn', async () => {
+    mocks.threads = [makeThread({ id: 't4', status: 'collecting' })]
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    const input = screen.getByLabelText('Message the assistant')
+    fireEvent.change(input, { target: { value: 'Lunch on Friday' } })
+    fireEvent.click(screen.getByLabelText('Send message'))
+
+    await waitFor(() => expect(mocks.sendTurn).toHaveBeenCalledTimes(1))
+    // A turn that only advances the draft (no created_event_uid) never navigates.
+    mocks.sendTurn.mock.calls[0][1].onSuccess({ event_uid: null, created_event_uid: null })
+
+    expect(mocks.push).not.toHaveBeenCalled()
   })
 })
 
