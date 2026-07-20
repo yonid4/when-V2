@@ -14,6 +14,12 @@ graph surfaces to the coordinator. Resolution order per mention (plan §4):
    else a unique first-token match. Two or more → ``ambiguous`` pending; none →
    ``no_match`` pending.
 
+Query batching (this all runs in the chat hot path): every mentioned email is
+resolved in ONE ``profiles.in_(email_address, …)`` lookup rather than one per
+invitee, and the directory fetches peers with their profiles embedded in a
+single query (two round-trips instead of three). See ``_lookup_profiles_by_email``
+and ``_coparticipant_directory``.
+
 Only one pending person is returned at a time (the first encountered); the graph
 resolves it and calls again. ``MAX_CHAT_PEOPLE`` caps how many mentions are
 processed per request.
@@ -39,6 +45,11 @@ logger = logging.getLogger(__name__)
 MAX_CHAT_PEOPLE = 10
 
 _PROFILE_COLUMNS = "id, full_name, email_address, calendar_accounts(id)"
+# Co-participant row with its owner's profile embedded via the user_id → profiles
+# FK (DATA_MODEL: event_participants.user_id FK → profiles, the table's only FK to
+# profiles, so the embed is unambiguous). Lets the directory fetch peers and their
+# profiles in one round-trip instead of two.
+_PEER_COLUMNS = f"user_id, profiles({_PROFILE_COLUMNS})"
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -67,6 +78,12 @@ def resolve_mentions(
 
     consumed_emails = _pair_names_with_loose_emails(working, message, llm)
 
+    # Prefetch every mentioned email in ONE query (the explicit-email path was
+    # N+1 — one profiles round-trip per emailed invitee).
+    profile_by_email = _lookup_profiles_by_email(
+        [_clean(m.get("email")) for m in working], client,
+    )
+
     participants: list[dict] = []
     directory: list[dict] | None = None
 
@@ -78,10 +95,12 @@ def resolve_mentions(
         if email and not name and email in consumed_emails:
             continue
 
-        # Steps 1 & 2: any mention carrying an email resolves through the profiles
-        # lookup (explicit-email path). Miss → non-user participant.
+        # Steps 1 & 2: any mention carrying an email resolves against the
+        # prefetched map (explicit-email path). Miss → non-user participant.
         if email:
-            participants.append(_resolve_email(email, name, "explicit_email", client))
+            participants.append(
+                _email_participant(email, name, "explicit_email", profile_by_email)
+            )
             continue
 
         if not name:
@@ -192,17 +211,33 @@ def _pair_names_with_loose_emails(working: list[dict], message: str, llm) -> set
     return consumed
 
 
-def _resolve_email(email: str, name: str | None, source: str, db) -> dict:
-    """Look up an email in ``profiles``; build an in-system or non-user item."""
-    normalized = normalize_email(email)
+def _lookup_profiles_by_email(emails, db) -> dict[str, dict]:
+    """One ``profiles`` query for a batch of emails → ``{normalized_email: row}``.
+
+    Emails are normalized (matching how they are stored) and de-duplicated; an
+    empty batch skips the query entirely. Misses are simply absent from the map.
+    """
+    normalized = list(dict.fromkeys(normalize_email(e) for e in emails if e))
+    if not normalized:
+        return {}
     result = (
         db.table("profiles")
         .select(_PROFILE_COLUMNS)
-        .eq("email_address", normalized)
-        .maybe_single()
+        .in_("email_address", normalized)
         .execute()
     )
-    profile = result.data if result else None
+    return {row["email_address"]: row for row in (result.data or [])}
+
+
+def _email_participant(email: str, name: str | None, source: str,
+                       profile_by_email: dict[str, dict]) -> dict:
+    """Build a participant for an emailed mention from the prefetched map.
+
+    Hit → in-system participant; miss → non-user participant (the invitation flow
+    covers non-users).
+    """
+    normalized = normalize_email(email)
+    profile = profile_by_email.get(normalized)
     if profile:
         return _profile_to_participant(profile, source)
     return {
@@ -212,6 +247,11 @@ def _resolve_email(email: str, name: str | None, source: str, db) -> dict:
         "has_calendar": False,
         "source": source,
     }
+
+
+def _resolve_email(email: str, name: str | None, source: str, db) -> dict:
+    """Resolve a single typed email (the awaiting_email loop) via one lookup."""
+    return _email_participant(email, name, source, _lookup_profiles_by_email([email], db))
 
 
 def _profile_to_participant(profile: dict, source: str) -> dict:
@@ -233,9 +273,10 @@ def _profile_to_participant(profile: dict, source: str) -> dict:
 def _coparticipant_directory(coordinator_id: str, db) -> list[dict]:
     """Return profile rows for every peer the coordinator shares an event with.
 
-    my event ids (event_participants by coordinator) → peer user_ids across those
-    events → profiles (with nested calendar_accounts) for those ids. The
-    coordinator themselves is excluded.
+    Two round-trips: my event ids (event_participants by coordinator) → peers on
+    those events with their ``profiles`` embedded in one query (previously a
+    separate peers query and profiles query). The coordinator is excluded and
+    profiles are de-duplicated by id, preserving first-seen order.
     """
     my_events = (
         db.table("event_participants")
@@ -249,23 +290,23 @@ def _coparticipant_directory(coordinator_id: str, db) -> list[dict]:
 
     peers = (
         db.table("event_participants")
-        .select("user_id")
+        .select(_PEER_COLUMNS)
         .in_("event_id", event_ids)
         .execute()
     )
-    peer_ids = [r["user_id"] for r in (peers.data or []) if r["user_id"] != coordinator_id]
-    # Deduplicate while preserving order.
-    peer_ids = list(dict.fromkeys(peer_ids))
-    if not peer_ids:
-        return []
 
-    profiles = (
-        db.table("profiles")
-        .select(_PROFILE_COLUMNS)
-        .in_("id", peer_ids)
-        .execute()
-    )
-    return profiles.data or []
+    directory: list[dict] = []
+    seen: set = set()
+    for row in peers.data or []:
+        if row.get("user_id") == coordinator_id:
+            continue
+        profile = row.get("profiles")  # to-one embed → dict (or None)
+        pid = profile.get("id") if profile else None
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        directory.append(profile)
+    return directory
 
 
 def _match_name(name: str, directory: list[dict]) -> tuple[str, object]:
