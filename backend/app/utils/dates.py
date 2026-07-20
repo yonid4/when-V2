@@ -25,6 +25,17 @@ def _resolve_tz(tz_name: str | None):
         return UTC
 
 
+def is_valid_timezone(tz_name: str) -> bool:
+    """True when ``tz_name`` is a known IANA zone (e.g. "Europe/London")."""
+    if not tz_name:
+        return False
+    try:
+        ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
+
+
 def local_today(reference_time_utc: datetime, tz_name: str | None) -> date:
     """The calendar date it currently is in ``tz_name``.
 

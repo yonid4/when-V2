@@ -18,6 +18,42 @@ export function toDate(utcString: string): Date {
 }
 
 /**
+ * The current instant as a UTC ISO string.
+ * e.g. "2026-07-19T14:30:00.000Z"
+ */
+export function nowUtcIso(): string {
+  return new Date().toISOString()
+}
+
+/**
+ * The browser's IANA timezone name, or null when unavailable.
+ * e.g. "Asia/Jerusalem"
+ */
+export function getBrowserTimezone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Format a UTC timestamp as a coarse relative label against now.
+ * e.g. "just now", "5m ago", "3h ago", "2d ago"; older falls back to "Jun 15".
+ */
+export function formatRelativeTime(utcString: string): string {
+  const diffMs = Date.now() - new Date(utcString).getTime()
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d ago`
+  return formatShortDate(utcString)
+}
+
+/**
  * Format a UTC time string as HH:MM in the user's local timezone.
  * e.g. "2024-06-15T14:30:00Z" → "14:30" (in UTC+0)
  */

@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import { useAuthStore } from '@/stores/authStore'
 import { api } from '@/lib/api'
+import { getBrowserTimezone } from '@/lib/dates'
 import { User } from '@/types'
 
 // Keep in sync with PUBLIC_PATHS in middleware.ts. On these paths a visitor
@@ -39,6 +40,22 @@ function AuthRehydrator() {
       clearAuth()
     })
   }, [pathname]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep profiles.timezone aligned with the browser's IANA zone so the chat
+  // agent renders slot times as local wall-clock (it defaults to 'UTC'
+  // otherwise). Patches only when they differ, so this is a once-per-change
+  // write, and self-heals when the user travels.
+  useEffect(() => {
+    if (!user) return
+    const browserTz = getBrowserTimezone()
+    if (!browserTz || user.timezone === browserTz) return
+    api
+      .patch<User>('/account', { timezone: browserTz })
+      .then((updatedUser) => setUser(updatedUser))
+      .catch(() => {
+        /* best-effort — retried on next mount */
+      })
+  }, [user?.id, user?.timezone]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return null
 }

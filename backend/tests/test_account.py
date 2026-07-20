@@ -141,3 +141,55 @@ def test_delete_account_returns_401_unauthenticated():
     """No Bearer token → 403 (matches existing pattern in test_calendar.py)."""
     response = client.delete("/api/account")
     assert response.status_code == 403  # FastAPI HTTPBearer rejects with 403, not 401
+
+
+# ─── PATCH /api/account — timezone update ────────────────────────────────────
+
+@patch("app.services.auth_service.service_client")
+@patch("app.dependencies.service_client")
+def test_patch_account_updates_timezone(mock_dep_svc, mock_auth_svc):
+    """A valid IANA timezone is persisted to profiles and the updated user
+    (without token) is returned."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+    updated_profile = {**_current_user_profile(), "timezone": "Asia/Jerusalem"}
+    mock_auth_svc.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[updated_profile]
+    )
+
+    response = client.patch(
+        "/api/account", json={"timezone": "Asia/Jerusalem"}, headers=_auth_headers()
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["timezone"] == "Asia/Jerusalem"
+    assert "token" not in body
+
+    update_payload = mock_auth_svc.table.return_value.update.call_args[0][0]
+    assert update_payload["timezone"] == "Asia/Jerusalem"
+    mock_auth_svc.table.return_value.update.return_value.eq.assert_called_once_with(
+        "id", "user-uuid-1"
+    )
+
+
+@patch("app.services.auth_service.service_client")
+@patch("app.dependencies.service_client")
+def test_patch_account_rejects_invalid_timezone(mock_dep_svc, mock_auth_svc):
+    """An unknown IANA name is rejected with 422 and nothing is written."""
+    mock_dep_svc.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data=_current_user_profile()
+    )
+
+    response = client.patch(
+        "/api/account", json={"timezone": "Not/AZone"}, headers=_auth_headers()
+    )
+
+    assert response.status_code == 422
+    assert not mock_auth_svc.table.return_value.update.called
+
+
+def test_patch_account_returns_403_unauthenticated():
+    response = client.patch("/api/account", json={"timezone": "UTC"})
+    assert response.status_code == 403

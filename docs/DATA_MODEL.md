@@ -15,7 +15,7 @@ One row per user. Created on first Google OAuth login.
 | full_name | varchar(255) | From Google profile |
 | avatar_url | text | From Google profile |
 | email_address | varchar(255) | Unique, used for invite matching |
-| timezone | varchar(50) | User preference, e.g. "America/Los_Angeles" |
+| timezone | varchar(50) | User preference, e.g. "America/Los_Angeles". Defaults to 'UTC'; auto-updated to the browser's IANA zone via `PATCH /api/account` whenever the frontend detects a mismatch on load. Read by the chat agent to render slot times as local wall-clock. |
 | primary_calendar_provider | text | 'google' or 'microsoft' (default 'google') |
 | created_at / updated_at | timestamptz | |
 

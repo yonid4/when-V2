@@ -243,3 +243,21 @@ def get_user_profile(user: User) -> User:
     if not result.data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return User(**result.data)
+
+
+def update_user_timezone(user_id: str, tz_name: str) -> User:
+    """Persist the user's IANA timezone on their profile and return the
+    updated user. The value is validated upstream (AccountUpdateRequest);
+    the chat agent reads it to render slot times as local wall-clock."""
+    result = (
+        service_client.table("profiles")
+        .update({
+            "timezone": tz_name,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        .eq("id", user_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
+    return User(**result.data[0])

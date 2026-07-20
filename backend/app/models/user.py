@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from app.utils.dates import is_valid_timezone
 
 
 class User(BaseModel):
@@ -13,6 +15,20 @@ class User(BaseModel):
     # only: endpoints that serialize User must exclude it (the session JWT is
     # delivered exclusively via the HttpOnly ``session`` cookie).
     token: str = ''
+
+
+class AccountUpdateRequest(BaseModel):
+    """Body for PATCH /api/account — profile settings the user's client may
+    update. Currently only the IANA timezone, auto-detected by the browser."""
+
+    timezone: str
+
+    @field_validator("timezone")
+    @classmethod
+    def _must_be_iana(cls, value: str) -> str:
+        if not is_valid_timezone(value):
+            raise ValueError("must be a valid IANA timezone name")
+        return value
 
 
 class SessionExchangeRequest(BaseModel):

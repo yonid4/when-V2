@@ -6,7 +6,12 @@ shifts, and format_utc_in_tz rendering. Pure functions, no network/Supabase.
 
 from datetime import date, datetime, time, timezone
 
-from app.utils.dates import format_utc_in_tz, local_today, local_window_to_utc
+from app.utils.dates import (
+    format_utc_in_tz,
+    is_valid_timezone,
+    local_today,
+    local_window_to_utc,
+)
 
 
 # ─── local_window_to_utc: DST boundary ───────────────────────────────────────
@@ -100,3 +105,17 @@ def test_format_utc_in_tz_naive_assumed_utc():
     """A naive UTC instant renders correctly in the target zone."""
     dt = datetime(2026, 7, 17, 16, 30)  # naive, assumed UTC
     assert format_utc_in_tz(dt, "America/New_York") == "2026-07-17 12:30"
+
+
+# ─── is_valid_timezone: IANA name validation ─────────────────────────────────
+
+def test_is_valid_timezone_accepts_known_iana_zones():
+    assert is_valid_timezone("America/New_York")
+    assert is_valid_timezone("Asia/Jerusalem")
+    assert is_valid_timezone("UTC")
+
+
+def test_is_valid_timezone_rejects_unknown_or_empty():
+    assert not is_valid_timezone("Not/AZone")
+    assert not is_valid_timezone("EST5EDT-nonsense")
+    assert not is_valid_timezone("")

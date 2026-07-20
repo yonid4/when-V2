@@ -5,13 +5,25 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.dependencies import get_current_user
-from app.models.user import User
-from app.services import account_service
+from app.models.user import AccountUpdateRequest, User
+from app.services import account_service, auth_service
 from app.utils.google_auth import TokenRevocationError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/account", tags=["account"])
+
+
+@router.patch("", response_model=User, response_model_exclude={"token"})
+def update_my_account(
+    payload: AccountUpdateRequest,
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Update the authenticated user's profile settings.
+
+    Currently only ``timezone`` — the frontend auto-detects the browser's IANA
+    zone on load and patches it here when it differs from the profile."""
+    return auth_service.update_user_timezone(current_user.id, payload.timezone)
 
 
 @router.delete("", status_code=204)
