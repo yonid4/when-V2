@@ -29,6 +29,7 @@ SDK. Deterministic logic (directory matching) never uses the LLM.
 
 import logging
 
+from agent_service import tracing
 from agent_service.llm import judge_email_pairing
 from app.utils.email import normalize_email
 from app.utils.supabase import service_client
@@ -173,7 +174,18 @@ def _pair_names_with_loose_emails(working: list[dict], message: str, llm) -> set
         for email in loose_emails:
             if email in consumed:
                 continue
-            if judge_email_pairing(llm, name, email, message):
+            # Degrade, never crash: an LLM failure here must not abort the turn
+            # (chat_service has already persisted the user message, so a raise
+            # would leave it with no assistant reply and an unadvanced thread).
+            # Skipping the pairing just falls through to the bare-name directory
+            # match, which surfaces the normal ask-email prompt instead.
+            try:
+                with tracing.span("llm.pair_email"):
+                    paired = judge_email_pairing(llm, name, email, message)
+            except Exception:
+                logger.exception("chat agent email-pairing LLM call failed")
+                return consumed
+            if paired:
                 mention["email"] = email
                 consumed.add(email)
                 break

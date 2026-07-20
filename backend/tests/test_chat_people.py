@@ -280,6 +280,49 @@ def test_email_pairing_false_keeps_them_separate():
     assert pending == {"name": "Sarah", "reason": "no_match"}
 
 
+def test_email_pairing_llm_failure_degrades_instead_of_raising():
+    """A raising pairing call must not abort the turn.
+
+    chat_service has already persisted the user's message by the time the graph
+    runs, so an exception escaping here would 500 the request and strand that
+    message with no assistant reply. The name must instead fall through to the
+    normal directory path (here: no match → the ask-email prompt).
+    """
+
+    class _RaisingLLM:
+        def with_structured_output(self, schema):
+            raise RuntimeError('Gemini unavailable')
+
+    directory = [_profile(user_id="u-9", full_name="Bob Jones")]
+    ep = MagicMock()
+    ep.select.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[{"event_id": "evt-1"}]
+    )
+    ep.select.return_value.in_.return_value.execute.return_value = MagicMock(
+        data=[{"user_id": "u-9"}]
+    )
+    profiles = MagicMock()
+    profiles.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(data=None)
+    profiles.select.return_value.in_.return_value.execute.return_value = MagicMock(data=list(directory))
+    tables = {"event_participants": ep, "profiles": profiles}
+    db = MagicMock()
+    db.table.side_effect = lambda name: tables.get(name, MagicMock())
+
+    participants, pending = people.resolve_mentions(
+        [{"email": "sarah@example.com"}, {"name": "Sarah"}],
+        coordinator_id="coord",
+        message="invite sarah@example.com and Sarah",
+        llm=_RaisingLLM(),
+        db=db,
+    )
+
+    # Same outcome as an explicit "not the same person" verdict: unpaired, so the
+    # email resolves on its own and the name goes to the directory (no match →
+    # a normal pending ask). A crash here would have 500'd the turn instead.
+    assert pending == {"name": "Sarah", "reason": "no_match"}
+    assert any(p["email"] == "sarah@example.com" and not p["in_system"] for p in participants)
+
+
 # ─── awaiting-email helpers ───────────────────────────────────────────────────
 
 def test_resolve_provided_email_hit():

@@ -31,6 +31,12 @@ top-level package (`from agent_service import graph`). Its single consumer is
   `chat_threads` row, advances it, and `chat_service` writes it back. The graph
   itself holds no memory and never reads the wall clock —
   `reference_time_utc` is injected by the router.
+- **An LLM failure never kills a turn.** `chat_service` persists the user's
+  message *before* invoking the graph, so an exception escaping a node would
+  strand that message with no assistant reply and an unadvanced thread. Both
+  LLM call sites degrade instead: `classify_and_extract` falls back to an
+  apology reply, and the `people` pairing call falls through to the plain
+  directory match (and stops pairing, rather than eating one timeout per name).
 
 ## Module map
 
