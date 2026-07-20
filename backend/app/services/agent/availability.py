@@ -180,7 +180,10 @@ def ensure_fresh_busy_slots(
         return []
 
     try:
-        sync_service.sync_users_scoped(stale, window_start, window_end)
+        # Window bounds arrive as ISO strings when read from jsonb thread state;
+        # providers require real datetimes (Google calls .isoformat(), Microsoft
+        # .astimezone()), so normalize like threshold/synced_at above.
+        sync_service.sync_users_scoped(stale, _as_dt(window_start), _as_dt(window_end))
     except Exception as exc:  # pragma: no cover - defensive; wrapper already isolates
         logger.warning(
             "ensure_fresh_busy_slots: scoped sync failed, proceeding on existing data: %s",

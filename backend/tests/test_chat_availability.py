@@ -176,6 +176,28 @@ def test_ensure_fresh_syncs_only_stale_users(mock_sync):
 
 
 @patch("app.services.agent.availability.sync_service")
+def test_ensure_fresh_converts_iso_string_window_to_datetimes(mock_sync):
+    """jsonb thread state hands ensure_fresh_busy_slots ISO strings; providers
+    require datetimes (Google .isoformat(), Microsoft .astimezone()), so the
+    window must be normalized before sync_users_scoped is called."""
+    now = datetime.now(UTC)
+    rows = [{"user_id": "u1", "last_synced_at": None}]
+    window_start = now
+    window_end = now + timedelta(hours=2)
+
+    stale = availability.ensure_fresh_busy_slots(
+        ["u1"], window_start.isoformat(), window_end.isoformat(),
+        reference_time_utc=now.isoformat(), max_age_minutes=15, db=_db_accounts(rows),
+    )
+
+    assert stale == ["u1"]
+    mock_sync.sync_users_scoped.assert_called_once_with(["u1"], window_start, window_end)
+    passed_start, passed_end = mock_sync.sync_users_scoped.call_args[0][1:]
+    assert isinstance(passed_start, datetime)
+    assert isinstance(passed_end, datetime)
+
+
+@patch("app.services.agent.availability.sync_service")
 def test_ensure_fresh_no_sync_when_all_fresh(mock_sync):
     now = datetime.now(UTC)
     rows = [{"user_id": "u1", "last_synced_at": (now - timedelta(minutes=1)).isoformat()}]
