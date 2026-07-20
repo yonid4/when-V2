@@ -193,7 +193,7 @@ def test_run_turn_persists_messages_and_thread_state(monkeypatch):
     fake_graph = _FakeGraph(_graph_output())
     with patch("app.services.chat_service.get_authed_client", return_value=db), \
          patch("agent_service.graph.get_compiled_graph", return_value=fake_graph):
-        req = ChatTurnRequest(message="Schedule lunch")
+        req = ChatTurnRequest(message="Schedule lunch", timezone="Asia/Jerusalem")
         result = chat_service.run_turn("thread-1", req, REF_TIME, user)
 
     # Two message rows inserted: user then assistant.
@@ -228,10 +228,11 @@ def test_run_turn_persists_messages_and_thread_state(monkeypatch):
     assert result.thread.status == "collecting"
     assert result.event_uid is None
 
-    # Rehydrated thread state was injected into the graph.
+    # Rehydrated thread state was injected into the graph. The timezone comes
+    # from the request (browser), not the profile ("America/Los_Angeles").
     assert fake_graph.last_state["status"] == "idle"
     assert fake_graph.last_state["reference_time_utc"] == REF_TIME
-    assert fake_graph.last_state["user_timezone"] == "America/Los_Angeles"
+    assert fake_graph.last_state["user_timezone"] == "Asia/Jerusalem"
 
 
 def test_run_turn_sets_last_event_uid_and_response_event_uid(monkeypatch):

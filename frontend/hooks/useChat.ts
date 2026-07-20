@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import { nowUtcIso } from '@/lib/dates'
+import { getBrowserTimezone, nowUtcIso } from '@/lib/dates'
 import type { ChatThread, ChatMessage, ChatTurnRequest, ChatTurnResponse } from '@/types'
 
 const chatThreadsKey = ['chat', 'threads'] as const
@@ -36,8 +36,13 @@ export function useCreateChatThread() {
 export function useSendChatTurn(threadId: string) {
   const queryClient = useQueryClient()
   return useMutation({
+    // The browser timezone rides along on every turn so the agent renders
+    // dates/times in the user's current local time.
     mutationFn: (body: ChatTurnRequest) =>
-      api.post<ChatTurnResponse>(`/chat/threads/${threadId}/turn`, body),
+      api.post<ChatTurnResponse>(`/chat/threads/${threadId}/turn`, {
+        ...body,
+        timezone: getBrowserTimezone(),
+      }),
     // Show the user's own text the instant they hit send. Structured action
     // turns (button clicks) carry no message — nothing to append for those.
     onMutate: async (body: ChatTurnRequest) => {

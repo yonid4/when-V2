@@ -55,6 +55,9 @@ class ChatTurnRequest(BaseModel):
     message: str | None = Field(default=None, max_length=2000)
     action: ChatActionPayload | None = None
     context: ChatPageContext | None = None
+    # Browser IANA timezone (e.g. "Asia/Jerusalem") captured per turn; invalid
+    # or missing values fall back to UTC downstream (utils/dates._resolve_tz).
+    timezone: str | None = None
 
     @model_validator(mode='after')
     def _exactly_one_input(self) -> 'ChatTurnRequest':

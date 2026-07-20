@@ -32,6 +32,7 @@ class AgentState(TypedDict, total=False):
     user_token: str
     user_email: str
     user_full_name: str | None
+    # Browser IANA timezone sent by the client each turn (None → UTC display).
     user_timezone: str | None
     reference_time_utc: datetime
     user_message: str | None

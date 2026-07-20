@@ -309,11 +309,13 @@ export interface ChatActionPayload {
 }
 
 // Exactly one of `message` / `action` is sent; `message` is ≤2000 chars
-// (enforced server-side).
+// (enforced server-side). `timezone` is the browser IANA timezone, attached
+// automatically by useSendChatTurn.
 export interface ChatTurnRequest {
   message?: string
   action?: ChatActionPayload
   context?: ChatPageContext
+  timezone?: string | null
 }
 
 export interface DraftCardParticipant {
