@@ -2,14 +2,17 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { MessageSquare, Plus, X } from 'lucide-react'
+import { History, MessageSquare, Plus, Trash2, X } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
+import { useChatUiStore } from '@/stores/chatStore'
 import {
   useChatThreads,
   useChatMessages,
   useCreateChatThread,
   useSendChatTurn,
+  useDeleteChatThread,
 } from '@/hooks/useChat'
+import { formatRelativeTime } from '@/lib/dates'
 import type { ChatActionPayload, ChatPageContext, ChatTurnRequest } from '@/types'
 import { MessageList } from './MessageList'
 import { DraftEventCard } from './DraftEventCard'
@@ -46,8 +49,11 @@ export function ChatWidget() {
 }
 
 function ChatWidgetInner({ pathname }: { pathname: string }) {
-  const [isOpen, setIsOpen] = useState(false)
+  const isOpen = useChatUiStore((s) => s.isOpen)
+  const setOpen = useChatUiStore((s) => s.setOpen)
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const bootstrappedRef = useRef(false)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -56,10 +62,12 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
   const messagesQuery = useChatMessages(activeThreadId ?? '')
   const createThread = useCreateChatThread()
   const sendTurn = useSendChatTurn(activeThreadId ?? '')
+  const deleteThread = useDeleteChatThread()
 
   const threads = threadsQuery.data ?? []
   const messages = messagesQuery.data ?? []
   const context = deriveChatContext(pathname)
+  const sortedThreads = [...threads].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
 
   const activeThread = activeThreadId
     ? threads.find((thread) => thread.id === activeThreadId) ?? null
@@ -76,7 +84,7 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
     if (!isOpen || activeThreadId || bootstrappedRef.current) return
     if (threadsQuery.isLoading) return
     bootstrappedRef.current = true
-    const mostRecent = [...threads].sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0]
+    const mostRecent = sortedThreads[0]
     if (mostRecent) {
       setActiveThreadId(mostRecent.id)
     } else {
@@ -87,7 +95,7 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
           bootstrappedRef.current = false
         })
     }
-  }, [isOpen, activeThreadId, threads, threadsQuery.isLoading, createThread])
+  }, [isOpen, activeThreadId, sortedThreads, threadsQuery.isLoading, createThread])
 
   // Keep the newest message / card in view.
   useEffect(() => {
@@ -99,7 +107,7 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
         /* scrollIntoView is a no-op in some environments (e.g. jsdom) */
       }
     }
-  }, [isOpen, messages.length, card])
+  }, [isOpen, messages.length, card, sendTurn.isPending])
 
   function dispatchTurn(body: ChatTurnRequest) {
     if (!activeThreadId) return
@@ -126,6 +134,7 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
 
   async function handleNewChat() {
     setNotice(null)
+    setShowHistory(false)
     try {
       const thread = await createThread.mutateAsync()
       bootstrappedRef.current = true
@@ -135,11 +144,37 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
     }
   }
 
+  function handleSelectThread(threadId: string) {
+    setNotice(null)
+    setActiveThreadId(threadId)
+    setShowHistory(false)
+    setConfirmDeleteId(null)
+  }
+
+  async function handleDeleteThread(threadId: string) {
+    setConfirmDeleteId(null)
+    try {
+      await deleteThread.mutateAsync(threadId)
+      if (threadId === activeThreadId) {
+        // Fall back to the next most recent thread; start fresh when none left.
+        const next = sortedThreads.find((thread) => thread.id !== threadId)
+        if (next) {
+          setActiveThreadId(next.id)
+        } else {
+          const thread = await createThread.mutateAsync()
+          setActiveThreadId(thread.id)
+        }
+      }
+    } catch {
+      setNotice('Could not delete the chat. Please try again.')
+    }
+  }
+
   if (!isOpen) {
     return (
       <button
         type="button"
-        onClick={() => setIsOpen(true)}
+        onClick={() => setOpen(true)}
         aria-label="Open chat assistant"
         className="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-primary text-on-primary shadow-[0_12px_28px_-8px_rgba(155,68,40,0.45)] flex items-center justify-center hover:bg-primary/90 transition-colors"
       >
@@ -155,6 +190,17 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
         <h2 className="flex-1 text-sm font-extrabold text-on-surface">Assistant</h2>
         <button
           type="button"
+          onClick={() => setShowHistory((prev) => !prev)}
+          aria-label="Chat history"
+          aria-expanded={showHistory}
+          className={`p-2 rounded-lg text-on-surface-variant hover:bg-surface-container transition-colors ${
+            showHistory ? 'bg-surface-container' : ''
+          }`}
+        >
+          <History className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
           onClick={handleNewChat}
           disabled={createThread.isPending}
           aria-label="New chat"
@@ -165,7 +211,7 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
         </button>
         <button
           type="button"
-          onClick={() => setIsOpen(false)}
+          onClick={() => setOpen(false)}
           aria-label="Close chat"
           className="p-2 rounded-full text-on-surface-variant hover:bg-surface-container transition-colors"
         >
@@ -173,9 +219,73 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
         </button>
       </header>
 
+      {/* Thread history panel — toggled from the header, sits above messages */}
+      {showHistory && (
+        <div className="shrink-0 max-h-64 overflow-y-auto border-b border-outline-variant/20 bg-surface-container-lowest">
+          {sortedThreads.length === 0 && (
+            <p className="px-4 py-3 text-xs text-on-surface-variant">No previous chats yet.</p>
+          )}
+          {sortedThreads.map((thread) => (
+            <div
+              key={thread.id}
+              className={`flex items-center gap-2 px-4 py-2 hover:bg-surface-container transition-colors ${
+                thread.id === activeThreadId ? 'bg-primary/10' : ''
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => handleSelectThread(thread.id)}
+                className="flex-1 min-w-0 text-left"
+              >
+                <span className="block truncate text-xs font-bold text-on-surface">
+                  {thread.title || 'New conversation'}
+                </span>
+                <span className="block text-[10px] text-on-surface-variant">
+                  {formatRelativeTime(thread.updated_at)}
+                </span>
+              </button>
+              {confirmDeleteId === thread.id ? (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteThread(thread.id)}
+                    disabled={deleteThread.isPending}
+                    aria-label="Confirm delete"
+                    className="px-2 py-1 rounded-lg text-[10px] font-bold text-on-error-container bg-error-container hover:bg-error-container/80 transition-colors disabled:opacity-60"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteId(null)}
+                    aria-label="Cancel delete"
+                    className="px-2 py-1 rounded-lg text-[10px] font-bold text-on-surface-variant hover:bg-surface-container-high transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteId(thread.id)}
+                  aria-label="Delete chat"
+                  className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Body: scrollable message history + inline draft card */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-3">
-        <MessageList messages={messages} isLoading={messagesQuery.isLoading && !!activeThreadId} />
+        <MessageList
+          messages={messages}
+          isLoading={messagesQuery.isLoading && !!activeThreadId}
+          isThinking={sendTurn.isPending}
+        />
 
         {card && (
           <DraftEventCard

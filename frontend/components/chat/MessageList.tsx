@@ -7,14 +7,16 @@ import { MessageBubble } from './MessageBubble'
 interface MessageListProps {
   messages: ChatMessage[]
   isLoading: boolean
+  isThinking?: boolean
 }
 
 /**
- * Renders the conversation as a vertical stack of bubbles. Scrolling and the
- * inline draft card are owned by the parent (ChatWidget) so the card scrolls
- * together with the message history.
+ * Renders the conversation as a vertical stack of bubbles, plus a typing
+ * indicator while a turn is in flight. Scrolling and the inline draft card are
+ * owned by the parent (ChatWidget) so the card scrolls together with the
+ * message history.
  */
-export function MessageList({ messages, isLoading }: MessageListProps) {
+export function MessageList({ messages, isLoading, isThinking = false }: MessageListProps) {
   if (isLoading && messages.length === 0) {
     return (
       <div className="space-y-3">
@@ -24,7 +26,7 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
     )
   }
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && !isThinking) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
         <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -43,6 +45,20 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
       {messages.map((message) => (
         <MessageBubble key={message.id} message={message} />
       ))}
+      {isThinking && <ThinkingBubble />}
+    </div>
+  )
+}
+
+/** Assistant-side typing-dots bubble shown while a turn is in flight. */
+function ThinkingBubble() {
+  return (
+    <div className="flex justify-start" role="status" aria-label="Assistant is thinking">
+      <div className="bg-surface-container-high rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant/70 animate-bounce" />
+        <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant/70 animate-bounce [animation-delay:150ms]" />
+        <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant/70 animate-bounce [animation-delay:300ms]" />
+      </div>
     </div>
   )
 }

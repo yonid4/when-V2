@@ -30,6 +30,7 @@ import { InviteInput } from '@/components/event/InviteInput'
 import { RsvpSelector } from '@/components/event/RsvpSelector'
 import { Navbar } from '@/components/layout/Navbar'
 import { useAuthStore } from '@/stores/authStore'
+import { useChatUiStore } from '@/stores/chatStore'
 import type { EventWithParticipants, PreferredSlot } from '@/types'
 import { toDate, formatDateWindowWithYear, formatTime, formatLongDate } from '@/lib/dates'
 import { typeLabel, isSafeHttpUrl } from '@/lib/eventUtils'
@@ -90,6 +91,10 @@ function EventDetailSkeleton() {
 function EventDetailLoaded({ event }: { event: EventWithParticipants }) {
   const { user } = useAuthStore()
   const currentUserId = user?.id ?? ''
+  // On desktop, shift the page left while the chat drawer is open so the
+  // coordinator can still read/copy emails and names (drawer is 400px wide,
+  // fixed right; below lg it stays an overlay).
+  const chatOpen = useChatUiStore((s) => s.isOpen)
 
   const [participantsKey, setParticipantsKey] = useState(0)
 
@@ -391,7 +396,11 @@ function EventDetailLoaded({ event }: { event: EventWithParticipants }) {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div
+      className={`h-screen flex flex-col overflow-hidden transition-[margin] duration-300 ${
+        chatOpen ? 'lg:mr-[400px]' : ''
+      }`}
+    >
       <Navbar />
 
       {/* ── Invite banner — shown when the current user is still invited ── */}
