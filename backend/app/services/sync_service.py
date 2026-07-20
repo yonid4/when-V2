@@ -1,4 +1,7 @@
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta, timezone
 
 from app.providers.base import ProviderAPIError, ProviderAuthError, TokenBundle
@@ -7,6 +10,13 @@ from app.utils.google_auth import mark_account_needs_reauth
 from app.utils.supabase import service_client
 
 logger = logging.getLogger(__name__)
+
+# Scoped sync runs in the chat hot path (a user is waiting on the response), so
+# each user's sync is a blocking fan-out of live calendar-provider calls. Cap how
+# long any one user may block the turn, and run users concurrently so total wall
+# time is ~max(one user) instead of the sum. See agent_service/availability.py.
+SCOPED_SYNC_TIMEOUT_SECONDS = 30.0
+SCOPED_SYNC_MAX_WORKERS = 8
 
 
 def sync_busy_slots(user_id: str) -> int:
@@ -240,20 +250,66 @@ def _sync_participants_in_range(
 
 
 def sync_users_scoped(
-    user_ids, time_min: datetime, time_max: datetime
+    user_ids,
+    time_min: datetime,
+    time_max: datetime,
+    *,
+    timeout_seconds: float = SCOPED_SYNC_TIMEOUT_SECONDS,
 ) -> dict[str, int]:
     """Sync busy slots for a specific set of users within [time_min, time_max].
 
-    Thin public wrapper looping over ``_sync_user`` with per-user try/except so
-    one user's failure does not abort the batch. Returns {user_id: slots_upserted}.
+    Each user's ``_sync_user`` runs on its own worker thread so a batch's wall
+    time is bounded by the slowest single user, not their sum — this call sits in
+    the chat turn (§3.1), where users previously synced one after another.
+
+    Robustness contract (every user always appears in the result):
+
+    * **Per-user isolation.** One user's exception is logged and recorded as 0;
+      the rest are unaffected.
+    * **Per-user timeout.** A user whose sync has not finished ``timeout_seconds``
+      after the batch started is abandoned and recorded as 0. Because users run
+      concurrently this also bounds the whole call to ~``timeout_seconds``.
+      A timed-out worker thread cannot be killed (Python has no thread
+      interrupt); it keeps running to completion in the background and its
+      result is simply discarded — ranking proceeds on whatever busy data exists.
+
+    A thread pool (not asyncio) because the whole sync chain — the Supabase
+    client and every provider HTTP client — is synchronous.
+
+    Returns ``{user_id: slots_upserted}`` for every input user.
     """
-    results: dict[str, int] = {}
-    for uid in user_ids:
-        try:
-            results[uid] = _sync_user(uid, time_min, time_max)
-        except Exception as exc:
-            logger.error("Failed to sync busy slots for user %s: %s", uid, exc)
-            results[uid] = 0
+    user_ids = list(user_ids)
+    results: dict[str, int] = {uid: 0 for uid in user_ids}
+    if not user_ids:
+        return results
+
+    deadline = time.monotonic() + timeout_seconds
+    executor = ThreadPoolExecutor(
+        max_workers=min(len(user_ids), SCOPED_SYNC_MAX_WORKERS),
+        thread_name_prefix="scoped-sync",
+    )
+    try:
+        futures = {
+            executor.submit(_sync_user, uid, time_min, time_max): uid
+            for uid in user_ids
+        }
+        for future, uid in futures.items():
+            remaining = deadline - time.monotonic()
+            try:
+                results[uid] = future.result(timeout=max(0.0, remaining))
+            except FuturesTimeoutError:
+                logger.warning(
+                    "Timed out syncing busy slots for user %s after %.0fs; "
+                    "proceeding on existing data",
+                    uid,
+                    timeout_seconds,
+                )
+            except Exception as exc:
+                logger.error("Failed to sync busy slots for user %s: %s", uid, exc)
+    finally:
+        # wait=False so an abandoned (timed-out) sync never re-blocks the turn on
+        # shutdown; cancel_futures drops any user not yet started.
+        executor.shutdown(wait=False, cancel_futures=True)
     return results
 
 

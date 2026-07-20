@@ -129,7 +129,9 @@ immediately before the children it contains.
   `INFO`); set `LOG_LEVEL=WARNING` to see only slow turns.
 
 The two spans worth watching are `busy_sync` (a blocking fan-out to the Google
-/ Microsoft calendar APIs, one per stale user) and `llm.extract`.
+/ Microsoft calendar APIs; stale users now sync concurrently via a thread pool
+with a 30s per-user timeout, so the span is bounded to ~one user's sync — see
+`sync_service.sync_users_scoped`) and `llm.extract`.
 
 ## Running a turn
 

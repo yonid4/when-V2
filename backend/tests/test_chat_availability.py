@@ -6,6 +6,8 @@ freshness threshold gating sync_users_scoped, and sync_users_scoped's per-user
 failure isolation. Supabase is mocked; no network is touched.
 """
 
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -247,3 +249,45 @@ def test_sync_users_scoped_passes_window_through(mock_sync_user):
 
     args, _ = mock_sync_user.call_args
     assert args == ("u1", now, time_max)
+
+
+@patch("app.services.sync_service._sync_user")
+def test_sync_users_scoped_times_out_slow_user(mock_sync_user):
+    """A user exceeding the per-user timeout is abandoned (0); others still return."""
+    release = threading.Event()
+
+    def side_effect(uid, time_min, time_max):
+        if uid == "slow":
+            release.wait(timeout=5)  # blocks well past the timeout below
+            return 99
+        return 4
+
+    mock_sync_user.side_effect = side_effect
+    now = datetime.now(UTC)
+    try:
+        result = sync_service.sync_users_scoped(
+            ["fast", "slow"], now, now + timedelta(hours=1), timeout_seconds=0.1,
+        )
+    finally:
+        release.set()  # let the abandoned worker finish so it doesn't linger
+
+    assert result == {"fast": 4, "slow": 0}
+
+
+@patch("app.services.sync_service._sync_user")
+def test_sync_users_scoped_runs_users_concurrently(mock_sync_user):
+    """Users sync in parallel: wall time ~ one user, not the sum of all three."""
+    def side_effect(uid, time_min, time_max):
+        time.sleep(0.3)
+        return 1
+
+    mock_sync_user.side_effect = side_effect
+    now = datetime.now(UTC)
+
+    start = time.monotonic()
+    result = sync_service.sync_users_scoped(["u1", "u2", "u3"], now, now + timedelta(hours=1))
+    elapsed = time.monotonic() - start
+
+    assert result == {"u1": 1, "u2": 1, "u3": 1}
+    # Sequential would be ~0.9s (3×0.3); concurrent should finish well under that.
+    assert elapsed < 0.6
