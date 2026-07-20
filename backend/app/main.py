@@ -28,6 +28,15 @@ from app.scheduler.jobs import sync_all_users_job
 # Allow OAuth over HTTP for local development
 os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
+# uvicorn configures only its own loggers and leaves the root logger without a
+# handler, so application logs below WARNING are dropped by logging.lastResort.
+# Configure the root logger once here so module-level logger.info() calls — the
+# per-turn chat latency traces in particular — actually reach the console.
+logging.basicConfig(
+    level=settings.log_level.upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 logger = logging.getLogger(__name__)
 
 

@@ -44,6 +44,7 @@ top-level package (`from agent_service import graph`). Its single consumer is
 | `availability.py` | Deterministic slot ranking (reuses the proposal service's candidate grid) + best-effort busy-slot freshness sync. |
 | `booking.py` | Write orchestration: `book_direct` (straight onto calendars via the hardened finalize path) and `create_in_app_event` (normal When. planning flow). |
 | `llm.py` | Prompt builders, structured-output schemas (`ExtractedTurn`, `EmailPairing`), and the lazy Gemini model factory. |
+| `tracing.py` | Per-turn latency tracing (diagnostic only — see below). |
 
 ## Graph topology
 
@@ -93,6 +94,37 @@ flowchart TD
 - The LLM is anchored with "today + weekday + timezone" in the extraction
   prompt and always emits **local** dates/times; the graph converts to UTC.
 
+## Latency tracing
+
+Every turn is wrapped in a `tracing.turn_trace` by `chat_service.run_turn`, and
+each graph node is registered through `graph._traced`, so one structured line
+per turn reports where the time actually went:
+
+```
+INFO agent_service.tracing: chat.turn thread=thr_abc123 user=u-1 total=2832ms
+  [db.fetch_thread=25ms, db.insert_user_message=18ms, graph.invoke=2767ms,
+   >classify_and_extract=353ms, >>llm.extract=353ms, >compute_slots=2414ms,
+   >>busy_sync=2404ms, >>rank_slots=11ms, db.update_thread=21ms]
+```
+
+`>` marks nesting depth. Spans are recorded at span *start*, so a parent reads
+immediately before the children it contains.
+
+- **Diagnostic only.** Spans never swallow exceptions, alter return values, or
+  change control flow. `span()` is a pass-through no-op when no turn trace is
+  open, so unit tests and non-chat callers pay nothing.
+- **Concurrency-safe.** The recorder is a `ContextVar`, so parallel requests
+  each accumulate their own spans with no leakage between them.
+- **Slow turns escalate.** A turn at or over `tracing.SLOW_TURN_MS` (3s) logs at
+  WARNING instead of INFO, so it surfaces even under a WARNING-level config.
+- **Visibility.** uvicorn leaves the root logger without a handler, so app-level
+  INFO would otherwise be dropped by `logging.lastResort`. `app/main.py` calls
+  `logging.basicConfig` once at the level in `settings.log_level` (default
+  `INFO`); set `LOG_LEVEL=WARNING` to see only slow turns.
+
+The two spans worth watching are `busy_sync` (a blocking fan-out to the Google
+/ Microsoft calendar APIs, one per stale user) and `llm.extract`.
+
 ## Running a turn
 
 `chat_service.run_turn` builds the state dict (per-turn facts + rehydrated
@@ -112,5 +144,6 @@ kept stable for that reason.
 ```bash
 cd backend
 venv/bin/python -m pytest tests/test_chat_graph.py tests/test_chat_service.py \
-  tests/test_chat_people.py tests/test_chat_availability.py tests/test_chat_booking.py
+  tests/test_chat_people.py tests/test_chat_availability.py \
+  tests/test_chat_booking.py tests/test_chat_tracing.py
 ```

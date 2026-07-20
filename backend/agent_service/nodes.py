@@ -27,7 +27,7 @@ from app.models.chat import (
     EditChange,
 )
 from app.models.user import User
-from agent_service import availability, booking, people
+from agent_service import availability, booking, people, tracing
 from agent_service import llm as llm_mod
 from app.utils import dates
 
@@ -220,7 +220,8 @@ def make_classify_and_extract(llm):
         extracted = None
         for _ in range(2):
             try:
-                extracted = llm.with_structured_output(llm_mod.ExtractedTurn).invoke(prompt)
+                with tracing.span('llm.extract'):
+                    extracted = llm.with_structured_output(llm_mod.ExtractedTurn).invoke(prompt)
                 break
             except Exception:
                 logger.exception("chat agent extraction LLM call failed")
@@ -486,14 +487,19 @@ def compute_slots(state):
     latest = draft.get('latest_datetime_utc')
     duration = draft.get('duration_minutes') or 60
 
+    # Traced separately: the sync is a blocking call out to the calendar
+    # providers, the ranking is pure local computation — when a turn is slow it
+    # matters which of the two actually spent the time.
     try:
-        availability.ensure_fresh_busy_slots(user_ids, earliest, latest, reference_time_utc=ref)
+        with tracing.span('busy_sync'):
+            availability.ensure_fresh_busy_slots(user_ids, earliest, latest, reference_time_utc=ref)
     except Exception:
-        pass
+        logger.exception("chat agent busy-slot freshness sync failed; ranking on existing data")
 
-    slots = availability.rank_candidate_slots(
-        user_ids, earliest, latest, duration, reference_time_utc=ref, limit=3,
-    )
+    with tracing.span('rank_slots'):
+        slots = availability.rank_candidate_slots(
+            user_ids, earliest, latest, duration, reference_time_utc=ref, limit=3,
+        )
 
     if not slots:
         return {

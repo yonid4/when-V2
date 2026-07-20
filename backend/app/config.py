@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 10080  # 7 days
     frontend_url: str = "http://localhost:3000"
+    # Root log level. INFO surfaces the per-turn chat latency traces
+    # (agent_service/tracing.py); set to WARNING to see only slow turns.
+    log_level: str = "INFO"
 
 
 settings = Settings()  # type: ignore[call-arg]

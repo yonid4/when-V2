@@ -22,7 +22,7 @@ from app.models.chat import (
 )
 from app.models.user import User
 from app.services import event_service
-from agent_service import graph
+from agent_service import graph, tracing
 from app.utils.supabase import get_authed_client
 
 _TITLE_MAX = 60
@@ -160,25 +160,44 @@ def run_turn(
     reference_time_utc: datetime,
     current_user: User,
 ) -> ChatTurnResponse:
+    """Run one agent turn, wrapped in a latency trace.
+
+    The trace is diagnostic only — it wraps the whole turn (thread read, graph
+    invocation, message + state writes) so a slow turn reports which phase spent
+    the time, and emits one structured line on the way out even if the turn
+    raises. See ``agent_service/tracing.py``.
+    """
+    with tracing.turn_trace(thread=thread_id, user=current_user.id):
+        return _run_turn(thread_id, request, reference_time_utc, current_user)
+
+
+def _run_turn(
+    thread_id: str,
+    request: ChatTurnRequest,
+    reference_time_utc: datetime,
+    current_user: User,
+) -> ChatTurnResponse:
     if not (settings.gemini_api_key or '').strip():
         raise HTTPException(status_code=503, detail='chat_disabled')
 
     db = get_authed_client(current_user.token)
 
     # Fetch the thread — RLS hides foreign threads, so a missing row is a 404.
-    thread_result = (
-        db.table('chat_threads')
-        .select('*')
-        .eq('id', thread_id)
-        .maybe_single()
-        .execute()
-    )
+    with tracing.span('db.fetch_thread'):
+        thread_result = (
+            db.table('chat_threads')
+            .select('*')
+            .eq('id', thread_id)
+            .maybe_single()
+            .execute()
+        )
     if thread_result is None or not thread_result.data:
         raise HTTPException(status_code=404, detail='Thread not found')
     thread_row = thread_result.data
 
     # Re-verify the client-supplied page context (dropped silently on no access).
-    page_context = _verify_page_context(request.context, current_user)
+    with tracing.span('db.verify_page_context'):
+        page_context = _verify_page_context(request.context, current_user)
 
     # Persist the user turn (action turns carry a deterministic button label).
     if request.action is not None:
@@ -188,16 +207,17 @@ def run_turn(
         user_content = request.message or ''
         action_payload = None
 
-    user_msg_row = (
-        db.table('chat_messages')
-        .insert({
-            'thread_id': thread_id,
-            'role': 'user',
-            'content': user_content,
-            'payload': action_payload,
-        })
-        .execute()
-    ).data[0]
+    with tracing.span('db.insert_user_message'):
+        user_msg_row = (
+            db.table('chat_messages')
+            .insert({
+                'thread_id': thread_id,
+                'role': 'user',
+                'content': user_content,
+                'payload': action_payload,
+            })
+            .execute()
+        ).data[0]
 
     # Build the turn state (per-turn injected + rehydrated thread state) and run
     # the stateless graph. reference_time_utc is injected so the graph stays
@@ -223,7 +243,8 @@ def run_turn(
         'booking_mode': thread_row.get('booking_mode'),
     }
     compiled = graph.get_compiled_graph()
-    output = compiled.invoke(state)
+    with tracing.span('graph.invoke'):
+        output = compiled.invoke(state)
 
     # Persist the assistant turn — payload is the single card+buttons encoding.
     assistant_content = output.get('assistant_text') or ''
@@ -231,16 +252,17 @@ def run_turn(
         'card': output.get('card'),
         'buttons': output.get('buttons') or [],
     }
-    assistant_msg_row = (
-        db.table('chat_messages')
-        .insert({
-            'thread_id': thread_id,
-            'role': 'assistant',
-            'content': assistant_content,
-            'payload': assistant_payload,
-        })
-        .execute()
-    ).data[0]
+    with tracing.span('db.insert_assistant_message'):
+        assistant_msg_row = (
+            db.table('chat_messages')
+            .insert({
+                'thread_id': thread_id,
+                'role': 'assistant',
+                'content': assistant_content,
+                'payload': assistant_payload,
+            })
+            .execute()
+        ).data[0]
 
     # Write the advanced thread state back.
     result_event_uid = output.get('result_event_uid')
@@ -259,12 +281,13 @@ def run_turn(
     if not thread_row.get('title'):
         thread_update['title'] = _truncate_title(user_content)
 
-    updated = (
-        db.table('chat_threads')
-        .update(thread_update)
-        .eq('id', thread_id)
-        .execute()
-    )
+    with tracing.span('db.update_thread'):
+        updated = (
+            db.table('chat_threads')
+            .update(thread_update)
+            .eq('id', thread_id)
+            .execute()
+        )
     thread_final_row = updated.data[0] if updated.data else {**thread_row, **thread_update}
 
     return ChatTurnResponse(

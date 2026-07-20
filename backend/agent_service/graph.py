@@ -26,10 +26,26 @@ from langgraph.graph import END, START, StateGraph
 
 from agent_service import editing
 from agent_service import llm as llm_mod
-from agent_service import nodes
+from agent_service import nodes, tracing
 from agent_service.state import AgentState
 
 _EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
+
+
+def _traced(name: str, fn):
+    """Wrap a node so its wall-clock time lands in the active turn trace.
+
+    Purely diagnostic: the wrapper forwards ``state`` through and returns the
+    node's partial update untouched. A single ``state`` parameter is declared so
+    LangGraph's signature inspection sees the same shape as the bare node.
+    """
+
+    def traced_node(state):
+        with tracing.span(name):
+            return fn(state)
+
+    traced_node.__name__ = name
+    return traced_node
 
 
 # ─── Entry rehydration router (conditional edge from START) ───────────────────
@@ -87,23 +103,28 @@ def build_graph(llm):
     """
     g = StateGraph(AgentState)
 
+    # Every node is registered through _traced so a turn trace gets a per-node
+    # breakdown; the wrapper is a pass-through when no trace is open.
+    def add(name: str, fn):
+        g.add_node(name, _traced(name, fn))
+
     # LLM-backed nodes (closures over the injected model).
-    g.add_node('classify_and_extract', nodes.make_classify_and_extract(llm))
-    g.add_node('resolve_people', nodes.make_resolve_people(llm))
+    add('classify_and_extract', nodes.make_classify_and_extract(llm))
+    add('resolve_people', nodes.make_resolve_people(llm))
 
     # Deterministic nodes.
-    g.add_node('compose_reply', nodes.compose_reply)
-    g.add_node('validate_intent', nodes.validate_intent)
-    g.add_node('validate_edit', editing.validate_edit)
-    g.add_node('ask_email', nodes.ask_email)
-    g.add_node('apply_email', nodes.apply_email)
-    g.add_node('prepare_choice', nodes.prepare_choice)
-    g.add_node('compute_slots', nodes.compute_slots)
-    g.add_node('prepare_confirmation', nodes.prepare_confirmation)
-    g.add_node('book_direct_node', nodes.book_direct_node)
-    g.add_node('create_in_app_node', nodes.create_in_app_node)
-    g.add_node('apply_edit_node', editing.apply_edit_node)
-    g.add_node('cancel_node', nodes.cancel_node)
+    add('compose_reply', nodes.compose_reply)
+    add('validate_intent', nodes.validate_intent)
+    add('validate_edit', editing.validate_edit)
+    add('ask_email', nodes.ask_email)
+    add('apply_email', nodes.apply_email)
+    add('prepare_choice', nodes.prepare_choice)
+    add('compute_slots', nodes.compute_slots)
+    add('prepare_confirmation', nodes.prepare_confirmation)
+    add('book_direct_node', nodes.book_direct_node)
+    add('create_in_app_node', nodes.create_in_app_node)
+    add('apply_edit_node', editing.apply_edit_node)
+    add('cancel_node', nodes.cancel_node)
 
     # Entry dispatch.
     g.add_conditional_edges(START, entry_router, [
