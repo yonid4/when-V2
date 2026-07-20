@@ -192,7 +192,7 @@ def test_run_turn_persists_messages_and_thread_state(monkeypatch):
 
     fake_graph = _FakeGraph(_graph_output())
     with patch("app.services.chat_service.get_authed_client", return_value=db), \
-         patch("app.services.agent.graph.get_compiled_graph", return_value=fake_graph):
+         patch("agent_service.graph.get_compiled_graph", return_value=fake_graph):
         req = ChatTurnRequest(message="Schedule lunch")
         result = chat_service.run_turn("thread-1", req, REF_TIME, user)
 
@@ -250,7 +250,7 @@ def test_run_turn_sets_last_event_uid_and_response_event_uid(monkeypatch):
 
     output = _graph_output(result_event_uid="abc123def456")
     with patch("app.services.chat_service.get_authed_client", return_value=db), \
-         patch("app.services.agent.graph.get_compiled_graph", return_value=_FakeGraph(output)):
+         patch("agent_service.graph.get_compiled_graph", return_value=_FakeGraph(output)):
         req = ChatTurnRequest(message="confirm it")
         result = chat_service.run_turn("thread-1", req, REF_TIME, user)
 
@@ -275,7 +275,7 @@ def test_run_turn_action_turn_uses_deterministic_label(monkeypatch):
     )
 
     with patch("app.services.chat_service.get_authed_client", return_value=db), \
-         patch("app.services.agent.graph.get_compiled_graph", return_value=_FakeGraph(_graph_output())):
+         patch("agent_service.graph.get_compiled_graph", return_value=_FakeGraph(_graph_output())):
         req = ChatTurnRequest(action=ChatActionPayload(type="confirm_draft"))
         chat_service.run_turn("thread-1", req, REF_TIME, user)
 
@@ -316,7 +316,7 @@ def test_run_turn_drops_inaccessible_event_context(monkeypatch):
     )
 
     with patch("app.services.chat_service.get_authed_client", return_value=db), \
-         patch("app.services.agent.graph.get_compiled_graph", return_value=fake_graph), \
+         patch("agent_service.graph.get_compiled_graph", return_value=fake_graph), \
          patch(
              "app.services.chat_service.event_service.get_event_by_uid",
              side_effect=HTTPException(status_code=404, detail="Event not found"),
@@ -354,7 +354,7 @@ def test_run_turn_passes_verified_event_summary(monkeypatch):
     )
 
     with patch("app.services.chat_service.get_authed_client", return_value=db), \
-         patch("app.services.agent.graph.get_compiled_graph", return_value=fake_graph), \
+         patch("agent_service.graph.get_compiled_graph", return_value=fake_graph), \
          patch("app.services.chat_service.event_service.get_event_by_uid", return_value=event_stub):
         req = ChatTurnRequest(
             message="edit it",
@@ -543,7 +543,7 @@ def test_turn_endpoint_happy_path(mock_dep_svc, mock_get_client, monkeypatch):
         _make_thread_row(title="Schedule lunch", status="collecting", workflow="create_event"),
     )
 
-    with patch("app.services.agent.graph.get_compiled_graph", return_value=_FakeGraph(_graph_output())):
+    with patch("agent_service.graph.get_compiled_graph", return_value=_FakeGraph(_graph_output())):
         resp = client.post(
             "/api/chat/threads/thread-1/turn",
             headers=_auth_headers(),

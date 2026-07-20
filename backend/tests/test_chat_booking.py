@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
 
 from app.models.user import User
-from app.services.agent import booking
+from agent_service import booking
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -52,10 +52,10 @@ _REF = datetime(2026, 4, 1, 9, 0, tzinfo=timezone.utc)
 
 # ─── book_direct ─────────────────────────────────────────────────────────────
 
-@patch("app.services.agent.booking.service_client")
-@patch("app.services.agent.booking.get_authed_client")
-@patch("app.services.agent.booking.finalize_service")
-@patch("app.services.agent.booking.event_service")
+@patch("agent_service.booking.service_client")
+@patch("agent_service.booking.get_authed_client")
+@patch("agent_service.booking.finalize_service")
+@patch("agent_service.booking.event_service")
 def test_book_direct_rows_and_finalize(mock_event, mock_finalize, mock_get_authed, mock_service_client):
     """book_direct: in-system participants get invited/pending rows via the
     authed client, the confirmed slot is written as proposed_times rank 1 via the
@@ -111,10 +111,10 @@ def test_book_direct_rows_and_finalize(mock_event, mock_finalize, mock_get_authe
     assert call.kwargs["location"] == "Cafe"
 
 
-@patch("app.services.agent.booking.service_client")
-@patch("app.services.agent.booking.get_authed_client")
-@patch("app.services.agent.booking.finalize_service")
-@patch("app.services.agent.booking.event_service")
+@patch("agent_service.booking.service_client")
+@patch("agent_service.booking.get_authed_client")
+@patch("agent_service.booking.finalize_service")
+@patch("agent_service.booking.event_service")
 def test_book_direct_finalize_error_returns_error_code(mock_event, mock_finalize, mock_get_authed, mock_service_client):
     """A finalize HTTPException (e.g. no_write_calendar) is caught and surfaced as
     an error_code — never raised — and the planning event uid is still returned."""
@@ -135,10 +135,10 @@ def test_book_direct_finalize_error_returns_error_code(mock_event, mock_finalize
     assert result == {"event_uid": "evt-uid-1", "error_code": "no_write_calendar"}
 
 
-@patch("app.services.agent.booking.service_client")
-@patch("app.services.agent.booking.get_authed_client")
-@patch("app.services.agent.booking.finalize_service")
-@patch("app.services.agent.booking.event_service")
+@patch("agent_service.booking.service_client")
+@patch("agent_service.booking.get_authed_client")
+@patch("agent_service.booking.finalize_service")
+@patch("agent_service.booking.event_service")
 def test_book_direct_creates_no_invitations(mock_event, mock_finalize, mock_get_authed, mock_service_client):
     """book_direct must NOT create event_invitations rows (they would PK-collide
     with the participant row on accept)."""
@@ -163,8 +163,8 @@ def test_book_direct_creates_no_invitations(mock_event, mock_finalize, mock_get_
 
 # ─── create_in_app_event ─────────────────────────────────────────────────────
 
-@patch("app.services.agent.booking.invitation_service")
-@patch("app.services.agent.booking.event_service")
+@patch("agent_service.booking.invitation_service")
+@patch("agent_service.booking.event_service")
 def test_create_in_app_event_invites_each_and_tolerates_409(mock_event, mock_invitation):
     """create_in_app_event invites every non-coordinator participant by email;
     a 409 (already participant/invited) is tolerated, not raised."""
@@ -193,8 +193,8 @@ def test_create_in_app_event_invites_each_and_tolerates_409(mock_event, mock_inv
     assert invited == ["bob@x.com", "carol@x.com"]
 
 
-@patch("app.services.agent.booking.invitation_service")
-@patch("app.services.agent.booking.event_service")
+@patch("agent_service.booking.invitation_service")
+@patch("agent_service.booking.event_service")
 def test_create_in_app_event_reraises_non_409(mock_event, mock_invitation):
     """A non-409 invite error propagates (only 409 is tolerated)."""
     mock_event.create_event.return_value = SimpleNamespace(id="evt-db-1", uid="evt-uid-1", name="Lunch")

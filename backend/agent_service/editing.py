@@ -21,7 +21,7 @@ from fastapi import HTTPException
 from app.models.chat import EditChange
 from app.models.event import EventUpdate
 from app.services import event_service
-from app.services.agent.nodes import _fmt, _parse_time, _user_from_state
+from agent_service.nodes import _fmt, _parse_time, _user_from_state
 from app.utils import dates
 
 
@@ -185,7 +185,7 @@ def apply_edit_node(state):
             'route': 'compose_reply',
         }
 
-    from app.services.agent.nodes import _clear_workflow_state
+    from agent_service.nodes import _clear_workflow_state
 
     out = _clear_workflow_state()
     out.update({

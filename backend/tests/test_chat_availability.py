@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from app.services import sync_service
-from app.services.agent import availability
+from agent_service import availability
 
 UTC = timezone.utc
 
@@ -154,7 +154,7 @@ def _db_accounts(rows):
     return db
 
 
-@patch("app.services.agent.availability.sync_service")
+@patch("agent_service.availability.sync_service")
 def test_ensure_fresh_syncs_only_stale_users(mock_sync):
     now = datetime.now(UTC)
     rows = [
@@ -175,7 +175,7 @@ def test_ensure_fresh_syncs_only_stale_users(mock_sync):
     mock_sync.sync_users_scoped.assert_called_once_with(["u2", "u3"], window_start, window_end)
 
 
-@patch("app.services.agent.availability.sync_service")
+@patch("agent_service.availability.sync_service")
 def test_ensure_fresh_converts_iso_string_window_to_datetimes(mock_sync):
     """jsonb thread state hands ensure_fresh_busy_slots ISO strings; providers
     require datetimes (Google .isoformat(), Microsoft .astimezone()), so the
@@ -197,7 +197,7 @@ def test_ensure_fresh_converts_iso_string_window_to_datetimes(mock_sync):
     assert isinstance(passed_end, datetime)
 
 
-@patch("app.services.agent.availability.sync_service")
+@patch("agent_service.availability.sync_service")
 def test_ensure_fresh_no_sync_when_all_fresh(mock_sync):
     now = datetime.now(UTC)
     rows = [{"user_id": "u1", "last_synced_at": (now - timedelta(minutes=1)).isoformat()}]
@@ -211,7 +211,7 @@ def test_ensure_fresh_no_sync_when_all_fresh(mock_sync):
     mock_sync.sync_users_scoped.assert_not_called()
 
 
-@patch("app.services.agent.availability.sync_service")
+@patch("agent_service.availability.sync_service")
 def test_ensure_fresh_empty_user_ids_is_noop(mock_sync):
     assert availability.ensure_fresh_busy_slots(
         [], datetime.now(UTC), datetime.now(UTC), reference_time_utc=datetime.now(UTC)

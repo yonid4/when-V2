@@ -22,7 +22,7 @@ from app.models.chat import (
 )
 from app.models.user import User
 from app.services import event_service
-from app.services.agent import graph
+from agent_service import graph
 from app.utils.supabase import get_authed_client
 
 _TITLE_MAX = 60

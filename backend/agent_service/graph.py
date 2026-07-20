@@ -23,10 +23,10 @@ import re
 
 from langgraph.graph import END, START, StateGraph
 
-from app.services.agent import editing
-from app.services.agent import llm as llm_mod
-from app.services.agent import nodes
-from app.services.agent.state import AgentState
+from agent_service import editing
+from agent_service import llm as llm_mod
+from agent_service import nodes
+from agent_service.state import AgentState
 
 _EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
 

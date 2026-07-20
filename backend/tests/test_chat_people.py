@@ -8,8 +8,8 @@ MAX_CHAT_PEOPLE cap. Supabase is mocked per-table; no network is touched.
 
 from unittest.mock import MagicMock
 
-from app.services.agent import people
-from app.services.agent.llm import EmailPairing
+from agent_service import people
+from agent_service.llm import EmailPairing
 
 
 # ─── FakeLLM ──────────────────────────────────────────────────────────────────

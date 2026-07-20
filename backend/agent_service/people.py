@@ -29,7 +29,7 @@ SDK. Deterministic logic (directory matching) never uses the LLM.
 
 import logging
 
-from app.services.agent.llm import judge_email_pairing
+from agent_service.llm import judge_email_pairing
 from app.utils.email import normalize_email
 from app.utils.supabase import service_client
 

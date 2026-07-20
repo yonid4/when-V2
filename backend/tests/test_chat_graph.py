@@ -14,9 +14,9 @@ import pytest
 
 from app.models.event import EventUpdate
 from app.services import event_service
-from app.services.agent import availability, booking, editing, graph as graph_mod, people
-from app.services.agent.graph import build_graph, entry_router
-from app.services.agent.llm import ExtractedTurn
+from agent_service import availability, booking, editing, graph as graph_mod, people
+from agent_service.graph import build_graph, entry_router
+from agent_service.llm import ExtractedTurn
 
 REF = datetime(2026, 7, 18, 12, 0, tzinfo=timezone.utc)
 

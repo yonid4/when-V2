@@ -357,7 +357,7 @@ User opens event detail (any role)
 
 ---
 
-## Agentic chat (services/agent/)
+## Agentic chat (backend/agent_service/)
 
 A conversational layer for creating, booking, and editing events by chat. Gemini is used **only to produce structured data** — it never picks times, drives control flow, or calls tools.
 
@@ -382,7 +382,7 @@ The client sends `{ page, event_uid? }` each turn; the backend re-verifies event
 ```
 routers/chat.py             thin transport; captures reference_time_utc
   → services/chat_service.py    thread CRUD + run_turn persistence
-      → services/agent/
+      → agent_service/          standalone package at backend/agent_service/
           ├── graph.py        entry router + graph build
           ├── nodes.py        deterministic workflow nodes
           ├── editing.py      deterministic edit nodes

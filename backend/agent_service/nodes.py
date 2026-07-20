@@ -26,8 +26,8 @@ from app.models.chat import (
     EditChange,
 )
 from app.models.user import User
-from app.services.agent import availability, booking, people
-from app.services.agent import llm as llm_mod
+from agent_service import availability, booking, people
+from agent_service import llm as llm_mod
 from app.utils import dates
 
 logger = logging.getLogger(__name__)
