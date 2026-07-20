@@ -14,9 +14,14 @@ top-level package (`from agent_service import graph`). Its single consumer is
 - **Deterministic routing.** The graph is a `StateGraph(AgentState)` whose
   every conditional edge is a plain Python lookup (`state['route']`). The LLM
   never decides control flow, never selects a slot, and never writes anything.
-- **LLM confined to three nodes.** `classify_and_extract` (intent + field
-  extraction), `resolve_people` (name↔email pairing judgment), and
-  `compose_reply` (wording only). Everything else is pure deterministic logic.
+- **LLM confined to two nodes.** `classify_and_extract` (intent + field
+  extraction) and `resolve_people` (name↔email pairing judgment). Everything
+  else is pure deterministic logic — including `compose_reply`, which renders a
+  fact-complete template per outcome (structured-action turns are 0-LLM).
+- **Thinking disabled.** The model factory passes `thinking_budget=0` — the
+  agent's calls are simple extraction/pairing tasks that gain nothing from
+  Gemini 2.5 Flash's default dynamic thinking, which adds seconds per call.
+  Keep `GEMINI_MODEL` on a Flash-tier model (Pro cannot disable thinking).
 - **Security boundary at the entry router.** An event is only ever created,
   booked, or edited when the entry router dispatches a *structured action*
   (`confirm_draft` / `book_direct` / `use_in_app` / `cancel`) from a matching
@@ -54,7 +59,8 @@ Structured actions dispatch straight from the entry router:
 | anything else | — | `classify_and_extract` |
 
 Free text flows through the LLM-backed pipeline (`*` = LLM node); every branch
-fans into `compose_reply`, which words the reply and ends the turn:
+fans into `compose_reply`, which renders the deterministic reply template for
+the outcome and ends the turn:
 
 ```mermaid
 flowchart TD
@@ -66,7 +72,7 @@ flowchart TD
     PCH --> PCF[prepare_confirmation]
     VE --> PCF
     CS[compute_slots] --> PCF
-    PCF --> CR[compose_reply *]
+    PCF --> CR[compose_reply]
     AEm --> CR
     BD[book_direct_node] --> CR
     CIA[create_in_app_node] --> CR
@@ -99,9 +105,9 @@ advanced thread state back. Chat requires `GEMINI_API_KEY` (the settings'
 ## Testing
 
 Tests never touch Gemini or Supabase: they call `build_graph(fake_llm)` with a
-fake implementing `.with_structured_output(schema).invoke(...)` /
-`.invoke(prompt).content`, and patch `graph.get_compiled_graph` at the
-`chat_service` import site. Both names are kept stable for that reason.
+fake implementing `.with_structured_output(schema).invoke(...)`, and patch
+`graph.get_compiled_graph` at the `chat_service` import site. Both names are
+kept stable for that reason.
 
 ```bash
 cd backend

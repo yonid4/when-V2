@@ -1,10 +1,11 @@
 """The chat agent graph (Package 5).
 
 A LangGraph ``StateGraph(AgentState)`` whose routing is 100% deterministic Python.
-The injected ``llm`` reaches only the three nodes that need it
-(``classify_and_extract``, ``resolve_people``, ``compose_reply``) via node
-factories that close over it; every other node is pure deterministic logic and
-every conditional edge is a trivial ``state['route']`` lookup.
+The injected ``llm`` reaches only the two nodes that need it
+(``classify_and_extract``, ``resolve_people``) via node factories that close
+over it; every other node — including the terminal ``compose_reply``, which
+renders deterministic reply templates — is pure deterministic logic and every
+conditional edge is a trivial ``state['route']`` lookup.
 
 The entry router is the single security boundary for write paths: an event is
 only ever created / finalized / edited when the router dispatches a STRUCTURED
@@ -82,17 +83,16 @@ def build_graph(llm):
     """Compile the agent graph with ``llm`` injected into the LLM nodes.
 
     ``llm`` must implement ``.with_structured_output(schema).invoke(prompt)`` (for
-    classification/extraction and name↔email pairing) and ``.invoke(prompt)``
-    returning an object with ``.content`` (for reply wording). Tests pass a fake.
+    classification/extraction and name↔email pairing). Tests pass a fake.
     """
     g = StateGraph(AgentState)
 
     # LLM-backed nodes (closures over the injected model).
     g.add_node('classify_and_extract', nodes.make_classify_and_extract(llm))
     g.add_node('resolve_people', nodes.make_resolve_people(llm))
-    g.add_node('compose_reply', nodes.make_compose_reply(llm))
 
     # Deterministic nodes.
+    g.add_node('compose_reply', nodes.compose_reply)
     g.add_node('validate_intent', nodes.validate_intent)
     g.add_node('validate_edit', editing.validate_edit)
     g.add_node('ask_email', nodes.ask_email)

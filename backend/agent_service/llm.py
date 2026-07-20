@@ -12,12 +12,12 @@ Contents:
 * ``EmailPairing`` + ``judge_email_pairing`` — the name↔email pairing judgment.
 * ``ExtractedTurn`` + ``build_extraction_prompt`` — the single structured
   intent-classification/field-extraction call.
-* ``build_reply_prompt`` — the wording-only prompt for the terminal reply node.
 * ``get_chat_model`` — the concrete Gemini chat model factory (lazy).
 
-The LLM is used ONLY for intent classification + field extraction, name↔email
-pairing, and composing reply wording. It NEVER selects slots or drives control
-flow — that is 100% deterministic Python in the graph.
+The LLM is used ONLY for intent classification + field extraction and name↔email
+pairing. It NEVER words replies (those are deterministic templates), NEVER
+selects slots, and never drives control flow — that is 100% deterministic
+Python in the graph.
 """
 
 from typing import Literal
@@ -27,6 +27,11 @@ from pydantic import BaseModel, Field
 
 def get_chat_model():
     """Build the concrete Gemini chat model (temperature 0 for determinism).
+
+    ``thinking_budget=0`` disables Gemini 2.5 Flash's default dynamic thinking —
+    the agent's calls are simple extraction/pairing/wording tasks that gain
+    nothing from it, and thinking adds seconds of latency per call. (Gemini 2.5
+    Pro cannot disable thinking; keep ``GEMINI_MODEL`` on a Flash-tier model.)
 
     The ``langchain_google_genai`` SDK is imported HERE, lazily, so that merely
     importing this module never loads the SDK. Callers inject the returned object
@@ -40,6 +45,7 @@ def get_chat_model():
         model=settings.gemini_model,
         google_api_key=settings.gemini_api_key,
         temperature=0,
+        thinking_budget=0,
     )
 
 
@@ -207,24 +213,3 @@ def build_extraction_prompt(
 
     lines += ["", f"User message: {user_message!r}"]
     return "\n".join(lines)
-
-
-# ── Reply wording (terminal node) ────────────────────────────────────────────
-
-def build_reply_prompt(reply: dict, baseline: str) -> str:
-    """Build the wording-only prompt for the terminal reply node.
-
-    The model rephrases ``baseline`` (a deterministic draft already built from
-    structured facts) into natural, concise wording. It is explicitly forbidden
-    from adding facts, times, or names — so an LLM outage degrades wording only,
-    never correctness (the caller falls back to ``baseline`` verbatim).
-    """
-    kind = (reply or {}).get('kind', 'help')
-    return (
-        "You are When., a friendly, concise scheduling assistant. Rewrite the draft "
-        "reply below so it reads naturally in 1-2 short sentences.\n"
-        "Do NOT add or change any facts, dates, times, names, or promises — keep "
-        "every specific value exactly as written. Return only the reply text.\n\n"
-        f"Situation: {kind}\n"
-        f"Draft reply: {baseline}"
-    )

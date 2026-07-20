@@ -38,9 +38,11 @@ class _FakeStructured:
 
 
 class FakeLLM:
-    """Injected model. ``extracted`` is returned by the structured-output call;
-    ``content`` is the wording returned by the plain ``.invoke`` (compose_reply).
-    Set ``raise_reply=True`` to exercise the deterministic template fallback."""
+    """Injected model. ``extracted`` is returned by the structured-output call.
+    The graph never calls plain ``.invoke`` anymore (replies are deterministic
+    templates); ``content`` / ``raise_reply`` exist to prove exactly that — a
+    reply sourced from ``content`` or a crash on ``raise_reply`` would mean an
+    LLM wording call snuck back in."""
 
     def __init__(self, *, extracted=None, content='Sure, here you go.', raise_reply=False):
         self._extracted = extracted
@@ -421,22 +423,20 @@ def test_edit_navigation_keeps_pinned_uid(monkeypatch):
     assert turn2['card']['event_uid'] == 'evt-A'
 
 
-# ─── compose_reply: LLM wording vs deterministic fallback ─────────────────────
+# ─── compose_reply: deterministic templates, no LLM ───────────────────────────
 
-def test_compose_reply_uses_llm_wording():
-    g = build_graph(FakeLLM(content='Polished reply!'))
-    out = g.invoke(_base(user_message='hello', action=None,
-                         status='awaiting_confirmation', workflow='edit_event',
-                         draft={'event_uid': 'e', 'event_name': 'X', 'changes': {}}))
-    # (edit with no changes → edit_need_change reply, LLM wording applied)
-    assert out['assistant_text'] == 'Polished reply!'
+def test_compose_reply_uses_deterministic_template():
+    """Replies come from the outcome templates — never from LLM wording."""
+    g = build_graph(FakeLLM(extracted=ExtractedTurn(intent='other'), content='Polished reply!'))
+    out = g.invoke(_base(user_message='what can you do'))
+    assert 'schedule' in out['assistant_text'].lower()
+    assert out['assistant_text'] != 'Polished reply!'
 
 
-def test_compose_reply_falls_back_to_template_on_llm_failure():
-    """An LLM outage degrades wording only — the deterministic template is used."""
+def test_compose_reply_never_calls_the_llm():
+    """compose_reply makes no plain ``.invoke`` call (raise_reply would crash it)."""
     g = build_graph(FakeLLM(extracted=ExtractedTurn(intent='other'), raise_reply=True))
     out = g.invoke(_base(user_message='what is the weather'))
-    assert out['assistant_text']
     assert 'schedule' in out['assistant_text'].lower()
 
 

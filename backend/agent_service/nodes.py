@@ -1,16 +1,17 @@
 """Create-workflow + shared graph nodes (Package 5).
 
 Every node is a pure function of ``AgentState`` returning a sparse partial
-update. Only ``classify_and_extract``, ``resolve_people`` and ``compose_reply``
-touch the injected ``llm`` (via node factories that close over it); everything
-else is deterministic Python. Nodes set an internal ``route`` key naming the next
-node so the graph's conditional edges are trivial ``state['route']`` lookups —
-routing is 100% deterministic and never LLM-driven.
+update. Only ``classify_and_extract`` and ``resolve_people`` touch the injected
+``llm`` (via node factories that close over it); everything else is
+deterministic Python — including ``compose_reply``, which renders a
+fact-complete template per outcome. Nodes set an internal ``route`` key naming
+the next node so the graph's conditional edges are trivial ``state['route']``
+lookups — routing is 100% deterministic and never LLM-driven.
 
 The LLM is confined to: (a) intent classification + field extraction
-(``classify_and_extract``), (b) name↔email pairing (inside ``people`` via
-``resolve_people``), and (c) reply wording (``compose_reply``). It never selects
-a slot and never decides control flow.
+(``classify_and_extract``) and (b) name↔email pairing (inside ``people`` via
+``resolve_people``). It never words replies, never selects a slot, and never
+decides control flow.
 """
 
 import logging
@@ -658,38 +659,18 @@ def cancel_node(state):
     return out
 
 
-# ─── compose_reply (LLM, terminal for every branch) ───────────────────────────
+# ─── compose_reply (deterministic, terminal for every branch) ─────────────────
 
-def make_compose_reply(llm):
-    """Factory: the single terminal reply node.
-
-    Builds a deterministic ``baseline`` from the structured ``reply`` facts, then
-    asks the LLM to improve only the WORDING (retried once). Any failure/empty
-    output falls back to ``baseline`` verbatim — ``assistant_text`` is therefore
-    always present and correct even during an LLM outage."""
-
-    def compose_reply(state):
-        reply = state.get('reply') or {'kind': 'help', 'facts': {}}
-        baseline = _fallback_text(reply)
-        prompt = llm_mod.build_reply_prompt(reply, baseline)
-        text = None
-        for _ in range(2):
-            try:
-                resp = llm.invoke(prompt)
-                content = getattr(resp, 'content', None)
-                if content and str(content).strip():
-                    text = str(content).strip()
-                    break
-            except Exception:
-                logger.exception("chat agent reply LLM call failed")
-                continue
-        return {'assistant_text': text or baseline}
-
-    return compose_reply
+def compose_reply(state):
+    """The single terminal reply node: render the deterministic template for the
+    structured ``reply`` facts. No LLM — every outcome has a fact-complete
+    template in ``_reply_text``, so replies are instant and never drift."""
+    reply = state.get('reply') or {'kind': 'help', 'facts': {}}
+    return {'assistant_text': _reply_text(reply)}
 
 
-def _fallback_text(reply: dict) -> str:
-    """Deterministic reply template per outcome (LLM-outage fallback)."""
+def _reply_text(reply: dict) -> str:
+    """Deterministic reply template per outcome."""
     kind = reply.get('kind', 'help')
     f = reply.get('facts') or {}
 
