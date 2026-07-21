@@ -53,11 +53,14 @@ def _create_test_user(full_name: str) -> IntegrationUser:
         "email_confirm": True,
     })
     user_id = result.user.id
-    service_client.table("profiles").insert({
+    # The on_auth_user_created trigger already inserted a profiles row (with a
+    # null full_name, since create_user above passes no user_metadata). Upsert
+    # to fill in our test fields — a plain insert would collide on the PK.
+    service_client.table("profiles").upsert({
         "id": user_id,
         "email_address": email,
         "full_name": full_name,
-    }).execute()
+    }, on_conflict="id").execute()
     token = jwt.encode(
         {
             "sub": user_id,
