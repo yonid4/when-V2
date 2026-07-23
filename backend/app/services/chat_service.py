@@ -238,7 +238,7 @@ def _run_turn(
         'workflow': thread_row.get('workflow'),
         'draft': thread_row.get('draft'),
         'participants': thread_row.get('participants'),
-        'pending_person': thread_row.get('pending_person'),
+        'pending_people': thread_row.get('pending_people'),
         'candidate_slots': thread_row.get('candidate_slots'),
         'booking_mode': thread_row.get('booking_mode'),
     }
@@ -271,7 +271,7 @@ def _run_turn(
         'workflow': output.get('workflow'),
         'draft': output.get('draft'),
         'participants': output.get('participants'),
-        'pending_person': output.get('pending_person'),
+        'pending_people': output.get('pending_people'),
         'candidate_slots': output.get('candidate_slots'),
         'booking_mode': output.get('booking_mode'),
         'updated_at': datetime.now(timezone.utc).isoformat(),

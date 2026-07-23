@@ -139,7 +139,7 @@ def build_graph(llm):
     g.add_conditional_edges('validate_intent', _by_route, ['resolve_people', 'compose_reply'])
     g.add_conditional_edges('validate_edit', _by_route, ['prepare_confirmation', 'compose_reply'])
     g.add_conditional_edges('resolve_people', _by_route, ['ask_email', 'prepare_choice'])
-    g.add_conditional_edges('apply_email', _by_route, ['resolve_people', 'compose_reply'])
+    g.add_conditional_edges('apply_email', _by_route, ['ask_email', 'prepare_choice', 'compose_reply'])
     g.add_conditional_edges('prepare_choice', _by_route, ['prepare_confirmation', 'compose_reply'])
     g.add_conditional_edges('compute_slots', _by_route, ['prepare_confirmation', 'compose_reply'])
 

@@ -371,7 +371,7 @@ Event create / finalize / edit run only in deterministic nodes, reachable only v
 
 ### Stateless graph per turn
 
-There is no LangGraph checkpointer. Workflow state persists on the `chat_threads` row (`status`, `workflow`, `draft`, `participants`, `pending_person`, `candidate_slots`, `booking_mode`). Every `POST /api/chat/threads/{id}/turn` rehydrates it, and an entry router keyed on `(status, workflow, action)` selects the node to run.
+There is no LangGraph checkpointer. Workflow state persists on the `chat_threads` row (`status`, `workflow`, `draft`, `participants`, `pending_people`, `candidate_slots`, `booking_mode`). Every `POST /api/chat/threads/{id}/turn` rehydrates it, and an entry router keyed on `(status, workflow, action)` selects the node to run.
 
 ### Page context
 

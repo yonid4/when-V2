@@ -44,7 +44,9 @@ class AgentState(TypedDict, total=False):
     workflow: str | None
     draft: dict | None
     participants: list | None
-    pending_person: dict | None
+    # People whose bare name was ambiguous/unknown, awaiting emails or a pick.
+    # A list so all missing emails are asked for in one bulk prompt.
+    pending_people: list | None
     candidate_slots: list | None
     booking_mode: str | None
 

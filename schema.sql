@@ -1586,7 +1586,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 --
 -- Per-user chat threads + messages backing the LangGraph assistant. The graph
 -- itself is stateless: workflow state is persisted on the chat_threads row
--- between turns (status/workflow/draft/participants/pending_person/
+-- between turns (status/workflow/draft/participants/pending_people/
 -- candidate_slots/booking_mode/last_event_uid). Strictly single-user — all
 -- access is via the authenticated user's client (get_authed_client), guarded by
 -- the RLS policies below. These tables are NOT added to supabase_realtime.
@@ -1621,7 +1621,7 @@ CREATE TABLE IF NOT EXISTS "public"."chat_threads" (
     "workflow" "text",
     "draft" "jsonb",
     "participants" "jsonb",
-    "pending_person" "jsonb",
+    "pending_people" "jsonb",
     "candidate_slots" "jsonb",
     "booking_mode" "text",
     "last_event_uid" character varying(12),

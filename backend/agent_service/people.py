@@ -1,10 +1,11 @@
 """People resolution for the chat-create workflow (fully deterministic).
 
 Turns extracted mentions ``[{name?, email?}]`` into resolved participant items
-and, when a bare name is ambiguous or unknown, a single ``pending_person`` the
-graph surfaces to the coordinator. Name↔email pairing already happened upstream
-in the extraction call (a mention that carries both name and email was paired
-there), so this module needs no LLM. Resolution order per mention (plan §4):
+and, when bare names are ambiguous or unknown, the full list of ``pending_people``
+the graph surfaces to the coordinator in one bulk ask. Name↔email pairing already
+happened upstream in the extraction call (a mention that carries both name and
+email was paired there), so this module needs no LLM. Resolution order per
+mention (plan §4):
 
 1. Any mention carrying an email → ``profiles`` lookup by ``email_address``
    (normalized), with nested ``calendar_accounts(id)`` for ``has_calendar``. Miss
@@ -19,9 +20,11 @@ invitee, and the directory fetches peers with their profiles embedded in a
 single query (two round-trips instead of three). See ``_lookup_profiles_by_email``
 and ``_coparticipant_directory``.
 
-Only one pending person is returned at a time (the first encountered); the graph
-resolves it and calls again. ``MAX_CHAT_PEOPLE`` caps how many mentions are
-processed per request.
+Every mention is processed in a single pass: cleanly-resolved people are
+collected into ``participants`` and every ambiguous / unknown bare name is
+collected into ``pending_people`` (in mention order), so the graph can ask for
+all missing emails at once instead of one round-trip per name. ``MAX_CHAT_PEOPLE``
+caps how many mentions are processed per request.
 
 Resolved participant item shape (stored in the thread's jsonb)::
 
@@ -56,14 +59,15 @@ def resolve_mentions(
     *,
     coordinator_id: str,
     db=None,
-) -> tuple[list[dict], dict | None]:
+) -> tuple[list[dict], list[dict]]:
     """Resolve a list of ``{name?, email?}`` mentions to participants.
 
-    Returns ``(participants, pending_person | None)``. Mentions are processed in
-    order and capped at ``MAX_CHAT_PEOPLE``. Everything that resolves cleanly is
-    collected into ``participants``; the FIRST bare name that is ambiguous or has
-    no directory match stops processing and is returned as ``pending_person``
-    (one at a time — the graph resolves it and re-invokes with the rest).
+    Returns ``(participants, pending_people)``. Mentions are processed in order
+    and capped at ``MAX_CHAT_PEOPLE``. Everything that resolves cleanly is
+    collected into ``participants``; every bare name that is ambiguous or has no
+    directory match is collected into ``pending_people`` (in mention order), so
+    the graph can ask for all of them in a single bulk prompt. ``pending_people``
+    is empty when everything resolved.
 
     Fully deterministic — name↔email pairing already happened in the extraction
     call, so a mention arrives with its email attached when they belong together.
@@ -79,6 +83,8 @@ def resolve_mentions(
     )
 
     participants: list[dict] = []
+    pending: list[dict] = []
+    seen_pending: set[str] = set()
     directory: list[dict] | None = None
 
     for mention in working:
@@ -103,17 +109,23 @@ def resolve_mentions(
         status, data = _match_name(name, directory)
         if status == "match":
             participants.append(_profile_to_participant(data, "coparticipant"))
-        elif status == "ambiguous":
-            pending = {
+            continue
+
+        # Unresolved — collect it (deduped by casefolded name) for the bulk ask.
+        key = name.casefold()
+        if key in seen_pending:
+            continue
+        seen_pending.add(key)
+        if status == "ambiguous":
+            pending.append({
                 "name": name,
                 "reason": "ambiguous",
                 "options": [_directory_option(p) for p in data],
-            }
-            return participants, pending
+            })
         else:  # no_match
-            return participants, {"name": name, "reason": "no_match"}
+            pending.append({"name": name, "reason": "no_match"})
 
-    return participants, None
+    return participants, pending
 
 
 def resolve_provided_email(email: str, *, name: str | None = None, db=None) -> dict:

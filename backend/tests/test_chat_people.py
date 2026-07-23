@@ -114,7 +114,7 @@ def test_explicit_email_hit_in_system():
     participants, pending = people.resolve_mentions(
         [{"email": "sarah@example.com"}], coordinator_id="coord", db=db
     )
-    assert pending is None
+    assert pending == []
     assert participants == [{
         "user_id": "u-9",
         "full_name": "Sarah Chen",
@@ -130,7 +130,7 @@ def test_explicit_email_miss_not_in_system():
     participants, pending = people.resolve_mentions(
         [{"name": "Bob", "email": "bob@company.com"}], coordinator_id="coord", db=db
     )
-    assert pending is None
+    assert pending == []
     assert participants == [{
         "full_name": "Bob",
         "email": "bob@company.com",
@@ -174,7 +174,7 @@ def test_multiple_emails_resolved_in_one_query():
         coordinator_id="coord", db=db,
     )
 
-    assert pending is None
+    assert pending == []
     # Exactly one round-trip carrying all three emails (was one query per email).
     assert len(captured) == 1
     _, queried = captured[0]
@@ -196,7 +196,7 @@ def test_bare_name_exact_full_name_match():
     participants, pending = people.resolve_mentions(
         [{"name": "Sarah Chen"}], coordinator_id="coord", db=db
     )
-    assert pending is None
+    assert pending == []
     assert participants[0]["user_id"] == "u-1"
     assert participants[0]["source"] == "coparticipant"
 
@@ -213,7 +213,7 @@ def test_directory_dedupes_peer_shared_across_events():
     participants, pending = people.resolve_mentions(
         [{"name": "Sarah Chen"}], coordinator_id="coord", db=db,
     )
-    assert pending is None
+    assert pending == []
     assert participants[0]["user_id"] == "u-1"  # matched once, no ambiguity from the dupe
 
 
@@ -224,7 +224,7 @@ def test_bare_name_unique_first_token_match():
     participants, pending = people.resolve_mentions(
         [{"name": "Sarah"}], coordinator_id="coord", db=db
     )
-    assert pending is None
+    assert pending == []
     assert participants[0]["user_id"] == "u-1"
 
 
@@ -236,10 +236,11 @@ def test_bare_name_ambiguous_pending():
         [{"name": "Sarah"}], coordinator_id="coord", db=db
     )
     assert participants == []
-    assert pending["name"] == "Sarah"
-    assert pending["reason"] == "ambiguous"
-    assert {o["user_id"] for o in pending["options"]} == {"u-1", "u-2"}
-    assert pending["options"][0].keys() == {"user_id", "full_name", "email"}
+    assert len(pending) == 1
+    assert pending[0]["name"] == "Sarah"
+    assert pending[0]["reason"] == "ambiguous"
+    assert {o["user_id"] for o in pending[0]["options"]} == {"u-1", "u-2"}
+    assert pending[0]["options"][0].keys() == {"user_id", "full_name", "email"}
 
 
 def test_bare_name_no_match_pending():
@@ -249,7 +250,35 @@ def test_bare_name_no_match_pending():
         [{"name": "Zoltan"}], coordinator_id="coord", db=db
     )
     assert participants == []
-    assert pending == {"name": "Zoltan", "reason": "no_match"}
+    assert pending == [{"name": "Zoltan", "reason": "no_match"}]
+
+
+def test_multiple_unresolved_collected_in_order():
+    """All unresolved bare names are collected (in mention order), not just the
+    first — so the graph can bulk-ask for every missing email at once."""
+    directory = [_profile(user_id="u-1", full_name="Sarah Chen"),
+                 _profile(user_id="u-2", full_name="Sarah Kim"),
+                 _profile(user_id="u-3", full_name="Bob Jones")]
+    db = _db_directory(directory)
+    participants, pending = people.resolve_mentions(
+        [{"name": "Zoltan"}, {"name": "Sarah"}, {"name": "Bob"}, {"name": "Mordecai"}],
+        coordinator_id="coord", db=db,
+    )
+    # Bob resolves (unique first-token); the rest are pending, in mention order.
+    assert [p["user_id"] for p in participants] == ["u-3"]
+    assert [(p["name"], p["reason"]) for p in pending] == [
+        ("Zoltan", "no_match"), ("Sarah", "ambiguous"), ("Mordecai", "no_match"),
+    ]
+
+
+def test_duplicate_unresolved_name_collected_once():
+    """The same unknown name mentioned twice becomes a single pending entry."""
+    db = _db_directory([_profile(user_id="u-1", full_name="Bob Jones")])
+    participants, pending = people.resolve_mentions(
+        [{"name": "Zoltan"}, {"name": "zoltan"}], coordinator_id="coord", db=db,
+    )
+    assert participants == []
+    assert pending == [{"name": "Zoltan", "reason": "no_match"}]
 
 
 def test_case_insensitive_full_name_match():
@@ -258,7 +287,7 @@ def test_case_insensitive_full_name_match():
     participants, pending = people.resolve_mentions(
         [{"name": "sarah chen"}], coordinator_id="coord", db=db
     )
-    assert pending is None
+    assert pending == []
     assert participants[0]["user_id"] == "u-1"
 
 
@@ -272,7 +301,7 @@ def test_name_and_email_on_one_mention_resolves_via_email():
         [{"name": "Sarah", "email": "sarah@example.com"}],
         coordinator_id="coord", db=db,
     )
-    assert pending is None
+    assert pending == []
     assert len(participants) == 1
     assert participants[0]["user_id"] == "u-5"
     assert participants[0]["source"] == "explicit_email"
@@ -291,7 +320,7 @@ def test_unpaired_name_and_email_resolve_independently():
         coordinator_id="coord", db=db,
     )
     assert any(p["email"] == "sarah@example.com" and not p["in_system"] for p in participants)
-    assert pending == {"name": "Sarah", "reason": "no_match"}
+    assert pending == [{"name": "Sarah", "reason": "no_match"}]
 
 
 # ─── awaiting-email helpers ───────────────────────────────────────────────────

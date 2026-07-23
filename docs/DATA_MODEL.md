@@ -233,13 +233,13 @@ Per-user conversation with the agentic scheduling assistant. **One row per threa
 | workflow | text | Active workflow: `'create_event'` / `'edit_event'` / null. Nullable |
 | draft | jsonb | Workflow-shaped in-progress draft (e.g. the event being built). Nullable |
 | participants | jsonb | Collected participants for the active workflow. Nullable |
-| pending_person | jsonb | The person currently being resolved/collected (e.g. awaiting an email). Nullable |
+| pending_people | jsonb | Array of people whose bare name was ambiguous/unknown, awaiting emails or a pick — the graph asks for all of them in one bulk prompt. Each entry: `{name, reason: 'ambiguous'\|'no_match', options?}`. Nullable |
 | candidate_slots | jsonb | Proposed time slots offered to the user for selection. Nullable |
 | booking_mode | text | Create-workflow sub-mode: `'direct'` / `'in_app'` / null. Nullable |
 | last_event_uid | varchar(12) | Short uid of the most recent event the thread acted on. Nullable |
 | created_at / updated_at | timestamptz | `updated_at` maintained by the `chat_threads_updated_at` trigger |
 
-**Thread-state rule:** The graph carries no memory across turns. Every turn rehydrates from the thread row's `status` + `workflow` + `draft` + `participants` + `pending_person` + `candidate_slots` + `booking_mode` + `last_event_uid`, advances the workflow, and writes the new state back. `status` records exactly what the assistant is waiting for so the next user message can be routed deterministically.
+**Thread-state rule:** The graph carries no memory across turns. Every turn rehydrates from the thread row's `status` + `workflow` + `draft` + `participants` + `pending_people` + `candidate_slots` + `booking_mode` + `last_event_uid`, advances the workflow, and writes the new state back. `status` records exactly what the assistant is waiting for so the next user message can be routed deterministically.
 
 **Index:** `user_id`.
 

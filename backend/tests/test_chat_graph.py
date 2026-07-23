@@ -74,7 +74,7 @@ def _base(**overrides) -> dict:
         'workflow': None,
         'draft': None,
         'participants': None,
-        'pending_person': None,
+        'pending_people': None,
         'candidate_slots': None,
         'booking_mode': None,
     }
@@ -124,7 +124,7 @@ def _event_summary(**overrides) -> dict:
 
 def test_all_in_system_linked_reaches_awaiting_choice(monkeypatch):
     """Everyone in-system + calendar-linked → the two-way booking choice."""
-    monkeypatch.setattr(people, 'resolve_mentions', lambda mentions, **kw: ([_participant()], None))
+    monkeypatch.setattr(people, 'resolve_mentions', lambda mentions, **kw: ([_participant()], []))
     g = build_graph(FakeLLM(extracted=_create_turn(people=[{'name': 'Bob'}])))
 
     out = g.invoke(_base(user_message='lunch with bob'))
@@ -139,7 +139,7 @@ def test_all_in_system_linked_reaches_awaiting_choice(monkeypatch):
 def test_calendar_less_person_skips_to_in_app_confirmation(monkeypatch):
     """An in-system person without a connected calendar → straight to in-app."""
     monkeypatch.setattr(people, 'resolve_mentions',
-                        lambda mentions, **kw: ([_participant(has_calendar=False)], None))
+                        lambda mentions, **kw: ([_participant(has_calendar=False)], []))
     g = build_graph(FakeLLM(extracted=_create_turn(people=[{'name': 'Bob'}])))
 
     out = g.invoke(_base(user_message='lunch with bob'))
@@ -153,7 +153,7 @@ def test_non_user_person_skips_to_in_app_confirmation(monkeypatch):
     """A non-user participant → in-app (invitation flow), never direct booking."""
     monkeypatch.setattr(people, 'resolve_mentions', lambda mentions, **kw: (
         [{'full_name': None, 'email': 'ext@example.com', 'in_system': False,
-          'has_calendar': False, 'source': 'explicit_email'}], None))
+          'has_calendar': False, 'source': 'explicit_email'}], []))
     g = build_graph(FakeLLM(extracted=_create_turn(people=[{'email': 'ext@example.com'}])))
 
     out = g.invoke(_base(user_message='lunch with ext@example.com'))
@@ -292,8 +292,8 @@ def test_awaiting_email_loop_ambiguous_then_pick(monkeypatch):
 
     def fake_resolve_mentions(mentions, **kw):
         if not mentions:
-            return [], None
-        return [], pending
+            return [], []
+        return [], [pending]
 
     monkeypatch.setattr(people, 'resolve_mentions', fake_resolve_mentions)
 
@@ -309,16 +309,15 @@ def test_awaiting_email_loop_ambiguous_then_pick(monkeypatch):
                                                        source='coparticipant'))
     out2 = g.invoke(_base(status='awaiting_email', workflow='create_event',
                           draft=out1['draft'], participants=out1['participants'],
-                          pending_person=out1['pending_person'],
+                          pending_people=out1['pending_people'],
                           action={'type': 'pick_person', 'person_name': 'Sarah', 'user_id': 's1'}))
-    assert out2['pending_person'] is None
+    assert out2['pending_people'] == []
     assert out2['status'] == 'awaiting_choice'
     assert any(p['user_id'] == 's1' for p in out2['participants'])
 
 
 def test_awaiting_email_free_text_email_resolves(monkeypatch):
     """A bare email typed while awaiting_email routes to apply_email and resolves."""
-    monkeypatch.setattr(people, 'resolve_mentions', lambda mentions, **kw: ([], None))
     monkeypatch.setattr(people, 'resolve_provided_email',
                         lambda email, **kw: _participant(email=email, source='user_provided'))
     g = build_graph(FakeLLM())
@@ -326,11 +325,60 @@ def test_awaiting_email_free_text_email_resolves(monkeypatch):
     out = g.invoke(_base(status='awaiting_email', workflow='create_event',
                          draft={'title': 'Lunch', 'people': []},
                          participants=[],
-                         pending_person={'name': 'Bob', 'reason': 'no_match'},
+                         pending_people=[{'name': 'Bob', 'reason': 'no_match'}],
                          user_message='his email is bob@example.com'))
 
-    assert out['pending_person'] is None
+    assert out['pending_people'] == []
     assert any(p['email'] == 'bob@example.com' for p in out['participants'])
+
+
+def test_awaiting_email_bulk_reply_resolves_all(monkeypatch):
+    """One free-text reply with many emails resolves every no-match name at once —
+    name-hint pairs where it can, positional fills the rest, then it advances."""
+    monkeypatch.setattr(people, 'resolve_provided_email',
+                        lambda email, *, name=None, **kw: _participant(
+                            user_id=None, full_name=name, email=email,
+                            in_system=False, has_calendar=False, source='user_provided'))
+    g = build_graph(FakeLLM())
+
+    pending = [{'name': 'Sarah', 'reason': 'no_match'},
+               {'name': 'John', 'reason': 'no_match'},
+               {'name': 'Mike', 'reason': 'no_match'}]
+    out = g.invoke(_base(status='awaiting_email', workflow='create_event',
+                         draft={'title': 'Lunch', 'people': []}, participants=[],
+                         pending_people=pending,
+                         user_message='sarah@acme.com, mike@corp.com, and john@x.com'))
+
+    assert out['pending_people'] == []
+    # Name-hint pairs each email to its person despite the out-of-order list.
+    by_email = {p['email']: p['full_name'] for p in out['participants']}
+    assert by_email == {
+        'sarah@acme.com': 'Sarah', 'mike@corp.com': 'Mike', 'john@x.com': 'John',
+    }
+    # Everyone resolved → the flow advances past awaiting_email.
+    assert out['status'] != 'awaiting_email'
+
+
+def test_awaiting_email_partial_bulk_reply_reasks(monkeypatch):
+    """A reply that covers only some pending names resolves those and re-asks for
+    the remainder (stays awaiting_email)."""
+    monkeypatch.setattr(people, 'resolve_provided_email',
+                        lambda email, *, name=None, **kw: _participant(
+                            user_id=None, full_name=name, email=email,
+                            in_system=False, has_calendar=False, source='user_provided'))
+    g = build_graph(FakeLLM())
+
+    pending = [{'name': 'Sarah', 'reason': 'no_match'},
+               {'name': 'John', 'reason': 'no_match'}]
+    out = g.invoke(_base(status='awaiting_email', workflow='create_event',
+                         draft={'title': 'Lunch', 'people': []}, participants=[],
+                         pending_people=pending,
+                         user_message='sarah@acme.com'))
+
+    assert out['status'] == 'awaiting_email'
+    assert [p['name'] for p in out['pending_people']] == ['John']
+    assert any(p['email'] == 'sarah@acme.com' for p in out['participants'])
+    assert 'John' in out['assistant_text']
 
 
 # ─── edit workflow ────────────────────────────────────────────────────────────

@@ -47,7 +47,7 @@ top-level package (`from agent_service import graph`). Its single consumer is
 | `state.py` | `AgentState` TypedDict — per-turn injected facts, rehydrated thread state, and turn outputs. |
 | `nodes.py` | Create-workflow + shared nodes (validation, drafting, confirmation cards, booking dispatch). |
 | `editing.py` | Edit-workflow nodes: `validate_edit` (before/after change set) and `apply_edit_node`. |
-| `people.py` | Participant resolution (fully deterministic): explicit email → batched profile lookup; bare name → co-participant directory. Emails are paired to names upstream in the extraction call. |
+| `people.py` | Participant resolution (fully deterministic): explicit email → batched profile lookup; bare name → co-participant directory. Every unresolved bare name is collected into `pending_people` so the graph asks for all missing emails in one bulk prompt. Emails are paired to names upstream in the extraction call. |
 | `availability.py` | Deterministic slot ranking (reuses the proposal service's candidate grid) + best-effort busy-slot freshness sync. |
 | `booking.py` | Write orchestration: `book_direct` (straight onto calendars via the hardened finalize path) and `create_in_app_event` (normal When. planning flow). |
 | `llm.py` | The extraction prompt builder, the `ExtractedTurn` structured-output schema, and the lazy Gemini model factory. |
@@ -60,7 +60,7 @@ Structured actions dispatch straight from the entry router:
 | Thread status | Action | Target node |
 | --- | --- | --- |
 | any | `cancel` | `cancel_node` |
-| `awaiting_email` | `provide_email` / `pick_person` (or a bare email in free text) | `apply_email` |
+| `awaiting_email` | `provide_email` / `pick_person` (or one-or-many emails in free text) | `apply_email` |
 | `awaiting_choice` | `book_direct` | `compute_slots` |
 | `awaiting_choice` | `use_in_app` | `prepare_confirmation` |
 | `awaiting_confirmation` | `confirm_draft` | `apply_edit_node` / `book_direct_node` / `create_in_app_node` (by workflow + booking mode) |

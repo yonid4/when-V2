@@ -61,14 +61,6 @@ def _parse_time(value: str) -> time:
     return datetime.strptime(value.strip(), '%H:%M').time()
 
 
-def _extract_email(text) -> str | None:
-    """Regex the first email address out of free text, or ``None``."""
-    if not text:
-        return None
-    match = _EMAIL_RE.search(text)
-    return match.group(0) if match else None
-
-
 def _user_from_state(state) -> User:
     """Reconstruct the request ``User`` for write paths (booking / edit)."""
     return User(
@@ -145,7 +137,7 @@ def _clear_workflow_state() -> dict:
         'workflow': None,
         'draft': None,
         'participants': None,
-        'pending_person': None,
+        'pending_people': None,
         'candidate_slots': None,
         'booking_mode': None,
         'card': None,
@@ -178,20 +170,75 @@ def _dedupe_participants(participants: list) -> list:
     return out
 
 
-def _mentions_after(mentions: list, name) -> list:
-    """Mentions following the first one whose name matches ``name`` (casefolded).
+def _join_names(names: list) -> str:
+    """Human list join: 'Sarah', 'Sarah and John', 'Sarah, John, and Mike'."""
+    names = [str(n) for n in names if n]
+    if not names:
+        return 'them'
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return f"{', '.join(names[:-1])}, and {names[-1]}"
 
-    Used by the awaiting-email loop: when ``resolve_mentions`` stops at a pending
-    person, everything after that mention is still unprocessed and is stashed for
-    the next round (the pending person itself is resolved by ``apply_email``).
-    """
-    if not name:
+
+def _all_emails(text) -> list[str]:
+    """Every distinct email in free text, in first-seen order (bulk reply split)."""
+    if not text:
         return []
-    target = str(name).casefold()
-    for i, m in enumerate(mentions):
-        if (str(m.get('name') or '')).strip().casefold() == target:
-            return mentions[i + 1:]
-    return []
+    return list(dict.fromkeys(_EMAIL_RE.findall(text)))
+
+
+def _pop_pending(pending: list, name) -> list:
+    """Return ``pending`` without the first entry whose name matches (casefolded)."""
+    if not name:
+        return pending
+    target = str(name).strip().casefold()
+    out, dropped = [], False
+    for entry in pending:
+        if not dropped and (str(entry.get('name') or '')).strip().casefold() == target:
+            dropped = True
+            continue
+        out.append(entry)
+    return out
+
+
+def _pair_emails_to_pending(emails: list[str], pending: list) -> tuple[list, list, list]:
+    """Pair bulk-reply emails to the pending people awaiting an email.
+
+    Returns ``(pairs, leftover_emails, remaining_pending)`` where ``pairs`` is a
+    list of ``(pending_entry, email)``. A name-token hint wins first (an email
+    whose local part contains a name token — ``sarah@…`` → "Sarah"); the rest are
+    assigned positionally to the still-unmatched ``no_match`` people in order (the
+    same order they were asked for). Ambiguous people are only matched by hint —
+    otherwise they keep their pick-person path. Extra emails (more than names)
+    fall through as ``leftover`` and are added as plain non-user invitees.
+    """
+    remaining = list(pending)
+    pairs: list = []
+    used: set = set()
+
+    # Pass 1 — name-token hint against any pending person.
+    for email in emails:
+        local = email.split('@', 1)[0].casefold()
+        for entry in remaining:
+            tokens = [t for t in re.split(r'[^a-z0-9]+', (entry.get('name') or '').casefold()) if len(t) >= 2]
+            if tokens and any(tok in local for tok in tokens):
+                pairs.append((entry, email))
+                remaining.remove(entry)
+                used.add(email)
+                break
+
+    # Pass 2 — positional over the still-unmatched no_match people, in ask order.
+    leftover = [e for e in emails if e not in used]
+    no_match = [e for e in remaining if e.get('reason') != 'ambiguous']
+    for entry, email in zip(no_match, leftover):
+        pairs.append((entry, email))
+        remaining.remove(entry)
+        used.add(email)
+
+    leftover = [e for e in emails if e not in used]
+    return pairs, leftover, remaining
 
 
 # ─── classify_and_extract (LLM) ───────────────────────────────────────────────
@@ -339,12 +386,14 @@ def validate_intent(state):
 def resolve_people(state):
     """Resolve draft mentions to participants (fully deterministic — no LLM).
 
-    Reads the not-yet-processed mentions from ``draft['people']`` and appends
-    cleanly-resolved participants to any already accumulated. The FIRST ambiguous
-    / unknown bare name becomes ``pending_person`` → ``ask_email``; the mentions
-    after it are stashed back into ``draft['people']`` for the next round. All
-    resolved → ``prepare_choice``. Name↔email pairing already happened in the
-    extraction call, so mentions arrive with emails attached where they belong.
+    Processes ALL mentions in ``draft['people']`` in one pass, appending
+    cleanly-resolved participants to any already accumulated. Every ambiguous /
+    unknown bare name is collected into ``pending_people`` → ``ask_email`` (a
+    single bulk prompt for all of them); the mentions are fully consumed, so the
+    awaiting-email loop is driven by ``pending_people``, not by re-reading
+    mentions. All resolved → ``prepare_choice``. Name↔email pairing already
+    happened in the extraction call, so mentions arrive with emails attached where
+    they belong.
     """
     draft = dict(state.get('draft') or {})
     mentions = list(draft.get('people') or [])
@@ -355,22 +404,21 @@ def resolve_people(state):
         coordinator_id=state['user_id'],
     )
     participants = _dedupe_participants(existing + new_parts)
+    draft['people'] = []  # every mention consumed this pass
 
     if pending:
-        draft['people'] = _mentions_after(mentions, pending.get('name'))
         return {
             'draft': draft,
             'participants': participants,
-            'pending_person': pending,
+            'pending_people': pending,
             'status': 'awaiting_email',
             'route': 'ask_email',
         }
 
-    draft['people'] = []
     return {
         'draft': draft,
         'participants': participants,
-        'pending_person': None,
+        'pending_people': [],
         'route': 'prepare_choice',
     }
 
@@ -378,20 +426,26 @@ def resolve_people(state):
 # ─── ask_email / apply_email (deterministic) ─────────────────────────────────
 
 def ask_email(state):
-    """Surface the pending person: pick-person buttons if ambiguous, else ask
-    for their email. Terminal for the turn (status stays 'awaiting_email')."""
-    pending = state.get('pending_person') or {}
-    name = pending.get('name') or 'that person'
+    """Surface every pending person in ONE bulk prompt: pick-person buttons for
+    each ambiguous name, plus a single text ask listing the names we need emails
+    for. Terminal for the turn (status stays 'awaiting_email')."""
+    pending = state.get('pending_people') or []
+    ambiguous = [p for p in pending if p.get('reason') == 'ambiguous']
+    no_match = [p for p in pending if p.get('reason') != 'ambiguous']
+
     buttons: list = []
-    if pending.get('reason') == 'ambiguous':
-        for opt in pending.get('options') or []:
+    for entry in ambiguous:
+        name = entry.get('name') or 'that person'
+        for opt in entry.get('options') or []:
             label = opt.get('full_name') or opt.get('email') or 'This one'
             buttons.append(_button(label, {
                 'type': 'pick_person', 'person_name': name, 'user_id': opt.get('user_id'),
             }))
-        facts = {'name': name, 'mode': 'ambiguous'}
-    else:
-        facts = {'name': name, 'mode': 'no_match'}
+
+    facts = {
+        'no_match_names': [p.get('name') or 'that person' for p in no_match],
+        'ambiguous_names': [p.get('name') or 'that person' for p in ambiguous],
+    }
     return {
         'status': 'awaiting_email',
         'card': None,
@@ -402,36 +456,59 @@ def ask_email(state):
 
 
 def apply_email(state):
-    """Resolve the email/user_id the coordinator supplied for the pending person,
-    append the participant, then loop back to ``resolve_people`` for the rest.
+    """Resolve as many pending people as one reply supplies, then continue.
 
-    Accepts a ``provide_email`` / ``pick_person`` action or an email regexed from
-    free text. If nothing resolves, re-asks (stays 'awaiting_email')."""
+    Handles three inputs against ``pending_people``: a ``pick_person`` tap (one
+    ambiguous name), a ``provide_email`` action, or a free-text reply carrying one
+    OR MANY emails — split and paired to the pending names (``_pair_emails_to_pending``).
+    Resolved people are removed from ``pending_people``; if any remain we loop back
+    to ``ask_email`` for the rest, else we advance to ``prepare_choice``. If a reply
+    resolves nobody, we re-ask (stays 'awaiting_email')."""
     action = state.get('action') or {}
     atype = action.get('type')
-    pending = state.get('pending_person') or {}
-    name = pending.get('name')
+    pending = list(state.get('pending_people') or [])
     participants = list(state.get('participants') or [])
+    resolved: list = []
 
-    resolved = None
     if atype == 'pick_person' and action.get('user_id'):
-        resolved = people.resolve_provided_user_id(action['user_id'])
+        picked = people.resolve_provided_user_id(action['user_id'])
+        if picked:
+            resolved.append(picked)
+            pending = _pop_pending(pending, action.get('person_name'))
     elif atype == 'provide_email' and action.get('email'):
-        resolved = people.resolve_provided_email(action['email'], name=name)
+        name = action.get('person_name')
+        resolved.append(people.resolve_provided_email(action['email'], name=name))
+        # Named → drop that entry; unnamed → the first person still needing an email.
+        pending = _pop_pending(pending, name) if name else _pop_pending(
+            pending, next((p.get('name') for p in pending if p.get('reason') != 'ambiguous'), None))
     else:
-        email = _extract_email(state.get('user_message'))
-        if email:
-            resolved = people.resolve_provided_email(email, name=name)
+        emails = _all_emails(state.get('user_message'))
+        pairs, leftover, pending = _pair_emails_to_pending(emails, pending)
+        for entry, email in pairs:
+            resolved.append(people.resolve_provided_email(email, name=entry.get('name')))
+        for email in leftover:  # extra emails beyond the names we asked for
+            resolved.append(people.resolve_provided_email(email, name=None))
 
-    if resolved is None:
+    participants = _dedupe_participants(participants + resolved)
+
+    if not resolved:
+        names = [p.get('name') for p in pending if p.get('reason') != 'ambiguous']
         return {
             'status': 'awaiting_email',
-            'reply': {'kind': 'resolve_failed', 'facts': {'name': name or 'that person'}},
+            'reply': {'kind': 'resolve_failed', 'facts': {'name': _join_names(names)}},
             'route': 'compose_reply',
         }
 
-    participants = _dedupe_participants(participants + [resolved])
-    return {'participants': participants, 'pending_person': None, 'route': 'resolve_people'}
+    if pending:
+        # Still missing some — re-ask for whoever is left.
+        return {
+            'participants': participants,
+            'pending_people': pending,
+            'status': 'awaiting_email',
+            'route': 'ask_email',
+        }
+
+    return {'participants': participants, 'pending_people': [], 'route': 'prepare_choice'}
 
 
 # ─── prepare_choice (deterministic) ───────────────────────────────────────────
@@ -685,10 +762,19 @@ def _reply_text(reply: dict) -> str:
     if kind == 'invalid_window':
         return "That time window is entirely in the past — give me a future window and I'll find times."
     if kind == 'ask_email':
-        name = f.get('name', 'that person')
-        if f.get('mode') == 'ambiguous':
-            return f"There are a few people named {name}. Which one did you mean?"
-        return f"I couldn't find {name} in your contacts. What's their email address?"
+        no_match = f.get('no_match_names') or []
+        ambiguous = f.get('ambiguous_names') or []
+        parts: list[str] = []
+        if no_match:
+            verb = 'their emails' if len(no_match) > 1 else 'their email'
+            hint = ' You can send them all in one message.' if len(no_match) > 1 else ''
+            parts.append(f"I couldn't find {_join_names(no_match)} in your contacts — "
+                         f"what's {verb}?{hint}")
+        if ambiguous:
+            lead = 'Also, a' if no_match else 'A'
+            parts.append(f"{lead} few people match {_join_names(ambiguous)} — "
+                         "tap the right one below.")
+        return ' '.join(parts) or "Who did you mean?"
     if kind == 'resolve_failed':
         return f"I couldn't resolve {f.get('name', 'that person')}. Please share their email address."
     if kind == 'choice':
