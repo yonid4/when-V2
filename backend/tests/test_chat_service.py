@@ -124,7 +124,7 @@ class _FakeGraph:
 def _make_chain() -> MagicMock:
     """Chainable mock — every query builder returns itself; execute is terminal."""
     chain = MagicMock()
-    for m in ("eq", "neq", "in_", "single", "maybe_single", "order"):
+    for m in ("eq", "neq", "in_", "single", "maybe_single", "order", "limit"):
         getattr(chain, m).return_value = chain
     return chain
 
@@ -153,8 +153,12 @@ def _wire_turn_db(
     user_msg_row: dict,
     assistant_msg_row: dict,
     updated_thread_row: dict,
+    history_rows: list[dict] | None = None,
 ) -> None:
-    """Configure a mock db for a full run_turn (fetch → 2 inserts → update)."""
+    """Configure a mock db for a full run_turn (fetch → history → 2 inserts → update).
+
+    ``history_rows`` are returned newest-first, the way the real query orders them.
+    """
     threads = db.table("chat_threads")
     threads.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value = MagicMock(
         data=thread_row
@@ -164,6 +168,10 @@ def _wire_turn_db(
     )
 
     messages = db.table("chat_messages")
+    # Prior-turn history read (select → eq → order → limit).
+    messages.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=history_rows or []
+    )
     # Two inserts on the same table mock — sequential results via side_effect.
     messages.insert.return_value.execute.side_effect = [
         MagicMock(data=[user_msg_row]),
@@ -309,6 +317,121 @@ def test_run_turn_action_turn_uses_deterministic_label(monkeypatch):
     user_insert = db.table("chat_messages").insert.call_args_list[0][0][0]
     assert user_insert["content"] == "Confirm"
     assert user_insert["payload"] == {"type": "confirm_draft"}
+
+
+# ─── run_turn — conversation history injection ────────────────────────────────
+
+def test_run_turn_injects_prior_turns_oldest_first(monkeypatch):
+    """Prior turns reach the graph chronologically, capped and text-only."""
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    user = _make_user()
+    db = _mock_db()
+
+    # The real query orders newest-first; the service reverses it.
+    history_rows = [
+        {"role": "assistant", "content": "When should this happen?"},
+        {"role": "user", "content": "Dinner with Sarah"},
+    ]
+    _wire_turn_db(
+        db, _make_thread_row(status="collecting"),
+        _make_message_row(id="u1", content="next Tuesday"),
+        _make_message_row(id="a1", role="assistant"),
+        _make_thread_row(status="collecting"),
+        history_rows=history_rows,
+    )
+
+    fake_graph = _FakeGraph(_graph_output())
+    with patch("app.services.chat_service.get_authed_client", return_value=db), \
+         patch("agent_service.graph.get_compiled_graph", return_value=fake_graph):
+        req = ChatTurnRequest(message="next Tuesday")
+        chat_service.run_turn("thread-1", req, REF_TIME, user)
+
+    assert fake_graph.last_state["history"] == [
+        {"role": "user", "content": "Dinner with Sarah"},
+        {"role": "assistant", "content": "When should this happen?"},
+    ]
+
+    # Scoped to the thread, newest-first, capped at _HISTORY_LIMIT.
+    messages = db.table("chat_messages")
+    assert messages.select.call_args == call("role, content")
+    order_call = messages.select.return_value.eq.return_value.order.call_args
+    assert order_call == call("created_at", desc=True)
+    limit_call = messages.select.return_value.eq.return_value.order.return_value.limit.call_args
+    assert limit_call == call(chat_service._HISTORY_LIMIT)
+
+
+def test_run_turn_history_read_before_current_message_is_inserted(monkeypatch):
+    """The history read must precede the user insert, or the turn duplicates itself."""
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    user = _make_user()
+    db = _mock_db()
+
+    calls: list[str] = []
+    _wire_turn_db(
+        db, _make_thread_row(),
+        _make_message_row(id="u1"),
+        _make_message_row(id="a1", role="assistant"),
+        _make_thread_row(),
+    )
+    messages = db.table("chat_messages")
+    messages.select.side_effect = lambda *a, **kw: (
+        calls.append("select") or messages.select.return_value
+    )
+    messages.insert.side_effect = lambda *a, **kw: (
+        calls.append("insert") or messages.insert.return_value
+    )
+
+    with patch("app.services.chat_service.get_authed_client", return_value=db), \
+         patch("agent_service.graph.get_compiled_graph", return_value=_FakeGraph(_graph_output())):
+        chat_service.run_turn("thread-1", ChatTurnRequest(message="hi"), REF_TIME, user)
+
+    assert calls == ["select", "insert", "insert"]
+
+
+def test_run_turn_history_drops_textless_assistant_turns(monkeypatch):
+    """Card-only assistant turns carry no words — they never enter the prompt."""
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    user = _make_user()
+    db = _mock_db()
+
+    _wire_turn_db(
+        db, _make_thread_row(),
+        _make_message_row(id="u1"),
+        _make_message_row(id="a1", role="assistant"),
+        _make_thread_row(),
+        history_rows=[
+            {"role": "assistant", "content": "   "},
+            {"role": "assistant", "content": None},
+            {"role": "user", "content": "Lunch with Bob"},
+        ],
+    )
+
+    fake_graph = _FakeGraph(_graph_output())
+    with patch("app.services.chat_service.get_authed_client", return_value=db), \
+         patch("agent_service.graph.get_compiled_graph", return_value=fake_graph):
+        chat_service.run_turn("thread-1", ChatTurnRequest(message="tomorrow"), REF_TIME, user)
+
+    assert fake_graph.last_state["history"] == [{"role": "user", "content": "Lunch with Bob"}]
+
+
+def test_run_turn_first_message_gets_empty_history(monkeypatch):
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    user = _make_user()
+    db = _mock_db()
+
+    _wire_turn_db(
+        db, _make_thread_row(),
+        _make_message_row(id="u1"),
+        _make_message_row(id="a1", role="assistant"),
+        _make_thread_row(),
+    )
+
+    fake_graph = _FakeGraph(_graph_output())
+    with patch("app.services.chat_service.get_authed_client", return_value=db), \
+         patch("agent_service.graph.get_compiled_graph", return_value=fake_graph):
+        chat_service.run_turn("thread-1", ChatTurnRequest(message="Lunch"), REF_TIME, user)
+
+    assert fake_graph.last_state["history"] == []
 
 
 # ─── run_turn — 404 foreign thread ───────────────────────────────────────────

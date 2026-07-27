@@ -16,7 +16,7 @@ from app.models.event import EventUpdate
 from app.services import event_service
 from agent_service import availability, booking, editing, graph as graph_mod, people
 from agent_service.graph import build_graph, entry_router
-from agent_service.llm import ExtractedTurn
+from agent_service.llm import ExtractedTurn, build_extraction_prompt
 
 REF = datetime(2026, 7, 18, 12, 0, tzinfo=timezone.utc)
 
@@ -26,12 +26,18 @@ WRITE_NODES = {'book_direct_node', 'create_in_app_node', 'apply_edit_node'}
 # ─── FakeLLM ──────────────────────────────────────────────────────────────────
 
 class _FakeStructured:
-    """`.with_structured_output(schema).invoke(prompt)` → a canned instance."""
+    """`.with_structured_output(schema).invoke(prompt)` → a canned instance.
 
-    def __init__(self, result):
+    The prompt is handed back to the owning FakeLLM so tests can assert on what
+    the extraction call was actually given.
+    """
+
+    def __init__(self, result, on_prompt):
         self._result = result
+        self._on_prompt = on_prompt
 
     def invoke(self, prompt):
+        self._on_prompt(prompt)
         if isinstance(self._result, Exception):
             raise self._result
         return self._result
@@ -48,9 +54,14 @@ class FakeLLM:
         self._extracted = extracted
         self._content = content
         self._raise_reply = raise_reply
+        # The prompt the extraction call last received.
+        self.last_prompt: str | None = None
 
     def with_structured_output(self, schema):
-        return _FakeStructured(self._extracted)
+        def _capture(prompt):
+            self.last_prompt = prompt
+
+        return _FakeStructured(self._extracted, _capture)
 
     def invoke(self, prompt):
         if self._raise_reply:
@@ -497,6 +508,53 @@ def test_classify_failure_degrades_to_apology():
     out = g.invoke(_base(user_message='schedule something'))
     assert out['status'] == 'idle'
     assert out['assistant_text']
+
+
+# ─── Conversation history in the extraction prompt ────────────────────────────
+
+HISTORY = [
+    {'role': 'user', 'content': 'Dinner with Sarah'},
+    {'role': 'assistant', 'content': 'When should this happen?'},
+]
+
+
+def test_history_reaches_the_extraction_prompt():
+    """Prior turns are in the prompt, oldest-first, with the latest message last."""
+    llm = FakeLLM(extracted=_create_turn())
+    g = build_graph(llm)
+    g.invoke(_base(status='collecting', workflow='create_event',
+                   user_message='next Tuesday', history=HISTORY))
+
+    prompt = llm.last_prompt or ''
+    assert 'Dinner with Sarah' in prompt
+    assert 'When should this happen?' in prompt
+    assert prompt.index('Dinner with Sarah') < prompt.index('When should this happen?')
+    # The message being classified is the last thing the model reads.
+    assert prompt.endswith("Latest user message: 'next Tuesday'")
+    # The rule that keeps a terse follow-up on the same intent.
+    assert 'IN THE CONTEXT of the conversation' in prompt
+
+
+def test_no_history_omits_the_conversation_block():
+    """A first message carries no conversation block (nothing to reference)."""
+    llm = FakeLLM(extracted=_create_turn())
+    g = build_graph(llm)
+    g.invoke(_base(user_message='lunch on Friday', history=[]))
+
+    prompt = llm.last_prompt or ''
+    assert 'Conversation so far' not in prompt
+    assert prompt.endswith("Latest user message: 'lunch on Friday'")
+
+
+def test_history_is_labelled_by_role():
+    """Roles are explicit so the model can tell its own questions from the user's."""
+    prompt = build_extraction_prompt(
+        user_message='next Tuesday', current_draft=None, participants=None,
+        page_context=None, workflow='create_event', today_str='2026-07-18',
+        weekday='Saturday', tz_name='America/Los_Angeles', history=HISTORY,
+    )
+    assert "user: 'Dinner with Sarah'" in prompt
+    assert "assistant: 'When should this happen?'" in prompt
 
 
 # ─── Entry-router table: free text NEVER reaches a write node ──────────────────

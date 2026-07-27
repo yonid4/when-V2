@@ -33,6 +33,13 @@ top-level package (`from agent_service import graph`). Its single consumer is
   `chat_threads` row, advances it, and `chat_service` writes it back. The graph
   itself holds no memory and never reads the wall clock —
   `reference_time_utc` is injected by the router.
+- **Conversation history is prompt context, never state.** The last
+  `chat_service._HISTORY_LIMIT` (10) turns of the thread are read *before* the
+  current message is inserted and injected as `history` (oldest-first
+  `{'role', 'content'}` dicts). Only the extraction prompt reads it, so a terse
+  follow-up ("next Tuesday") keeps the intent of the turns before it instead of
+  classifying as `other`. The authoritative facts still live in `draft` /
+  `participants` — the prompt tells the model not to re-extract from history.
 - **An LLM failure never kills a turn.** `chat_service` persists the user's
   message *before* invoking the graph, so an exception escaping a node would
   strand that message with no assistant reply and an unadvanced thread. The lone
@@ -115,7 +122,8 @@ per turn reports where the time actually went:
 
 ```
 INFO agent_service.tracing: chat.turn thread=thr_abc123 user=u-1 total=2832ms
-  [db.fetch_thread=25ms, db.insert_user_message=18ms, graph.invoke=2767ms,
+  [db.fetch_thread=25ms, db.fetch_history=14ms, db.insert_user_message=18ms,
+   graph.invoke=2767ms,
    >classify_and_extract=353ms, >>llm.extract=353ms, >compute_slots=2414ms,
    >>busy_sync=2404ms, >>rank_slots=11ms, db.update_thread=21ms]
 ```
@@ -142,12 +150,22 @@ with a 30s per-user timeout, so the span is bounded to ~one user's sync — see
 
 ## Running a turn
 
-`chat_service.run_turn` builds the state dict (per-turn facts + rehydrated
-thread row), calls `graph.get_compiled_graph().invoke(state)`, persists the
-assistant message (`{"card": …, "buttons": […]}` jsonb), and writes the
-advanced thread state back. Chat requires `GEMINI_API_KEY` (the settings'
+`chat_service.run_turn` reads the thread row and its recent history, persists the
+user message, builds the state dict (per-turn facts + history + rehydrated thread
+row), calls `graph.get_compiled_graph().invoke(state)`, persists the assistant
+message (`{"card": …, "buttons": […]}` jsonb), and writes the advanced thread
+state back. The history read must precede the user insert, or the current message
+would appear twice in the prompt. Chat requires `GEMINI_API_KEY` (the settings'
 `gemini_api_key` / `gemini_model`); without it the turn endpoint returns
 `503 chat_disabled`.
+
+The **client** owns which thread a turn lands on. The active thread id is kept in
+`sessionStorage`, so a reload or route change resumes the same conversation while
+a fresh visit to the site starts a new chat. A new chat holds no thread row until
+its first message — `ChatWidget` creates the thread then and sends the turn to it,
+so opening the drawer never leaves an empty conversation in the history list. The
+assistant's opening greeting is rendered client-side by `MessageList` and is
+never persisted, so it costs no turn and never enters `history`.
 
 A turn that creates a **brand-new event** — `create_in_app_node` or
 `book_direct_node` on their success paths — flags `result_created` in the graph

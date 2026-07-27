@@ -38,6 +38,10 @@ class AgentState(TypedDict, total=False):
     user_message: str | None
     action: dict | None
     page_context: dict | None
+    # Recent prior turns of THIS thread, oldest-first `{'role', 'content'}` dicts,
+    # excluding the current message. Read only by the extraction prompt so a terse
+    # follow-up ("next Tuesday") keeps the intent of the turns before it.
+    history: list | None
 
     # ── Rehydrated thread state (persisted between turns) ────────────────────
     status: str | None

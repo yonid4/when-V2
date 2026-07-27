@@ -373,6 +373,14 @@ Event create / finalize / edit run only in deterministic nodes, reachable only v
 
 There is no LangGraph checkpointer. Workflow state persists on the `chat_threads` row (`status`, `workflow`, `draft`, `participants`, `pending_people`, `candidate_slots`, `booking_mode`). Every `POST /api/chat/threads/{id}/turn` rehydrates it, and an entry router keyed on `(status, workflow, action)` selects the node to run.
 
+### Conversation memory
+
+Two independent mechanisms, deliberately kept apart. **Workflow facts** live on the thread row (above) and are what the deterministic nodes act on. **Conversation history** — the thread's last 10 messages, read before the current one is persisted — is injected into the extraction prompt as read-only context so a terse follow-up ("next Tuesday") is still classified against what the user was arranging two turns ago. History never becomes state: nodes read the draft, not the transcript.
+
+### Thread lifecycle (client-owned)
+
+The active thread id is held in `sessionStorage`, so a reload or route change resumes the same conversation while a fresh visit starts a new chat. A new chat has no thread row until its first message, which creates it — so opening the chat and closing it again leaves nothing behind. The assistant's opening greeting is client-rendered and never persisted.
+
 ### Page context
 
 The client sends `{ page, event_uid? }` each turn; the backend re-verifies event access via the authed user client before the graph sees it (silently dropped on no access). Page context influences **new** intent classification only — an in-flight workflow stays pinned to the event captured at classification time.

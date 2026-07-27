@@ -121,13 +121,18 @@ def build_extraction_prompt(
     today_str: str,
     weekday: str,
     tz_name: str | None,
+    history: list | None = None,
 ) -> str:
     """Assemble the extraction prompt (pure string; unit-testable).
 
     Feeds the model the local calendar anchor (today + weekday + tz), the daypart
     defaults, the current draft (so revisions merge), the already-added people (so
-    they are not repeated), and any page context (so "this event" → an edit of
-    that specific event). Field semantics match :class:`ExtractedTurn`.
+    they are not repeated), the recent conversation (so a terse follow-up keeps
+    the intent of what came before), and any page context (so "this event" → an
+    edit of that specific event). Field semantics match :class:`ExtractedTurn`.
+
+    ``history`` is a chronological (oldest-first) list of ``{'role', 'content'}``
+    turns EXCLUDING the current message, capped by the caller.
     """
     lines: list[str] = [
         "You are the extraction step of When., a scheduling assistant. Read the "
@@ -161,6 +166,15 @@ def build_extraction_prompt(
         "when you genuinely cannot tell whose it is. Never list the same email twice.",
     ]
 
+    if history:
+        lines += [
+            "- Read the latest message IN THE CONTEXT of the conversation below. A "
+            "short reply that answers the assistant's last question continues that "
+            "same intent — e.g. a bare date answering \"when should this happen?\" "
+            "is still 'create_event', not 'other'. Do not re-extract people or "
+            "details from earlier messages; the app already kept those.",
+        ]
+
     if workflow == 'edit_event' or (page_context and page_context.get('uid')):
         lines += [
             "- An event is currently in focus (below). If the user asks to change it "
@@ -191,5 +205,10 @@ def build_extraction_prompt(
         names = [p.get('full_name') or p.get('email') for p in participants]
         lines += ["", f"People already added (do not repeat): {names}"]
 
-    lines += ["", f"User message: {user_message!r}"]
+    if history:
+        lines += ["", "Conversation so far (oldest first, background context only):"]
+        lines += [f"  {turn.get('role')}: {turn.get('content')!r}" for turn in history]
+
+    # The latest message goes last so it is the most recent thing the model reads.
+    lines += ["", f"Latest user message: {user_message!r}"]
     return "\n".join(lines)

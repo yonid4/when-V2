@@ -263,6 +263,7 @@ def make_classify_and_extract(llm):
             today_str=today.isoformat(),
             weekday=today.strftime('%A'),
             tz_name=tz,
+            history=state.get('history'),
         )
         extracted = None
         for _ in range(2):

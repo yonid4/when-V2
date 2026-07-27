@@ -26,6 +26,10 @@ from agent_service import graph, tracing
 from app.utils.supabase import get_authed_client
 
 _TITLE_MAX = 60
+# How many prior turns of a thread ride along to the extraction call. Enough to
+# carry an event description across a follow-up question about dates without
+# bloating the prompt (and the latency) of every turn.
+_HISTORY_LIMIT = 10
 
 
 # ─── Row → response mappers ──────────────────────────────────────────────────
@@ -75,6 +79,30 @@ def _action_label(action: ChatActionPayload) -> str:
 def _truncate_title(text: str) -> str:
     text = (text or '').strip()
     return text[:_TITLE_MAX]
+
+
+def _fetch_history(db, thread_id: str) -> list[dict]:
+    """The thread's most recent turns, oldest-first, for the extraction prompt.
+
+    Read before the current user message is inserted, so the returned list is
+    strictly the turns that came BEFORE this one. Only ``role`` + text is carried:
+    the assistant `payload` (card/buttons) is a render spec, never prompt input.
+    Text-less assistant turns (card-only) are dropped — they add no context.
+    """
+    result = (
+        db.table('chat_messages')
+        .select('role, content')
+        .eq('thread_id', thread_id)
+        .order('created_at', desc=True)
+        .limit(_HISTORY_LIMIT)
+        .execute()
+    )
+    rows = reversed(result.data or [])
+    return [
+        {'role': row['role'], 'content': row['content']}
+        for row in rows
+        if (row.get('content') or '').strip()
+    ]
 
 
 def _verify_page_context(context: ChatPageContext | None, current_user: User) -> dict | None:
@@ -199,6 +227,10 @@ def _run_turn(
     with tracing.span('db.verify_page_context'):
         page_context = _verify_page_context(request.context, current_user)
 
+    # Prior turns, read BEFORE the current message is inserted.
+    with tracing.span('db.fetch_history'):
+        history = _fetch_history(db, thread_id)
+
     # Persist the user turn (action turns carry a deterministic button label).
     if request.action is not None:
         user_content = _action_label(request.action)
@@ -233,6 +265,7 @@ def _run_turn(
         'user_message': request.message,
         'action': action_payload,
         'page_context': page_context,
+        'history': history,
         # rehydrated thread state
         'status': thread_row.get('status'),
         'workflow': thread_row.get('workflow'),
