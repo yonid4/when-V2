@@ -144,18 +144,6 @@ export interface ProposedTimeNote {
 
 // ─── Slots ────────────────────────────────────────────────────────────────────
 
-export interface BusySlot {
-  id: string
-  user_id: string
-  calendar_source_id: string
-  provider_event_id: string
-  start_time_utc: string
-  end_time_utc: string
-  last_synced_at: string
-  created_at: string
-  updated_at: string
-}
-
 export interface PreferredSlot {
   id: string
   user_id: string
