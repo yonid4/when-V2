@@ -10,7 +10,6 @@ valid JWT.
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from app.utils.supabase import anon_client, service_client
 from tests.integration.conftest import IntegrationUser

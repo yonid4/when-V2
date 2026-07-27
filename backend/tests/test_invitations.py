@@ -6,7 +6,6 @@ Tests the invitations router and service with mocked Supabase clients.
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
 

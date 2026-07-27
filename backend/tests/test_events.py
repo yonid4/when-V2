@@ -4,14 +4,13 @@ Tests the event service layer with mocked Supabase clients.
 """
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.models.event import EventCreate, EventUpdate, EventResponse
-from app.models.participant import ParticipantResponse
+from app.models.event import EventCreate, EventUpdate
 from app.models.user import User
 from app.services import event_service
 
@@ -351,7 +350,7 @@ def test_update_event_marks_proposals_regen_on_window_change(mock_get_client):
 
     new_earliest = datetime(2026, 5, 1, 9, tzinfo=timezone.utc)
     data = EventUpdate(earliest_datetime_utc=new_earliest)
-    result = event_service.update_event("abc123def456", data, user)
+    event_service.update_event("abc123def456", data, user)
 
     # Verify the update payload includes proposals_needs_regeneration = True
     update_call_data = events_table.update.call_args[0][0]

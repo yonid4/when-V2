@@ -6,7 +6,7 @@ Supabase clients and mocked Google OAuth flow.
 
 import time
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 import os
 
@@ -24,7 +24,6 @@ from app.main import app
 from app.config import settings
 from app.models.user import User
 from app.services import auth_service
-from app.dependencies import get_current_user
 from app.utils.login_code import (
     DEFAULT_MAX_AGE_SECONDS as LOGIN_CODE_MAX_AGE,
     create_login_code,
@@ -506,8 +505,6 @@ def test_profile_created_on_first_login(mock_build_flow, mock_svc):
     ]
     assert len(upsert_calls) > 0
 
-    # Find the upsert data for profiles
-    profiles_table = MagicMock()
     # Verify upsert was called with correct profile data
     all_upsert_calls = mock_svc.table.return_value.upsert.call_args_list
     profile_upsert = None
