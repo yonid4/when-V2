@@ -38,8 +38,31 @@ top-level package (`from agent_service import graph`). Its single consumer is
   current message is inserted and injected as `history` (oldest-first
   `{'role', 'content'}` dicts). Only the extraction prompt reads it, so a terse
   follow-up ("next Tuesday") keeps the intent of the turns before it instead of
-  classifying as `other`. The authoritative facts still live in `draft` /
-  `participants` — the prompt tells the model not to re-extract from history.
+  classifying as `other`. The authoritative facts live in `draft` /
+  `participants` — the prompt tells the model not to re-extract from history,
+  which makes carrying them forward the app's job (see the next bullet).
+- **Unconsumed people mentions must be carried across turns.** Because the
+  prompt tells the model to list only people named in *this* message, a
+  follow-up turn legitimately reports no people at all. Names the user gave
+  earlier live in `draft['people']` until `resolve_people` consumes them (it
+  then empties the list), so `validate_intent` **merges** them forward via
+  `_merge_mentions` rather than overwriting with the current turn's extraction.
+  Overwriting was a real bug: three named guests vanished between "lunch with
+  shalom, gil, and halon" and "this week", and the run then offered to book an
+  event for nobody. Carried-forward entries keep their original order, because
+  mention order drives pending order drives the positional pairing in
+  `_pair_emails_to_pending`.
+- **Turn scope decides how much of the prior turn survives.** The extraction
+  emits `scope`: `revision` (default — merge onto the draft), `replaces_people`
+  (the user restated *who* is invited: clear the roster and everything derived
+  from it, keep the event facts), or `new_event` (an explicit "different event":
+  rebuild the draft from this turn alone). Like `intent`, this is an extracted
+  *field* read by a deterministic node — the graph's edges stay deterministic
+  and the LLM still decides no control flow. `revision` is the default so a
+  missing or garbled value keeps state rather than discarding it, and both
+  destructive scopes announce themselves in the reply (`_RESET_LEADS`) so a
+  guest list is never dropped silently. The channels a reset clears derive from
+  one definition, `_WORKFLOW_CHANNELS`, shared with `_clear_workflow_state`.
 - **An LLM failure never kills a turn.** `chat_service` persists the user's
   message *before* invoking the graph, so an exception escaping a node would
   strand that message with no assistant reply and an unadvanced thread. The lone
@@ -57,7 +80,7 @@ top-level package (`from agent_service import graph`). Its single consumer is
 | `people.py` | Participant resolution (fully deterministic): explicit email → batched profile lookup; bare name → co-participant directory. Every unresolved bare name is collected into `pending_people` so the graph asks for all missing emails in one bulk prompt. Emails are paired to names upstream in the extraction call. |
 | `availability.py` | Deterministic slot ranking (reuses the proposal service's candidate grid) + best-effort busy-slot freshness sync. |
 | `booking.py` | Write orchestration: `book_direct` (straight onto calendars via the hardened finalize path) and `create_in_app_event` (normal When. planning flow). |
-| `llm.py` | The extraction prompt builder, the `ExtractedTurn` structured-output schema, and the lazy Gemini model factory. |
+| `llm.py` | The extraction prompt builder, the `ExtractedTurn` structured-output schema (incl. `scope`), and the lazy Gemini model factory. The prompt shows the model both the already-added participants and the mentions still awaiting resolution, so it never repeats them and can attribute a late email to the right name. |
 | `tracing.py` | Per-turn latency tracing (diagnostic only — see below). |
 
 ## Graph topology
