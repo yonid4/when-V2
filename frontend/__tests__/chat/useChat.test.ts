@@ -68,8 +68,14 @@ describe('useSendChatTurn — optimistic user message', () => {
     const { queryClient, wrapper } = makeHarness()
     queryClient.setQueryData<ChatMessage[]>(messagesKey, [])
 
-    const { result } = renderHook(() => useSendChatTurn(THREAD_ID), { wrapper })
-    act(() => result.current.mutate({ message: 'Find us a time', context: { page: 'other' } }))
+    const { result } = renderHook(() => useSendChatTurn(), { wrapper })
+    act(() =>
+      result.current.mutate({
+        threadId: THREAD_ID,
+        message: 'Find us a time',
+        context: { page: 'other' },
+      })
+    )
 
     // Optimistic: visible before the server responds.
     await waitFor(() => {
@@ -88,6 +94,13 @@ describe('useSendChatTurn — optimistic user message', () => {
       const cached = queryClient.getQueryData<ChatMessage[]>(messagesKey) ?? []
       expect(cached.map((m) => m.id)).toEqual(['m-user', 'm-assistant'])
     })
+
+    // threadId targets the URL — it is never forwarded as part of the turn body.
+    expect(api.post).toHaveBeenCalledWith(
+      `/chat/threads/${THREAD_ID}/turn`,
+      expect.objectContaining({ message: 'Find us a time' })
+    )
+    expect(vi.mocked(api.post).mock.calls[0][1]).not.toHaveProperty('threadId')
   })
 
   it('rolls the optimistic message back when the turn fails', async () => {
@@ -95,8 +108,14 @@ describe('useSendChatTurn — optimistic user message', () => {
     const { queryClient, wrapper } = makeHarness()
     queryClient.setQueryData<ChatMessage[]>(messagesKey, [])
 
-    const { result } = renderHook(() => useSendChatTurn(THREAD_ID), { wrapper })
-    act(() => result.current.mutate({ message: 'Find us a time', context: { page: 'other' } }))
+    const { result } = renderHook(() => useSendChatTurn(), { wrapper })
+    act(() =>
+      result.current.mutate({
+        threadId: THREAD_ID,
+        message: 'Find us a time',
+        context: { page: 'other' },
+      })
+    )
 
     await waitFor(() => expect(result.current.isError).toBe(true))
     expect(queryClient.getQueryData<ChatMessage[]>(messagesKey)).toEqual([])
@@ -110,9 +129,13 @@ describe('useSendChatTurn — optimistic user message', () => {
     const { queryClient, wrapper } = makeHarness()
     queryClient.setQueryData<ChatMessage[]>(messagesKey, [])
 
-    const { result } = renderHook(() => useSendChatTurn(THREAD_ID), { wrapper })
+    const { result } = renderHook(() => useSendChatTurn(), { wrapper })
     act(() =>
-      result.current.mutate({ action: { type: 'book_direct' }, context: { page: 'other' } })
+      result.current.mutate({
+        threadId: THREAD_ID,
+        action: { type: 'book_direct' },
+        context: { page: 'other' },
+      })
     )
 
     await waitFor(() => expect(result.current.isPending).toBe(true))

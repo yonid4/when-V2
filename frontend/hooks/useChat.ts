@@ -33,20 +33,24 @@ export function useCreateChatThread() {
   })
 }
 
-export function useSendChatTurn(threadId: string) {
+// The target thread travels with each turn rather than being bound when the hook
+// is called: a chat's first message creates its thread and sends the turn in the
+// same handler, so the id isn't known at render time.
+export type SendChatTurnVariables = ChatTurnRequest & { threadId: string }
+
+export function useSendChatTurn() {
   const queryClient = useQueryClient()
   return useMutation({
     // The browser timezone rides along on every turn so the agent renders
     // dates/times in the user's current local time.
-    mutationFn: (body: ChatTurnRequest) =>
+    mutationFn: ({ threadId, ...body }: SendChatTurnVariables) =>
       api.post<ChatTurnResponse>(`/chat/threads/${threadId}/turn`, {
         ...body,
         timezone: getBrowserTimezone(),
       }),
     // Show the user's own text the instant they hit send. Structured action
     // turns (button clicks) carry no message — nothing to append for those.
-    onMutate: async (body: ChatTurnRequest) => {
-      const message = body.message
+    onMutate: async ({ threadId, message }: SendChatTurnVariables) => {
       if (!message) return { optimisticId: null }
       await queryClient.cancelQueries({ queryKey: chatMessagesKey(threadId) })
       const optimisticId = `optimistic-${Date.now()}`
@@ -62,13 +66,13 @@ export function useSendChatTurn(threadId: string) {
       ])
       return { optimisticId }
     },
-    onError: (_err, _body, context) => {
+    onError: (_err, { threadId }, context) => {
       if (!context?.optimisticId) return
       queryClient.setQueryData<ChatMessage[]>(chatMessagesKey(threadId), (prev) =>
         (prev ?? []).filter((m) => m.id !== context.optimisticId)
       )
     },
-    onSuccess: (response, _body, context) => {
+    onSuccess: (response, { threadId }, context) => {
       // The turn response includes the persisted user row — replace the
       // optimistic message with the server's copy so it never duplicates.
       queryClient.setQueryData<ChatMessage[]>(chatMessagesKey(threadId), (prev) => [

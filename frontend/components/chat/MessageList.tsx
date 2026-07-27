@@ -1,6 +1,5 @@
 'use client'
 
-import { MessageSquare } from 'lucide-react'
 import type { ChatMessage } from '@/types'
 import { MessageBubble } from './MessageBubble'
 
@@ -11,10 +10,27 @@ interface MessageListProps {
 }
 
 /**
- * Renders the conversation as a vertical stack of bubbles, plus a typing
- * indicator while a turn is in flight. Scrolling and the inline draft card are
- * owned by the parent (ChatWidget) so the card scrolls together with the
- * message history.
+ * The assistant's opening line, shown at the top of every conversation on every
+ * page. It is rendered client-side and never persisted, so it costs no turn and
+ * never reaches the agent as history — the greeting asks a question the agent
+ * doesn't need to be told about. The placeholder id/thread_id/created_at exist
+ * only to reuse MessageBubble; nothing reads them.
+ */
+export const GREETING_MESSAGE: ChatMessage = {
+  id: 'greeting',
+  thread_id: '',
+  role: 'assistant',
+  content:
+    "Hi! How can I help? Tell me what you'd like to schedule and who to invite, " +
+    "and I'll find a time that works for everyone.",
+  created_at: '',
+}
+
+/**
+ * Renders the conversation as a vertical stack of bubbles — the greeting first,
+ * then the persisted turns — plus a typing indicator while a turn is in flight.
+ * Scrolling and the inline draft card are owned by the parent (ChatWidget) so the
+ * card scrolls together with the message history.
  */
 export function MessageList({ messages, isLoading, isThinking = false }: MessageListProps) {
   if (isLoading && messages.length === 0) {
@@ -26,22 +42,9 @@ export function MessageList({ messages, isLoading, isThinking = false }: Message
     )
   }
 
-  if (messages.length === 0 && !isThinking) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-        <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-          <MessageSquare className="w-6 h-6 text-primary" />
-        </div>
-        <p className="text-sm font-semibold text-on-surface">How can I help?</p>
-        <p className="text-xs text-on-surface-variant max-w-[240px]">
-          Ask me to create an event or find a time that works for everyone.
-        </p>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-3">
+      <MessageBubble message={GREETING_MESSAGE} />
       {messages.map((message) => (
         <MessageBubble key={message.id} message={message} />
       ))}

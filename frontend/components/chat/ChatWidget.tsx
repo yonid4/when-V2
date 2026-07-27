@@ -22,6 +22,30 @@ import { ChatInput } from './ChatInput'
 // may be unauthenticated and the widget must stay hidden.
 const PUBLIC_PATHS = ['/', '/auth/callback', '/privacy', '/terms']
 
+// The active thread is remembered for the browser SESSION only: a reload or a
+// route change resumes the same conversation, while a fresh visit to the site
+// starts a new chat. sessionStorage (not localStorage) is exactly that lifetime.
+const SESSION_THREAD_KEY = 'when.chat.sessionThreadId'
+
+function readSessionThreadId(): string | null {
+  try {
+    return window.sessionStorage.getItem(SESSION_THREAD_KEY)
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies) — the chat then
+    // simply starts fresh on each page load instead of failing.
+    return null
+  }
+}
+
+function writeSessionThreadId(threadId: string | null) {
+  try {
+    if (threadId) window.sessionStorage.setItem(SESSION_THREAD_KEY, threadId)
+    else window.sessionStorage.removeItem(SESSION_THREAD_KEY)
+  } catch {
+    /* see readSessionThreadId */
+  }
+}
+
 /**
  * Derive the page context sent with every chat turn.
  * `/events/{uid}` → event; `/dashboard` → dashboard; everything else → other.
@@ -56,13 +80,15 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
   const [showHistory, setShowHistory] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // Bumped to send the caret back to the composer; see ChatInput's focusSignal.
+  const [composerFocusSignal, setComposerFocusSignal] = useState(0)
   const bootstrappedRef = useRef(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const threadsQuery = useChatThreads()
   const messagesQuery = useChatMessages(activeThreadId ?? '')
   const createThread = useCreateChatThread()
-  const sendTurn = useSendChatTurn(activeThreadId ?? '')
+  const sendTurn = useSendChatTurn()
   const deleteThread = useDeleteChatThread()
 
   const threads = threadsQuery.data ?? []
@@ -74,29 +100,33 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
     ? threads.find((thread) => thread.id === activeThreadId) ?? null
     : null
   const awaitsInput = activeThread ? activeThread.status !== 'idle' : false
+  // A first message spans two requests (create thread → run turn); both count as
+  // the turn being in flight.
+  const turnInFlight = sendTurn.isPending || createThread.isPending
 
   // The draft card + action buttons come from the most recent assistant turn.
   const latestAssistant = [...messages].reverse().find((m) => m.role === 'assistant') ?? null
   const card = latestAssistant?.payload?.card ?? null
   const buttons = awaitsInput ? latestAssistant?.payload?.buttons ?? [] : []
 
-  // Auto-create / reuse the most recent thread the first time the drawer opens.
+  // Resume this browser session's conversation the first time the drawer opens.
+  // A session that has none — i.e. a first visit — starts a new chat instead of
+  // reopening the last one; the thread row itself is created lazily on the first
+  // message, so merely opening the drawer never leaves an empty conversation
+  // behind. The stored id is re-checked against the thread list so one deleted
+  // elsewhere doesn't resurrect.
   useEffect(() => {
     if (!isOpen || activeThreadId || bootstrappedRef.current) return
     if (threadsQuery.isLoading) return
     bootstrappedRef.current = true
-    const mostRecent = sortedThreads[0]
-    if (mostRecent) {
-      setActiveThreadId(mostRecent.id)
+    const sessionThreadId = readSessionThreadId()
+    const stillExists = (threadsQuery.data ?? []).some((thread) => thread.id === sessionThreadId)
+    if (sessionThreadId && stillExists) {
+      setActiveThreadId(sessionThreadId)
     } else {
-      createThread
-        .mutateAsync()
-        .then((thread) => setActiveThreadId(thread.id))
-        .catch(() => {
-          bootstrappedRef.current = false
-        })
+      writeSessionThreadId(null)
     }
-  }, [isOpen, activeThreadId, sortedThreads, threadsQuery.isLoading, createThread])
+  }, [isOpen, activeThreadId, threadsQuery.data, threadsQuery.isLoading])
 
   // Keep the newest message / card in view.
   useEffect(() => {
@@ -108,12 +138,29 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
         /* scrollIntoView is a no-op in some environments (e.g. jsdom) */
       }
     }
-  }, [isOpen, messages.length, card, sendTurn.isPending])
+  }, [isOpen, messages.length, card, turnInFlight])
 
-  function dispatchTurn(body: ChatTurnRequest) {
-    if (!activeThreadId) return
+  /** Set the active thread and remember it for the rest of this browser session. */
+  function selectThread(threadId: string | null) {
+    setActiveThreadId(threadId)
+    writeSessionThreadId(threadId)
+  }
+
+  async function dispatchTurn(body: ChatTurnRequest) {
     setNotice(null)
-    sendTurn.mutate(body, {
+    // A fresh chat has no thread row yet — the first message creates it.
+    let threadId = activeThreadId
+    if (!threadId) {
+      try {
+        const thread = await createThread.mutateAsync()
+        threadId = thread.id
+        selectThread(thread.id)
+      } catch {
+        setNotice('Could not start a new chat. Please try again.')
+        return
+      }
+    }
+    sendTurn.mutate({ threadId, ...body }, {
       // A brand-new event was created this turn — close the drawer and open its
       // page so the user lands on the event they just made. Edits don't set this.
       onSuccess: (response: ChatTurnResponse) => {
@@ -134,28 +181,26 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
   }
 
   function handleSend(message: string) {
-    dispatchTurn({ message, context })
+    void dispatchTurn({ message, context })
   }
 
   function handleAction(action: ChatActionPayload) {
-    dispatchTurn({ action, context })
+    void dispatchTurn({ action, context })
   }
 
-  async function handleNewChat() {
+  // Clears the conversation back to the greeting; the thread row is created when
+  // the user actually sends something.
+  function handleNewChat() {
     setNotice(null)
     setShowHistory(false)
-    try {
-      const thread = await createThread.mutateAsync()
-      bootstrappedRef.current = true
-      setActiveThreadId(thread.id)
-    } catch {
-      setNotice('Could not start a new chat. Please try again.')
-    }
+    bootstrappedRef.current = true
+    selectThread(null)
+    setComposerFocusSignal((prev) => prev + 1)
   }
 
   function handleSelectThread(threadId: string) {
     setNotice(null)
-    setActiveThreadId(threadId)
+    selectThread(threadId)
     setShowHistory(false)
     setConfirmDeleteId(null)
   }
@@ -167,12 +212,7 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
       if (threadId === activeThreadId) {
         // Fall back to the next most recent thread; start fresh when none left.
         const next = sortedThreads.find((thread) => thread.id !== threadId)
-        if (next) {
-          setActiveThreadId(next.id)
-        } else {
-          const thread = await createThread.mutateAsync()
-          setActiveThreadId(thread.id)
-        }
+        selectThread(next ? next.id : null)
       }
     } catch {
       setNotice('Could not delete the chat. Please try again.')
@@ -293,14 +333,14 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
         <MessageList
           messages={messages}
           isLoading={messagesQuery.isLoading && !!activeThreadId}
-          isThinking={sendTurn.isPending}
+          isThinking={turnInFlight}
         />
 
         {card && (
           <DraftEventCard
             card={card}
             buttons={buttons}
-            disabled={sendTurn.isPending}
+            disabled={turnInFlight}
             onAction={handleAction}
           />
         )}
@@ -314,7 +354,7 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
                   key={`${button.action.type}-${button.label}`}
                   type="button"
                   onClick={() => handleAction(button.action)}
-                  disabled={sendTurn.isPending}
+                  disabled={turnInFlight}
                   className={`flex-1 min-w-[96px] py-2.5 px-3 rounded-xl text-sm font-bold transition-colors disabled:opacity-60 ${
                     isCancel
                       ? 'border border-outline-variant text-on-surface-variant hover:bg-surface-container'
@@ -340,7 +380,11 @@ function ChatWidgetInner({ pathname }: { pathname: string }) {
 
       {/* Footer composer */}
       <div className="shrink-0">
-        <ChatInput disabled={sendTurn.isPending} onSend={handleSend} />
+        <ChatInput
+          disabled={turnInFlight}
+          onSend={handleSend}
+          focusSignal={composerFocusSignal}
+        />
       </div>
     </div>
   )

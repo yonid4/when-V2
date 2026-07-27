@@ -6,6 +6,9 @@
  * - Clicking the FAB opens the drawer
  * - Sending a message posts { message, context } — the event route carries event_uid
  * - Clicking an assistant action button posts the exact structured action (no free text)
+ * - A fresh browser session starts a new chat; the thread row is created on the
+ *   first message and the session's thread is resumed across reopens
+ * - The global opening message greets the user on every page
  */
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -58,7 +61,11 @@ vi.mock('@/hooks/useChat', () => ({
 }))
 
 import { ChatWidget } from '@/components/chat/ChatWidget'
+import { GREETING_MESSAGE } from '@/components/chat/MessageList'
 import { useChatUiStore } from '@/stores/chatStore'
+
+// Mirrors SESSION_THREAD_KEY in ChatWidget — the per-browser-session thread.
+const SESSION_THREAD_KEY = 'when.chat.sessionThreadId'
 
 function makeThread(overrides: Partial<(typeof mocks.threads)[number]> = {}) {
   return {
@@ -83,6 +90,8 @@ beforeEach(() => {
   mocks.pathname = '/dashboard'
   mocks.threads = []
   mocks.messages = []
+  // Each test starts as a brand-new browser session unless it seeds the key.
+  window.sessionStorage.clear()
   // The drawer's open state lives in a real (module-level) zustand store —
   // reset it so a drawer opened in one test doesn't leak into the next.
   useChatUiStore.setState({ isOpen: false })
@@ -102,6 +111,28 @@ describe('ChatWidget — gating & drawer', () => {
 
     expect(screen.getByLabelText('Message the assistant')).toBeInTheDocument()
     expect(screen.queryByLabelText('Open chat assistant')).not.toBeInTheDocument()
+  })
+
+  it('puts the caret in the composer when the drawer opens', () => {
+    mocks.threads = [makeThread()]
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Message the assistant'))
+  })
+
+  it('puts the caret back in the composer when a new chat is started', () => {
+    mocks.threads = [makeThread()]
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    // Clicking the header button leaves focus on it, not the composer.
+    const newChat = screen.getByLabelText('New chat')
+    newChat.focus()
+    fireEvent.click(newChat)
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Message the assistant'))
   })
 })
 
@@ -132,6 +163,7 @@ describe('ChatWidget — sending turns', () => {
   it('posts the exact structured action (no free text) when a button is clicked', async () => {
     mocks.pathname = '/events/evt-9'
     mocks.threads = [makeThread({ id: 't2', status: 'awaiting_choice' })]
+    window.sessionStorage.setItem(SESSION_THREAD_KEY, 't2')
     mocks.messages = [
       {
         id: 'm1',
@@ -164,6 +196,7 @@ describe('ChatWidget — sending turns', () => {
 
   it('navigates to the new event and closes the drawer when created_event_uid is returned', async () => {
     mocks.threads = [makeThread({ id: 't3', status: 'awaiting_confirmation' })]
+    window.sessionStorage.setItem(SESSION_THREAD_KEY, 't3')
     mocks.messages = [
       {
         id: 'm1',
@@ -206,6 +239,84 @@ describe('ChatWidget — sending turns', () => {
 
     expect(mocks.push).not.toHaveBeenCalled()
   })
+
+  it('keeps the composer focused and editable after sending', async () => {
+    mocks.threads = [makeThread({ id: 't5', status: 'collecting' })]
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    const input = screen.getByLabelText('Message the assistant')
+    fireEvent.change(input, { target: { value: 'Lunch on Friday' } })
+    fireEvent.click(screen.getByLabelText('Send message'))
+
+    await waitFor(() => expect(mocks.sendTurn).toHaveBeenCalledTimes(1))
+    // Focus returns to the textarea so the user can keep typing straight away.
+    expect(document.activeElement).toBe(input)
+    expect(input).not.toBeDisabled()
+  })
+
+  it('routes typing into the composer when nothing else holds focus', () => {
+    mocks.threads = [makeThread()]
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    ;(document.activeElement as HTMLElement | null)?.blur()
+
+    fireEvent.keyDown(window, { key: 'h' })
+
+    // The first character is inserted by hand; every keystroke after it lands in
+    // the now-focused textarea the normal way.
+    const input = screen.getByLabelText('Message the assistant')
+    expect(document.activeElement).toBe(input)
+    expect(input).toHaveValue('h')
+  })
+
+  it('leaves keystrokes alone when another field has focus', () => {
+    mocks.threads = [makeThread()]
+    render(
+      <>
+        <input aria-label="Elsewhere" />
+        <ChatWidget />
+      </>
+    )
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    const other = screen.getByLabelText('Elsewhere') as HTMLInputElement
+    other.focus()
+
+    fireEvent.keyDown(window, { key: 'h' })
+
+    expect(document.activeElement).toBe(other)
+    expect(screen.getByLabelText('Message the assistant')).toHaveValue('')
+  })
+
+  it('reclaims focus for the composer when the turn finishes', () => {
+    mocks.sendPending = true
+    mocks.threads = [makeThread()]
+    const { rerender } = render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    // A button that disables itself mid-turn drops focus to <body>.
+    ;(document.activeElement as HTMLElement | null)?.blur()
+
+    mocks.sendPending = false
+    rerender(<ChatWidget />)
+
+    expect(document.activeElement).toBe(screen.getByLabelText('Message the assistant'))
+  })
+
+  it('leaves the composer editable while a turn is in flight', () => {
+    // Disabling the textarea mid-turn would blur it, so it stays enabled and
+    // only the send button locks out.
+    mocks.sendPending = true
+    mocks.threads = [makeThread()]
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+
+    expect(screen.getByLabelText('Message the assistant')).not.toBeDisabled()
+    expect(screen.getByLabelText('Send message')).toBeDisabled()
+  })
 })
 
 describe('ChatWidget — thinking indicator', () => {
@@ -246,10 +357,11 @@ describe('ChatWidget — thread history', () => {
 
   it('lists previous threads and switches the active thread on click', async () => {
     mocks.threads = twoThreads()
+    window.sessionStorage.setItem(SESSION_THREAD_KEY, 't1')
     render(<ChatWidget />)
 
     fireEvent.click(screen.getByLabelText('Open chat assistant'))
-    // Bootstrap resumes the most recently updated thread.
+    // Bootstrap resumes this session's thread.
     await waitFor(() => expect(mocks.messagesThreadId).toBe('t1'))
 
     fireEvent.click(screen.getByLabelText('Chat history'))
@@ -301,6 +413,7 @@ describe('ChatWidget — thread history', () => {
 
   it('switches to the next most recent thread after deleting the active one', async () => {
     mocks.threads = twoThreads()
+    window.sessionStorage.setItem(SESSION_THREAD_KEY, 't1')
     render(<ChatWidget />)
 
     fireEvent.click(screen.getByLabelText('Open chat assistant'))
@@ -312,5 +425,117 @@ describe('ChatWidget — thread history', () => {
 
     await waitFor(() => expect(mocks.deleteThread).toHaveBeenCalledWith('t1'))
     await waitFor(() => expect(mocks.messagesThreadId).toBe('t2'))
+  })
+})
+
+describe('ChatWidget — new session starts a new chat', () => {
+  const existing = () => [
+    makeThread({ id: 'old', title: 'Yesterday’s chat', updated_at: '2026-07-18T12:00:00.000Z' }),
+  ]
+
+  it('does not resume the last chat on a fresh browser session', () => {
+    mocks.threads = existing()
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+
+    // No thread is active and none is created just by opening the drawer.
+    expect(mocks.messagesThreadId).toBe('')
+    expect(mocks.createThread).not.toHaveBeenCalled()
+  })
+
+  it('creates the thread on the first message and sends the turn to it', async () => {
+    mocks.threads = existing()
+    mocks.createThread.mockResolvedValue(makeThread({ id: 'fresh', status: 'idle' }))
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    fireEvent.change(screen.getByLabelText('Message the assistant'), {
+      target: { value: 'Dinner with Sarah' },
+    })
+    fireEvent.click(screen.getByLabelText('Send message'))
+
+    await waitFor(() => expect(mocks.createThread).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mocks.sendTurn).toHaveBeenCalledTimes(1))
+    expect(mocks.sendTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ threadId: 'fresh', message: 'Dinner with Sarah' }),
+      expect.anything()
+    )
+    // The new thread is now this session's — a reopen resumes it.
+    expect(window.sessionStorage.getItem(SESSION_THREAD_KEY)).toBe('fresh')
+  })
+
+  it('resumes this session’s thread instead of creating another', async () => {
+    mocks.threads = [...existing(), makeThread({ id: 'mine' })]
+    window.sessionStorage.setItem(SESSION_THREAD_KEY, 'mine')
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+
+    await waitFor(() => expect(mocks.messagesThreadId).toBe('mine'))
+    expect(mocks.createThread).not.toHaveBeenCalled()
+  })
+
+  it('ignores a stored thread that no longer exists', async () => {
+    mocks.threads = existing()
+    window.sessionStorage.setItem(SESSION_THREAD_KEY, 'deleted-elsewhere')
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+
+    await waitFor(() => expect(window.sessionStorage.getItem(SESSION_THREAD_KEY)).toBeNull())
+    expect(mocks.messagesThreadId).toBe('')
+  })
+
+  it('New chat clears the conversation without creating a thread', async () => {
+    mocks.threads = [...existing(), makeThread({ id: 'mine' })]
+    window.sessionStorage.setItem(SESSION_THREAD_KEY, 'mine')
+    render(<ChatWidget />)
+
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+    await waitFor(() => expect(mocks.messagesThreadId).toBe('mine'))
+
+    fireEvent.click(screen.getByLabelText('New chat'))
+
+    await waitFor(() => expect(mocks.messagesThreadId).toBe(''))
+    expect(mocks.createThread).not.toHaveBeenCalled()
+    expect(window.sessionStorage.getItem(SESSION_THREAD_KEY)).toBeNull()
+  })
+})
+
+describe('ChatWidget — global opening message', () => {
+  it('greets the user in a new chat', () => {
+    render(<ChatWidget />)
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+
+    expect(screen.getByText(GREETING_MESSAGE.content)).toBeInTheDocument()
+  })
+
+  it('greets the user on an event page too', () => {
+    mocks.pathname = '/events/evt-123'
+    render(<ChatWidget />)
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+
+    expect(screen.getByText(GREETING_MESSAGE.content)).toBeInTheDocument()
+  })
+
+  it('keeps the greeting once the conversation has started', async () => {
+    mocks.threads = [makeThread({ id: 't1' })]
+    window.sessionStorage.setItem(SESSION_THREAD_KEY, 't1')
+    mocks.messages = [
+      {
+        id: 'm1',
+        thread_id: 't1',
+        role: 'user',
+        content: 'Dinner with Sarah',
+        created_at: '2026-07-19T10:00:00Z',
+      },
+    ]
+    render(<ChatWidget />)
+    fireEvent.click(screen.getByLabelText('Open chat assistant'))
+
+    await waitFor(() => expect(mocks.messagesThreadId).toBe('t1'))
+    expect(screen.getByText(GREETING_MESSAGE.content)).toBeInTheDocument()
+    expect(screen.getByText('Dinner with Sarah')).toBeInTheDocument()
   })
 })
