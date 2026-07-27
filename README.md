@@ -120,13 +120,13 @@ The API exposes an unauthenticated `GET /health` endpoint (returns `{"status": "
 
 ## Visuals
 
-![Landing page](./docs/screenshots/landing.png)
+![Landing page](./design/landing.png)
 *Landing page — hero section with availability grid mockup*
 
-![Dashboard](./docs/screenshots/dashboard.png)
+![Dashboard](./design/dashboard.png)
 *Dashboard — event cards and calendar connect prompt*
 
-![Event detail](./docs/screenshots/event_detail.png)
+![Event detail](./design/event-detail.png)
 *Event detail — availability grid, participant list, and ranked proposals*
 
 ## Tests
