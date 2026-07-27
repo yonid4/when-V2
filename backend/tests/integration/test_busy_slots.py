@@ -13,7 +13,6 @@ All writes must use service_client (RLS blocks anon writes).
 import uuid
 from datetime import datetime, timezone
 
-import pytest
 
 from app.utils.supabase import service_client
 from tests.integration.conftest import IntegrationUser

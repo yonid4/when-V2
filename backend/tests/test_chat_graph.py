@@ -14,7 +14,7 @@ import pytest
 
 from app.models.event import EventUpdate
 from app.services import event_service
-from agent_service import availability, booking, editing, graph as graph_mod, nodes, people
+from agent_service import availability, booking, nodes, people
 from agent_service.graph import build_graph, entry_router
 from agent_service.llm import ExtractedTurn, build_extraction_prompt
 

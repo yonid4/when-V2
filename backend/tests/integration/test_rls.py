@@ -12,7 +12,6 @@ confirming the policy fires correctly.
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from app.utils.supabase import service_client
 from tests.integration.conftest import IntegrationUser

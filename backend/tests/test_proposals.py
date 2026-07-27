@@ -6,7 +6,6 @@ Tests the proposals router and proposal_service with mocked Supabase service_cli
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
 

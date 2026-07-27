@@ -6,7 +6,6 @@ Tests the preferred_slots router with mocked Supabase service_client.
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
 

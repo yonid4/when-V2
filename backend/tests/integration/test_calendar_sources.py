@@ -109,7 +109,7 @@ class TestWriteCalendarRPC:
         alice_acct = _insert_account(alice)
         bob_acct = _insert_account(bob)
 
-        alice_src = _insert_source(alice_acct["id"], "primary", is_write=True)
+        _insert_source(alice_acct["id"], "primary", is_write=True)
         bob_src = _insert_source(bob_acct["id"], "primary", is_write=True)
 
         # Run RPC for Alice — passing a non-existent exclude ID so all of Alice's get cleared
