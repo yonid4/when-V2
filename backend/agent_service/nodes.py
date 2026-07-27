@@ -130,19 +130,35 @@ def _button(label: str, action: dict) -> dict:
     return _dump(ChatButton(label=label, action=ChatActionPayload(**action)))
 
 
+# The workflow channels persisted on the chat_threads row between turns. BOTH resets
+# below derive their key list from this ONE definition so they cannot drift apart as
+# channels are added — two hand-maintained lists is how `pending_people` came to be
+# unhandled in `validate_intent`.
+_WORKFLOW_CHANNELS = ('draft', 'participants', 'pending_people', 'candidate_slots',
+                      'booking_mode')
+
+# Everything derived from WHO is invited. `draft` is excluded: a scope reset rebuilds
+# the draft in place, and its fact fields survive unless the scope is 'new_event'.
+_PEOPLE_CHANNELS = tuple(c for c in _WORKFLOW_CHANNELS if c != 'draft')
+
+
 def _clear_workflow_state() -> dict:
     """Reset all workflow channels to idle (used after success / cancel)."""
-    return {
-        'status': 'idle',
-        'workflow': None,
-        'draft': None,
-        'participants': None,
-        'pending_people': None,
-        'candidate_slots': None,
-        'booking_mode': None,
-        'card': None,
-        'buttons': [],
-    }
+    out: dict = {channel: None for channel in _WORKFLOW_CHANNELS}
+    out.update({'status': 'idle', 'workflow': None, 'card': None, 'buttons': []})
+    return out
+
+
+def _people_reset() -> dict:
+    """Clear every channel derived from WHO is invited (``validate_intent`` scope reset).
+
+    Unlike ``_clear_workflow_state``, which ends the workflow, the turn CONTINUES into
+    ``resolve_people`` — so the list channels reset to ``[]`` rather than ``None``.
+    ``candidate_slots`` and ``booking_mode`` are included because both are derived from
+    the old roster: a ranking computed for people who are no longer invited is worse
+    than no ranking at all.
+    """
+    return {c: (None if c == 'booking_mode' else []) for c in _PEOPLE_CHANNELS}
 
 
 def _apply_edits(draft: dict, edits) -> dict:
@@ -168,6 +184,49 @@ def _dedupe_participants(participants: list) -> list:
             seen.add(key)
         out.append(p)
     return out
+
+
+def _mention_key(mention: dict) -> str | None:
+    """Identity for a mention: its casefolded name, else its normalized email."""
+    name = (mention.get('name') or '').strip().casefold()
+    if name:
+        return name
+    return (mention.get('email') or '').strip().casefold() or None
+
+
+def _merge_mentions(prev: list, new: list) -> list:
+    """Carry unconsumed prior mentions forward, appending this turn's new ones.
+
+    The extraction prompt tells the model to list only people mentioned in THIS
+    message ("the app already kept those"), so a follow-up turn returns no people at
+    all — the prior mentions have to survive here or the names are lost. Safe because
+    ``resolve_people`` empties ``draft['people']`` the moment it consumes them, so
+    anything still in there is genuinely unresolved.
+
+    Carried-forward entries come FIRST: mention order drives pending order, which
+    drives ask order, which drives the positional pairing in
+    ``_pair_emails_to_pending``. Prepending new mentions would silently scramble
+    bulk-reply pairing.
+
+    Deduped on ``_mention_key`` so a repeated name cannot eat the ``MAX_CHAT_PEOPLE``
+    budget twice; on a collision the entry carrying an email wins, so a later "gil is
+    gil@x.com" upgrades the bare name in place instead of duplicating it.
+    """
+    merged: list = []
+    index: dict = {}
+    for mention in list(prev) + list(new):
+        key = _mention_key(mention)
+        if key is None:
+            continue
+        if key not in index:
+            index[key] = len(merged)
+            merged.append(dict(mention))
+            continue
+        existing = merged[index[key]]
+        for field in ('email', 'name'):
+            if not existing.get(field) and mention.get(field):
+                existing[field] = mention[field]
+    return merged
 
 
 def _join_names(names: list) -> str:
@@ -298,18 +357,30 @@ def validate_intent(state):
     'other' intent → help text. Missing title/date → a question (status
     'collecting', partial draft kept so revisions merge). Otherwise builds the UTC
     window via ``local_window_to_utc``, clamps duration to 15-480, rejects
-    all-past windows, and hands off to ``resolve_people``. Participants are reset
-    only when a brand-new event starts (status idle/None); revisions preserve
-    already-resolved people.
+    all-past windows, and hands off to ``resolve_people``.
+
+    The extracted ``scope`` decides how much of the prior turn survives: a
+    'revision' merges onto it (including unconsumed people mentions),
+    'replaces_people' restarts the guest list but keeps the event facts, and
+    'new_event' rebuilds from this turn alone. A brand-new thread (status
+    idle/None) is treated exactly like 'new_event'.
     """
     extracted = state.get('extracted')
     if extracted is None or extracted.intent == 'other':
         return {'reply': {'kind': 'help', 'facts': {}}, 'route': 'compose_reply'}
 
     tz = state.get('user_timezone')
-    prev = state.get('draft') or {}
-    prev_local = prev.get('local') or {}
     fresh = state.get('status') in (None, 'idle')
+    # Default to 'revision' on anything unexpected: the destructive scopes must be
+    # actively chosen, so a missing or garbled value keeps state rather than wiping it.
+    scope = getattr(extracted, 'scope', None) or 'revision'
+    resets_facts = fresh or scope == 'new_event'
+    resets_people = resets_facts or scope == 'replaces_people'
+
+    # With prev empty, every _first() below collapses to "take the extracted value",
+    # so 'new_event' needs no special handling of the individual fact fields.
+    prev = {} if resets_facts else (state.get('draft') or {})
+    prev_local = prev.get('local') or {}
 
     title = _first(extracted.title, prev.get('title'))
     event_type = _valid_event_type(_first(extracted.event_type, prev.get('event_type')))
@@ -322,7 +393,12 @@ def validate_intent(state):
         'start_time': _first(extracted.start_time, prev_local.get('start_time'), _DEFAULT_START_TIME),
         'end_time': _first(extracted.end_time, prev_local.get('end_time'), _DEFAULT_END_TIME),
     }
-    mentions = [{'name': m.name, 'email': m.email} for m in (extracted.people or [])]
+    new_mentions = [{'name': m.name, 'email': m.email} for m in (extracted.people or [])]
+    # Unconsumed mentions must survive a follow-up turn — the model is instructed not
+    # to repeat people it already reported, so this merge is the only thing keeping
+    # them alive when the user answers a question instead of restating the guest list.
+    mentions = new_mentions if resets_people else _merge_mentions(
+        prev.get('people') or [], new_mentions)
 
     base = {
         'title': title,
@@ -333,11 +409,15 @@ def validate_intent(state):
         'people': mentions,
     }
 
+    # Announced by compose_reply so a discarded guest list is never silent.
+    reset_note = {'scope_reset': scope} if (resets_people and not fresh) else {}
+
     def _stop(reply):
         out = {'draft': base, 'status': 'collecting', 'workflow': 'create_event',
                'reply': reply, 'route': 'compose_reply'}
-        if fresh:
-            out['participants'] = []
+        if resets_people:
+            out.update(_people_reset())
+        out.update(reset_note)
         return out
 
     missing = []
@@ -377,8 +457,9 @@ def validate_intent(state):
         'people': mentions,
     }
     out = {'draft': draft, 'workflow': 'create_event', 'route': 'resolve_people'}
-    if fresh:
-        out['participants'] = []
+    if resets_people:
+        out.update(_people_reset())
+    out.update(reset_note)
     return out
 
 
@@ -515,10 +596,19 @@ def apply_email(state):
 # ─── prepare_choice (deterministic) ───────────────────────────────────────────
 
 def prepare_choice(state):
-    """Offer the booking choice only when every participant is in-system AND has a
-    connected calendar; otherwise skip straight to the in-app confirmation."""
+    """Offer the booking choice only when there IS a roster and every participant is
+    in-system AND has a connected calendar; otherwise skip straight to the in-app
+    confirmation."""
     participants = state.get('participants') or []
     draft = state.get('draft') or {}
+
+    # An empty roster is a solo event: there are no other calendars to reconcile, so
+    # the two-way choice is meaningless. Checked EXPLICITLY because all([]) is True —
+    # left to the `all()` below, no participants would take the most confident path
+    # of all and offer to book a meeting for nobody.
+    if not participants:
+        return {'booking_mode': 'in_app', 'route': 'prepare_confirmation'}
+
     all_bookable = all(p.get('in_system') and p.get('has_calendar') for p in participants)
 
     if all_bookable:
@@ -742,12 +832,27 @@ def cancel_node(state):
 
 # ─── compose_reply (deterministic, terminal for every branch) ─────────────────
 
+# Lead sentence announcing a scope reset. Read here rather than threaded through each
+# branch's reply facts, so every downstream outcome (ask_email, choice, need_info…)
+# announces the discard without any of them having to know about it.
+_RESET_LEADS = {
+    'replaces_people': "Starting the guest list over.",
+    'new_event': "Starting a new event.",
+}
+
+
 def compose_reply(state):
     """The single terminal reply node: render the deterministic template for the
     structured ``reply`` facts. No LLM — every outcome has a fact-complete
-    template in ``_reply_text``, so replies are instant and never drift."""
+    template in ``_reply_text``, so replies are instant and never drift.
+
+    A turn whose scope discarded state leads with a sentence saying so: silently
+    dropping a guest list the coordinator spent turns resolving is the exact failure
+    this workflow is meant to avoid."""
     reply = state.get('reply') or {'kind': 'help', 'facts': {}}
-    return {'assistant_text': _reply_text(reply)}
+    text = _reply_text(reply)
+    lead = _RESET_LEADS.get(state.get('scope_reset') or '')
+    return {'assistant_text': f"{lead} {text}" if lead else text}
 
 
 def _reply_text(reply: dict) -> str:

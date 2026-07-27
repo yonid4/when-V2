@@ -70,3 +70,7 @@ class AgentState(TypedDict, total=False):
     reply: dict | None
     route: str
     error_code: str | None
+    # Set by validate_intent when THIS turn's scope discarded state ('replaces_people'
+    # / 'new_event'), so compose_reply can announce the discard. Turn-local: run_turn
+    # ignores it, so it never reaches the chat_threads row.
+    scope_reset: str | None

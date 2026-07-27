@@ -14,7 +14,7 @@ import pytest
 
 from app.models.event import EventUpdate
 from app.services import event_service
-from agent_service import availability, booking, editing, graph as graph_mod, people
+from agent_service import availability, booking, editing, graph as graph_mod, nodes, people
 from agent_service.graph import build_graph, entry_router
 from agent_service.llm import ExtractedTurn, build_extraction_prompt
 
@@ -390,6 +390,143 @@ def test_awaiting_email_partial_bulk_reply_reasks(monkeypatch):
     assert [p['name'] for p in out['pending_people']] == ['John']
     assert any(p['email'] == 'sarah@acme.com' for p in out['participants'])
     assert 'John' in out['assistant_text']
+
+
+# ─── carrying people across turns + turn scope ────────────────────────────────
+
+def _pend_everyone(mentions, **kw):
+    """resolve_mentions stub: nobody is in the directory, so every name goes pending."""
+    return [], [{'name': m['name'], 'reason': 'no_match'} for m in mentions if m.get('name')]
+
+
+def test_named_people_survive_a_follow_up_turn(monkeypatch):
+    """Names given before the date are still asked about after it (the reported bug).
+
+    Turn 1 names three people but gives no date, so the turn stops to ask for one.
+    Turn 2 supplies only the date — the model correctly reports NO people (it is told
+    not to repeat them), and the three names must survive in the draft rather than
+    being overwritten by that empty list.
+    """
+    monkeypatch.setattr(people, 'resolve_mentions', _pend_everyone)
+    names = [{'name': 'shalom'}, {'name': 'gil'}, {'name': 'halon'}]
+
+    # Turn 1 — people, no date.
+    g1 = build_graph(FakeLLM(extracted=_create_turn(
+        title='lunch', people=names, start_date=None, end_date=None)))
+    out1 = g1.invoke(_base(user_message='create a lunch event with shalom, gil, and halon'))
+
+    assert out1['status'] == 'collecting'
+    assert [m['name'] for m in out1['draft']['people']] == ['shalom', 'gil', 'halon']
+
+    # Turn 2 — date only; the extraction reports no people, exactly as instructed.
+    g2 = build_graph(FakeLLM(extracted=_create_turn(title=None, people=[])))
+    out2 = g2.invoke(_base(status='collecting', workflow='create_event',
+                           draft=out1['draft'], participants=out1.get('participants'),
+                           user_message='this week'))
+
+    # It asks for their emails instead of offering to book an event for nobody.
+    assert out2['status'] == 'awaiting_email'
+    assert [p['name'] for p in out2['pending_people']] == ['shalom', 'gil', 'halon']
+    assert all(n in out2['assistant_text'] for n in ('shalom', 'gil', 'halon'))
+
+
+def test_no_participants_goes_to_in_app_not_the_booking_choice(monkeypatch):
+    """A solo event skips the two-way choice — all([]) must not read as 'all bookable'."""
+    monkeypatch.setattr(people, 'resolve_mentions', lambda mentions, **kw: ([], []))
+    g = build_graph(FakeLLM(extracted=_create_turn(title='deep work', people=[])))
+
+    out = g.invoke(_base(user_message='block 2 hours for deep work this week'))
+
+    assert out['status'] == 'awaiting_confirmation'
+    assert out['booking_mode'] == 'in_app'
+    assert {b['action']['type'] for b in out['buttons']} == {'confirm_draft', 'cancel'}
+
+
+def test_replaces_people_restarts_the_guest_list_but_keeps_the_event(monkeypatch):
+    """scope='replaces_people' clears everyone and everything derived from them,
+    while the event's own facts survive."""
+    monkeypatch.setattr(people, 'resolve_mentions', _pend_everyone)
+    g = build_graph(FakeLLM(extracted=_create_turn(
+        title=None, scope='replaces_people', people=[{'name': 'gil'}])))
+
+    out = g.invoke(_base(
+        status='awaiting_email', workflow='create_event',
+        draft={'title': 'lunch', 'people': [],
+               'local': {'start_date': '2026-07-20', 'end_date': '2026-07-20',
+                         'start_time': '12:00', 'end_time': '14:00'}},
+        participants=[_participant()],
+        pending_people=[{'name': 'zed', 'reason': 'no_match'}],
+        candidate_slots=[_slot()], booking_mode='direct',
+        user_message='actually just gil'))
+
+    # The old roster and everything derived from it is gone...
+    assert out['participants'] == []
+    assert [p['name'] for p in out['pending_people']] == ['gil']
+    assert out['candidate_slots'] == []
+    assert out['booking_mode'] is None
+    # ...but the event itself survives, and the discard is announced.
+    assert out['draft']['title'] == 'lunch'
+    assert out['assistant_text'].startswith('Starting the guest list over.')
+
+
+def test_new_event_rebuilds_the_draft_from_this_turn_only(monkeypatch):
+    """scope='new_event' discards the prior draft's facts as well as its people."""
+    monkeypatch.setattr(people, 'resolve_mentions', lambda mentions, **kw: ([], []))
+    g = build_graph(FakeLLM(extracted=_create_turn(
+        title='dentist', scope='new_event', people=[],
+        start_date='2026-07-24', end_date='2026-07-24')))
+
+    out = g.invoke(_base(
+        status='collecting', workflow='create_event',
+        draft={'title': 'lunch', 'people': [{'name': 'gil'}],
+               'local': {'start_date': '2026-07-20', 'end_date': '2026-07-20',
+                         'start_time': '12:00', 'end_time': '14:00'}},
+        participants=[_participant()], pending_people=[{'name': 'zed', 'reason': 'no_match'}],
+        user_message="forget that, new event — dentist friday"))
+
+    assert out['draft']['title'] == 'dentist'
+    assert out['draft']['local']['start_date'] == '2026-07-24'
+    assert out['draft']['people'] == []
+    assert out['participants'] == []
+    assert out['pending_people'] == []
+    assert out['assistant_text'].startswith('Starting a new event.')
+
+
+def test_scope_defaults_to_revision_so_omitting_it_keeps_state():
+    """An extraction that never mentions scope must not discard anything."""
+    assert ExtractedTurn(intent='create_event').scope == 'revision'
+
+
+def test_merge_keeps_mention_order_and_prefers_the_one_with_an_email():
+    """A later email upgrades the bare name in place; order is carried-forward first."""
+    merged = nodes._merge_mentions(
+        [{'name': 'shalom', 'email': None}, {'name': 'gil', 'email': None}],
+        [{'name': 'Gil', 'email': 'gil@x.com'}, {'name': 'halon', 'email': None}],
+    )
+    assert [m['name'] for m in merged] == ['shalom', 'gil', 'halon']
+    assert merged[1]['email'] == 'gil@x.com'
+
+
+def test_unresolved_mentions_reach_the_extraction_prompt(monkeypatch):
+    """Names the app is still holding are shown to the model, so a late email can be
+    attributed to the right person."""
+    monkeypatch.setattr(people, 'resolve_mentions', _pend_everyone)
+    llm = FakeLLM(extracted=_create_turn(title=None, people=[]))
+    g = build_graph(llm)
+
+    g.invoke(_base(status='collecting', workflow='create_event',
+                   draft={'title': 'lunch', 'people': [{'name': 'shalom'}, {'name': 'gil'}]},
+                   user_message='this week'))
+
+    prompt = llm.last_prompt or ''
+    assert 'People mentioned but not yet resolved' in prompt
+    assert 'shalom' in prompt and 'gil' in prompt
+
+
+def test_both_resets_derive_from_one_channel_list():
+    """The full clear and the scope reset must never drift apart."""
+    assert set(nodes._WORKFLOW_CHANNELS) <= set(nodes._clear_workflow_state())
+    assert set(nodes._people_reset()) == set(nodes._WORKFLOW_CHANNELS) - {'draft'}
 
 
 # ─── edit workflow ────────────────────────────────────────────────────────────
