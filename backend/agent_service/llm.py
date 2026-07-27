@@ -78,10 +78,25 @@ class ExtractedTurn(BaseModel):
     and the graph merges them onto the current draft). ``people`` lists only
     people newly mentioned in this message (already-added people are not
     repeated). Extract SEARCH WINDOWS only, never a specific meeting time.
+
+    ``scope`` says how the message relates to what is already collected. It is a
+    field a DETERMINISTIC node reads (``validate_intent``), not a routing decision —
+    the graph's edges stay deterministic, exactly as with ``intent``.
     """
 
     intent: Literal['create_event', 'edit_event', 'other'] = Field(
         description="'create_event' to schedule a new event, 'edit_event' to change an existing one, else 'other'.",
+    )
+    scope: Literal['revision', 'replaces_people', 'new_event'] = Field(
+        default='revision',
+        description=(
+            "How this message relates to the event already being collected. "
+            "'revision' (default) refines it — everything already collected is kept. "
+            "'replaces_people' means the user restated WHO is invited instead of "
+            "adding to the list — the guest list restarts, the event is kept. "
+            "'new_event' means the message says outright this is a different event. "
+            "When unsure, use 'revision'."
+        ),
     )
 
     # create-event fields
@@ -164,6 +179,16 @@ def build_extraction_prompt(
         "that belongs to them (e.g. \"invite Sarah, sarah@acme.com\"), put the name "
         "and the email on the SAME person entry. List an email with no name only "
         "when you genuinely cannot tell whose it is. Never list the same email twice.",
+        "- Set 'scope' to say how this message relates to the event already being "
+        "collected. Default to 'revision': the message refines it (a date, a longer "
+        "duration, one more guest) and everything already collected is kept. Use "
+        "'replaces_people' when the user restates WHO is invited instead of adding "
+        "to them (\"actually just me and Gil\", \"drop the others\") — the guest "
+        "list restarts, the event itself is kept. Use 'new_event' ONLY when the "
+        "message says outright that this is a different event (\"new event\", "
+        "\"forget that, let's plan something else\"); a message that merely "
+        "describes different details is a revision, NOT a new event. When in "
+        "doubt, choose 'revision'.",
     ]
 
     if history:
@@ -204,6 +229,17 @@ def build_extraction_prompt(
     if participants:
         names = [p.get('full_name') or p.get('email') for p in participants]
         lines += ["", f"People already added (do not repeat): {names}"]
+
+    # Mentions the app is still holding but has not resolved to a person yet. Kept
+    # OUT of the draft summary above (which is a raw dict dump) because it needs its
+    # own instruction: without it a terse follow-up turn sees no trace of the names
+    # and the model has no way to attribute a late email to the right person.
+    if current_draft and current_draft.get('people'):
+        unresolved = [p.get('name') or p.get('email')
+                      for p in current_draft['people'] if p.get('name') or p.get('email')]
+        if unresolved:
+            lines += ["", f"People mentioned but not yet resolved (the app kept these — "
+                          f"do not repeat them): {unresolved}"]
 
     if history:
         lines += ["", "Conversation so far (oldest first, background context only):"]
