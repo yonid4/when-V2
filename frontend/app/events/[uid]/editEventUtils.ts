@@ -6,7 +6,7 @@ import { isSafeHttpUrl } from '@/lib/eventUtils'
 
 export const editSchema = z.object({
   name: z.string().min(1, 'Name is required'),
-  allow_guest_invites: z.boolean().default(false),
+  allow_guest_invites: z.boolean(),
   earliest_local: z.string().min(1, 'Start time is required'),
   latest_local: z.string().min(1, 'End time is required'),
   event_type: z.enum(['meeting', 'social', 'birthday', 'other']),

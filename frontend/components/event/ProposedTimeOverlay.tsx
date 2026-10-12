@@ -1,6 +1,6 @@
 'use client'
 
-import type { ProposedTime } from '@/types'
+import type { ProposalResponse } from '@/types'
 import { formatSlotTime } from '@/lib/dates'
 
 const ROW_HEIGHT_PX = 32 // must match AvailabilityGrid scrollable h-8
@@ -12,7 +12,7 @@ const BEST_TEXT = 'var(--color-on-tertiary-fixed)'
 const BEST_TEXT_DIM = 'var(--color-on-tertiary-fixed-variant)'
 
 interface SlotWithOffset {
-  proposal: ProposedTime
+  proposal: ProposalResponse
   colIndex: number
   startRow: number
   rowsSpanned: number
@@ -21,12 +21,12 @@ interface SlotWithOffset {
 }
 
 function buildSlotsWithOffsets(
-  proposals: ProposedTime[],
+  proposals: ProposalResponse[],
   columnDates: Date[],
   startHour: number,
 ): SlotWithOffset[] {
   // Bucket proposals by column index
-  const byCol: Map<number, Array<{ proposal: ProposedTime; startRow: number; rowsSpanned: number }>> = new Map()
+  const byCol: Map<number, Array<{ proposal: ProposalResponse; startRow: number; rowsSpanned: number }>> = new Map()
 
   for (const proposal of proposals) {
     const slotStart = new Date(proposal.start_time_utc)
@@ -87,7 +87,7 @@ function buildSlotsWithOffsets(
 }
 
 interface Props {
-  proposals: ProposedTime[]
+  proposals: ProposalResponse[]
   visible: boolean
   eventStart: Date    // Date whose .getHours() gives the grid's first hour
   columnDates: Date[] // the 7 column dates rendered by the grid, in order
