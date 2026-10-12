@@ -25,8 +25,9 @@ from app.routers import (
 )
 from app.scheduler.jobs import sync_all_users_job
 
-# Allow OAuth over HTTP for local development
-os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+# Allow OAuth over HTTP for local development only (opt-in via .env)
+if settings.oauth_insecure_transport:
+    os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
 # uvicorn configures only its own loggers and leaves the root logger without a
 # handler, so application logs below WARNING are dropped by logging.lastResort.

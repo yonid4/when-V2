@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # Root log level. INFO surfaces the per-turn chat latency traces
     # (agent_service/tracing.py); set to WARNING to see only slow turns.
     log_level: str = "INFO"
+    # Allow OAuth over plain HTTP. Local development only — never enable in a
+    # deployed environment.
+    oauth_insecure_transport: bool = False
 
 
 settings = Settings()  # type: ignore[call-arg]
