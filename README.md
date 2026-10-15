@@ -1,151 +1,141 @@
+<div align="center">
+
 # When.
 
-Group scheduling without the back-and-forth. Create an event, invite participants, sync Google or Outlook calendars, and get the best meeting time automatically — ranked by real availability and stated preferences.
+**Group scheduling without the back-and-forth.**
 
-## Key Features
+Invite people, sync their Google or Outlook calendars, and get the best meeting time ranked by real availability and stated preferences. Once the coordinator confirms, the event is written straight onto everyone's calendar.
 
-- **Google & Outlook Calendar sync** — participants connect a Google or Microsoft (Outlook) account; busy slots are pulled automatically on connect and refreshed hourly in the background. A user can connect multiple accounts across both providers.
-- **Availability heatmap** — interactive grid shows where everyone is free across the scheduling window
-- **Preferred-slot marking** — participants swipe to highlight their ideal times, not just their open ones
-- **Smart proposal ranking** — algorithm generates candidate windows within each day's configured hours (including overnight windows that wrap past midnight), never proposes times in the past, scores them by conflict count (ascending) and preferred-slot overlap (descending), and surfaces the top 5
-- **Email invitations** — coordinator invites participants by email; invitees receive a join link and RSVP flow
-- **Real-time updates** — Supabase Realtime pushes participant changes, busy-slot syncs, and proposal refreshes live to all viewers
-- **Event finalization** — coordinator picks the winning proposal and closes the event. The confirmed event is written directly onto **each participant's own write calendar** using that participant's provider and credentials (Google or Microsoft), so it lands reliably for everyone cross-provider without depending on invitation emails. Each user has exactly one write calendar across all connected accounts, regardless of provider (a DB trigger backs the rule). Participants without a connected calendar — and any external invitees — instead receive an emailed calendar invitation from the coordinator's calendar. Busy sources from any provider feed availability.
-- **Credential expiry detection** — expired calendar tokens are detected and the UI prompts the user to reconnect without disrupting other participants
-- **Account deletion** — authenticated users can permanently delete their account and all owned data (events, calendar tokens, preferences) from the Settings page; calendar OAuth tokens are revoked server-side (where the provider supports revocation) before any data is removed
-- **Privacy Policy** — hosted at `/privacy`; covers data collection, retention, deletion rights, and third-party integrations
-- **Terms of Service** — hosted at `/terms`; defines usage terms, liability limits, and Google API Services policy alignment
+### [🔗 Live demo: when-now.com](https://when-now.com)
 
-## Tech Stack
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=nextdotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL%20%2B%20Realtime-3FCF8E?logo=supabase&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-450%2B-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-- **Backend:** Python 3.12 · FastAPI · Supabase (PostgreSQL + Realtime) · Google OAuth 2.0 / Calendar API · Microsoft Graph (MSAL) · APScheduler · provider abstraction (`app/providers/`)
-- **Frontend:** Next.js 14 (App Router) · TypeScript · TanStack Query · Zustand · shadcn/ui · Tailwind CSS
+![When. event detail: availability heatmap, participants and ranked proposals](./design/event-detail.png)
 
-## Getting Started
-
-### Prerequisites
-
-- Python 3.12
-- Node.js 18+
-- Docker & Docker Compose (optional, for containerised dev)
-- A Supabase project (PostgreSQL database + Realtime enabled)
-- A Google Cloud project with OAuth 2.0 credentials and the Calendar API enabled
-- _(optional)_ A Microsoft Entra app registration to enable Outlook calendars — see [Microsoft (Outlook) Calendar setup](#microsoft-outlook-calendar-setup)
-
-### Installation
-
-**Option A — Docker Compose (recommended)**
-
-Copy the env files, then run a single command:
-
-```bash
-cp backend/.env.example backend/.env   # fill in Supabase keys, Google OAuth credentials, JWT secret
-cp frontend/.env.example frontend/.env # fill in NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
-docker compose up --build
-```
-
-Both services start automatically; the frontend is available at [http://localhost:3000](http://localhost:3000) and the API at [http://localhost:8000](http://localhost:8000).
-
-**Option B — local dev servers**
-
-**Backend**
-
-```bash
-cd backend
-python3.12 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # fill in Supabase keys, Google OAuth credentials, JWT secret
-```
-
-**Frontend**
-
-```bash
-cd frontend
-npm install
-cp .env.example .env.local   # fill in Supabase public key, API URL
-```
-
-### Microsoft (Outlook) Calendar setup
-
-Outlook support is optional — leave `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` blank in `backend/.env` to run Google-only. To enable it:
-
-1. In the [Microsoft Entra admin center](https://entra.microsoft.com) → **App registrations** → **New registration**.
-2. **Supported account types:** _Accounts in any organizational directory and personal Microsoft accounts_ (this uses the `/common` OAuth endpoint, covering both Outlook.com and Microsoft 365 work/school accounts).
-3. **Redirect URI (Web):** set it to your `MICROSOFT_CALENDAR_REDIRECT_URI` (default `http://localhost:8000/api/calendar-accounts/callback/microsoft`).
-4. Under **Certificates & secrets**, create a client secret.
-5. Under **API permissions**, add the delegated Microsoft Graph permissions `User.Read` and `Calendars.ReadWrite`. These are user-consentable — no tenant admin grant is required for the app. (Some locked-down corporate tenants still require an admin to approve user consent; if so, the OAuth callback returns an error and the user is redirected back to Settings with a readable message.)
-6. Put the **Application (client) ID** and **client secret** into `backend/.env` as `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET`.
-
-> Microsoft rotates the OAuth **refresh token** on every refresh, and the Microsoft identity platform has no token-revocation endpoint for this flow — disconnecting an Outlook account simply drops the stored credentials. Both behaviours are handled by the provider layer.
-
-## Database Setup
-
-The project uses Supabase (PostgreSQL). [`schema.sql`](schema.sql) is the **complete, self-contained snapshot** of the current database — running it on a fresh project is the only query you need to build everything (all extensions, enums, tables, indexes, Row Level Security policies, functions, and triggers, including the multi-provider calendar support).
-
-To build the database from scratch:
-
-1. Create a new [Supabase](https://supabase.com) project.
-2. In the Supabase dashboard, open **SQL Editor**.
-3. Copy the contents of [`schema.sql`](schema.sql) and run it.
-4. Copy your Supabase project URL and `anon`/`service_role` keys into `backend/.env` and `frontend/.env.local`.
-
-> **Do not also run the files in [`supabase/migrations/`](supabase/migrations/) on a fresh build.** Their changes are already folded into `schema.sql`, and several migrations are non-idempotent (e.g. a `RENAME COLUMN`), so applying them on top of `schema.sql` will error. The migration files exist only to **upgrade an existing database** that predates them — run each, in filename order, against such a database.
->
-> **Note:** `schema.sql` assumes Supabase Auth is already enabled — the `auth.users` table is provided automatically by Supabase and does not need to be created manually.
-
-## Usage
-
-**Docker Compose**
-
-```bash
-docker compose up --build
-```
-
-**Local dev servers** (two terminals)
-
-```bash
-# Terminal 1 — API server (port 8000)
-cd backend
-source venv/bin/activate
-uvicorn app.main:app --reload --reload-dir app --port 8000
-
-# Terminal 2 — Next.js dev server (port 3000)
-cd frontend
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000), sign in with Google, and create your first event.
-
-The API exposes an unauthenticated `GET /health` endpoint (returns `{"status": "ok"}`) for container health checks and uptime monitoring.
-
-## Visuals
-
-![Landing page](./design/landing.png)
-*Landing page — hero section with availability grid mockup*
-
-![Dashboard](./design/dashboard.png)
-*Dashboard — event cards and calendar connect prompt*
-
-![Event detail](./design/event-detail.png)
-*Event detail — availability grid, participant list, and ranked proposals*
-
-## Tests
-
-**Backend**
-
-```bash
-cd backend
-source venv/bin/activate
-pytest tests/ -v
-```
-
-**Frontend** (Vitest)
-
-```bash
-cd frontend
-npm run test
-```
+</div>
 
 ---
 
-See [`docs/`](docs/) for architecture, data model, and sprint plan documentation.
+## Why I built it
+
+Finding a time that works for five people usually takes a dozen messages and a lot of calendar-tab switching. When. replaces that with one link. Participants connect their calendar, optionally mark the times they'd prefer, and the app shows the coordinator the best options.
+
+I designed and built the whole system myself, from database schema and backend to frontend and deployment. This is **v2**, a ground-up rewrite of my first version. The biggest change was replacing the original LLM-based (Gemini) scheduler with a **deterministic, fully tested algorithm**. It gives the same output for the same input, explains every ranking, and has no API cost or latency.
+
+## Highlights
+
+| | |
+|---|---|
+| 📅 **Multi-provider calendar sync** | Google Calendar and Microsoft Outlook (Graph API) behind a shared provider abstraction. Users can connect several accounts across both providers. Busy times sync when an account is connected and then hourly in the background. |
+| 🧮 **Deterministic scheduling engine** | Generates candidate windows inside each day's allowed hours (including overnight windows that cross midnight). It never proposes past times, ranks by conflicts and then preference overlap, and returns the top 5 with a readable reason for each. |
+| ⚡ **Real-time collaboration** | Supabase Realtime pushes participant changes, calendar syncs and proposal refreshes to every open screen. Mutations update optimistically, so the grid never waits on a spinner. |
+| ✍️ **Cross-provider write-back** | On finalization the event is created on **each participant's own calendar** with their own credentials, whether they use Google or Microsoft. A database trigger enforces exactly one write calendar per user. Participants without a connected calendar get an emailed invite instead. |
+| 🔐 **Security by default** | Row Level Security on every user-facing table. Privileged access is limited to specific services. OAuth tokens are stored server-side and revoked on account deletion. Expired credentials are detected and the user is asked to reconnect without affecting other participants. |
+| 🧪 **Tested and documented** | 450+ automated tests (pytest and Vitest), plus integration tests that check RLS against a live database. Architecture, data model and per-sprint lessons are written up in [`docs/`](docs/). |
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="./design/landing.png" alt="Landing page"/><br/><sub><b>Landing</b>: hero with an availability-grid preview</sub></td>
+    <td width="50%"><img src="./design/dashboard.png" alt="Dashboard"/><br/><sub><b>Dashboard</b>: event cards and calendar-connect prompt</sub></td>
+  </tr>
+</table>
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Browser
+        SC[Next.js Server Components]
+        CC[Client Islands<br/>TanStack Query]
+        RT[Supabase Realtime<br/>subscriptions]
+    end
+
+    subgraph API[FastAPI]
+        R[Routers<br/>HTTP only] --> S[Services<br/>all business logic]
+        S --> P[Provider layer]
+        J[APScheduler<br/>hourly sync] --> S
+    end
+
+    SC -->|SSR fetch| R
+    CC -->|REST + JWT| R
+    S -->|RLS-scoped queries| DB[(Supabase<br/>PostgreSQL)]
+    P --> G[Google Calendar API]
+    P --> M[Microsoft Graph]
+    DB -.->|change events| RT
+    RT -.->|invalidate cache| CC
+```
+
+**Design decisions**
+
+- **Thin routers, fat services.** Routers only parse input and shape responses. All logic lives in stateless, unit-testable services.
+- **Provider abstraction.** Each calendar provider implements one `CalendarProvider` interface for OAuth, listing calendars, reading busy times and creating events. Adding a provider doesn't touch the sync, connect or finalize flows. The interface also handles the differences between providers: Microsoft rotates refresh tokens on every refresh and Google doesn't.
+- **Realtime is a signal, not a source of truth.** Realtime events only invalidate TanStack Query caches. The client always re-fetches authoritative data from the API.
+- **Server-first rendering.** Event pages are fetched on the server, so they arrive fully populated with no loading skeletons. Client islands then hydrate and subscribe to live updates.
+- **UTC everywhere.** All times are stored and computed in UTC and converted only at the display layer.
+
+## The scheduling algorithm
+
+```
+1. Generate   Slide a window of the event's duration across the date range in 30-min steps,
+              keeping only windows that fall inside each day's allowed hours (which may cross
+              midnight) and that start in the future.
+2. Score      conflicts = participants with a busy slot overlapping the window
+              preferred = participants with a preferred slot overlapping the window
+3. Rank       ORDER BY conflicts ASC, preferred DESC, start time ASC
+4. Explain    "3/4 participants marked this time as preferred, 0/4 have a conflict"
+5. Persist    Store the top 5. Regenerate only when inputs change (stale-flag pattern).
+```
+
+Full details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#scheduling-algorithm-proposal_servicepy).
+
+## Tech stack
+
+| Layer | Technologies |
+|---|---|
+| **Frontend** | Next.js 14 (App Router) · TypeScript · TanStack Query · Zustand · React Hook Form + Zod · shadcn/ui · Tailwind CSS |
+| **Backend** | Python 3.12 · FastAPI · Pydantic v2 · APScheduler |
+| **Data** | Supabase (PostgreSQL, Row Level Security, Realtime, triggers) |
+| **Integrations** | Google OAuth 2.0 & Calendar API · Microsoft Graph (MSAL) |
+| **Testing** | pytest · Vitest · Testing Library · RLS integration tests |
+| **Infra** | Docker · Docker Compose |
+
+## How it was built
+
+- **Planned in sprints.** Each feature area (auth → events → invitations → calendar sync → availability → proposals → finalization) was planned up front in [`docs/SPRINT_PLAN.md`](docs/SPRINT_PLAN.md) and delivered as its own sprint.
+- **Test-driven.** Tests were written alongside each sprint. External APIs are mocked and no unit test touches a real database.
+- **Documentation as the source of truth.** [`DATA_MODEL.md`](docs/DATA_MODEL.md) and [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) define the system. [`LESSONS_LEARNED.md`](docs/LESSONS_LEARNED.md) records the non-obvious things learned in each sprint.
+
+## Run it locally
+
+```bash
+git clone https://github.com/yonid4/when-V2.git && cd when-V2
+cp backend/.env.example backend/.env      # Supabase + Google OAuth keys
+cp frontend/.env.example frontend/.env    # public Supabase keys
+docker compose up --build                 # → http://localhost:3000
+```
+
+You'll need a Supabase project (run [`schema.sql`](schema.sql) once) and Google OAuth credentials. Outlook support is optional.
+**👉 Full step-by-step instructions: [`docs/SETUP.md`](docs/SETUP.md)**
+
+## Documentation
+
+| Doc | What's inside |
+|---|---|
+| [`SETUP.md`](docs/SETUP.md) | Local setup, OAuth configuration, environment variables, tests |
+| [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System overview, folder structure, data flows, scheduling algorithm |
+| [`DATA_MODEL.md`](docs/DATA_MODEL.md) | Tables, relationships, RLS policies, triggers |
+| [`TECH_STACK.md`](docs/TECH_STACK.md) | Tool choices and constraints |
+| [`TESTS.md`](docs/TESTS.md) | Test inventory and strategy |
+| [`LESSONS_LEARNED.md`](docs/LESSONS_LEARNED.md) | Gotchas and insights from each sprint |
+
+## License
+
+[MIT](LICENSE) © Yonatan Dayagi
